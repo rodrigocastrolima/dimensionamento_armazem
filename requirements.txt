@@ -1,0 +1,11 @@
+# --- núcleo ---
+openpyxl>=3.1        # ler/escrever o master data e resultados
+py3dbp>=1.1          # Passo 1: empacotamento 3D (peças por caixa/palete)
+rectpack>=0.2        # Passo 2: footprint 2D (caixas por nível de rack)
+
+# --- opcional (refinamentos) ---
+ortools>=9.0         # minimizar nº de racks via bin packing (CP-SAT)
+pandas>=2.0          # conveniência na leitura de tabelas
+
+# --- dev ---
+pytest>=8.0           # testes

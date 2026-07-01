@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<title>Simulador de Armazém</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #1e1e1e; color: #e0e0e0; }
+  header { padding: 12px 20px; background: #111; display: flex; align-items: center; gap: 20px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  nav { display: flex; gap: 8px; }
+  nav button { background: #2a2a2a; color: #ccc; border: 1px solid #444; padding: 6px 14px;
+               border-radius: 4px; cursor: pointer; font-size: 13px; }
+  nav button.active { background: #3a7bd5; color: white; border-color: #3a7bd5; }
+  .tab { display: none; padding: 16px 20px; }
+  .tab.active { display: block; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { border: 1px solid #3a3a3a; padding: 4px 6px; text-align: left; }
+  th { background: #2a2a2a; position: sticky; top: 0; }
+  input { background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; width: 100%;
+          box-sizing: border-box; padding: 2px 4px; font-size: 12px; }
+  tr.nova-linha td { background: #1a2e1a; }
+  .table-wrap { max-height: 75vh; overflow: auto; border: 1px solid #3a3a3a; }
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  button.action { background: #3a7bd5; color: white; border: none; padding: 8px 16px;
+                  border-radius: 4px; cursor: pointer; font-size: 13px; }
+  button.action:hover { background: #2d63ad; }
+  button.save { background: #2a8c4a; color: white; border: none; padding: 3px 10px;
+                border-radius: 3px; cursor: pointer; font-size: 11px; margin-right: 4px; }
+  button.del { background: #b03a3a; color: white; border: none; padding: 3px 10px;
+               border-radius: 3px; cursor: pointer; font-size: 11px; }
+  button.add-row { background: #2a8c4a; color: white; border: none; padding: 6px 14px;
+                   border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 8px; }
+  .viewer-wrap { display: flex; gap: 12px; }
+  #viewer { width: 55%; height: 42vh; background: #111; border: 1px solid #3a3a3a; }
+  #painel-rack { flex: 1; height: 42vh; background: #181818; border: 1px solid #3a3a3a;
+                 padding: 10px; overflow-y: auto; font-size: 12px; }
+  #painel-rack h4 { margin: 0 0 8px 0; font-size: 13px; }
+  #painel-rack .fechar { float: right; cursor: pointer; color: #999; }
+  #painel-rack table { font-size: 11px; }
+  #resumo { margin-top: 10px; font-size: 13px; }
+  #resumo table { width: auto; min-width: 500px; }
+  .avisos { color: #ff9f43; font-size: 12px; margin-top: 8px; }
+  .legend { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 12px; height: 12px; display: inline-block; border-radius: 2px; }
+  .dica { font-size: 12px; color: #999; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Simulador de Armazém</h1>
+  <nav>
+    <button data-tab="artigos" class="active">Artigos</button>
+    <button data-tab="catalogo">Caixas &amp; Racks</button>
+    <button data-tab="armazem">Armazém 3D</button>
+  </nav>
+</header>
+
+<section id="artigos" class="tab active">
+  <div class="toolbar">
+    <input id="filtro-artigos" placeholder="filtrar por SKU ou descrição..." style="max-width:300px">
+  </div>
+  <button class="add-row" id="btn-add-artigo">+ Novo artigo</button>
+  <div class="table-wrap">
+    <table id="tabela-artigos">
+      <thead>
+        <tr>
+          <th>SKU</th><th>Descrição</th><th>Comp (m)</th><th>Larg (m)</th><th>Alt (m)</th>
+          <th>Peso (kg)</th><th>Stock máx</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th><th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="catalogo" class="tab">
+  <h3>Caixas (S / M / L / PALLET)</h3>
+  <button class="add-row" id="btn-add-caixa">+ Nova caixa</button>
+  <div class="table-wrap" style="max-height:260px">
+    <table id="tabela-caixas">
+      <thead>
+        <tr>
+          <th>Nome</th><th>Int Comp</th><th>Int Larg</th><th>Int Alt</th>
+          <th>Ext Comp</th><th>Ext Larg</th><th>Ext Alt</th><th>Peso máx (kg)</th><th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <h3 style="margin-top:24px">Racks</h3>
+  <button class="add-row" id="btn-add-rack">+ Novo rack</button>
+  <div class="table-wrap" style="max-height:260px">
+    <table id="tabela-racks">
+      <thead>
+        <tr>
+          <th>Nome</th><th>Larg (m)</th><th>Prof (m)</th><th>Alt/nível (m)</th>
+          <th>Níveis</th><th>Aceita (S,M,L,PALLET,LONGO)</th><th>Comp braço (m)</th>
+          <th>Corredor (m)</th><th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section id="armazem" class="tab">
+  <div class="toolbar">
+    <label>Altura do armazém (m, 0 = sem limite):
+      <input id="altura-armazem" type="number" step="0.1" value="0" style="width:80px">
+    </label>
+    <label>Altura de picking (m, 0 = desativado):
+      <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
+    </label>
+    <button class="action" id="btn-gerar">Gerar armazém</button>
+  </div>
+  <div class="dica">Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
+  <div class="viewer-wrap">
+    <div id="viewer"></div>
+    <div id="painel-rack"><p style="color:#999">Clica numa caixa ou rack para ver detalhe aqui.</p></div>
+  </div>
+  <div class="legend" id="legenda"></div>
+  <div id="resumo"></div>
+</section>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+const API = "/api";
+
+// ----------------------------------------------------------------- tabs
+document.querySelectorAll("nav button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById(btn.dataset.tab).classList.add("active");
+  });
+});
+
+// ----------------------------------------------------------------- artigos
+let todosArtigos = [];
+
+async function carregarArtigos() {
+  todosArtigos = await fetch(`${API}/articles`).then(r => r.json());
+  desenharArtigos(todosArtigos);
+}
+
+function linhaArtigo(a) {
+  return `
+    <tr data-sku="${a.sku}">
+      <td>${a.sku}</td><td>${a.descricao}</td>
+      <td>${a.comp_m.toFixed(3)}</td><td>${a.larg_m.toFixed(3)}</td><td>${a.alt_m.toFixed(3)}</td>
+      <td>${a.peso_kg.toFixed(2)}</td><td>${a.stock_max_un}</td>
+      <td>${a.empilhamento}</td><td>${a.geometria}</td><td>${a.classe}</td>
+      <td><button class="del" data-tipo="article" data-id="${a.sku}">Remover</button></td>
+    </tr>`;
+}
+
+function desenharArtigos(lista) {
+  const tbody = document.querySelector("#tabela-artigos tbody");
+  tbody.innerHTML = lista.map(linhaArtigo).join("");
+}
+
+document.getElementById("filtro-artigos").addEventListener("input", (e) => {
+  const q = e.target.value.toLowerCase();
+  desenharArtigos(todosArtigos.filter(a =>
+    a.sku.toLowerCase().includes(q) || a.descricao.toLowerCase().includes(q)));
+});
+
+document.getElementById("btn-add-artigo").addEventListener("click", () => {
+  const tbody = document.querySelector("#tabela-artigos tbody");
+  const tr = document.createElement("tr");
+  tr.className = "nova-linha";
+  tr.innerHTML = `
+    <td><input data-f="sku" placeholder="SKU"></td>
+    <td><input data-f="descricao" placeholder="Descrição"></td>
+    <td><input data-f="comp_m" placeholder="0.000"></td>
+    <td><input data-f="larg_m" placeholder="0.000"></td>
+    <td><input data-f="alt_m" placeholder="0.000"></td>
+    <td><input data-f="peso_kg" placeholder="0.0"></td>
+    <td><input data-f="stock_max_un" placeholder="0"></td>
+    <td><input data-f="empilhamento" value="EMPILHAVEL"></td>
+    <td><input data-f="geometria" value="Regular"></td>
+    <td><input data-f="classe" value="RIGIDO"></td>
+    <td><button class="save" data-tipo="article-new">Criar</button></td>`;
+  tbody.prepend(tr);
+});
+
+// ----------------------------------------------------------------- caixas
+async function carregarCaixas() {
+  const caixas = await fetch(`${API}/boxes`).then(r => r.json());
+  const tbody = document.querySelector("#tabela-caixas tbody");
+  tbody.innerHTML = caixas.map(b => `
+    <tr data-nome="${b.nome}">
+      <td>${b.nome}</td>
+      <td><input data-f="int_comp_m" value="${b.int_comp_m}"></td>
+      <td><input data-f="int_larg_m" value="${b.int_larg_m}"></td>
+      <td><input data-f="int_alt_m" value="${b.int_alt_m}"></td>
+      <td><input data-f="ext_comp_m" value="${b.ext_comp_m}"></td>
+      <td><input data-f="ext_larg_m" value="${b.ext_larg_m}"></td>
+      <td><input data-f="ext_alt_m" value="${b.ext_alt_m}"></td>
+      <td><input data-f="peso_max_kg" value="${b.peso_max_kg}"></td>
+      <td>
+        <button class="save" data-tipo="box">Guardar</button>
+        <button class="del" data-tipo="box" data-id="${b.nome}">Remover</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+document.getElementById("btn-add-caixa").addEventListener("click", () => {
+  const tbody = document.querySelector("#tabela-caixas tbody");
+  const tr = document.createElement("tr");
+  tr.className = "nova-linha";
+  tr.innerHTML = `
+    <td><input data-f="nome" placeholder="ex: XL"></td>
+    <td><input data-f="int_comp_m" placeholder="0.000"></td>
+    <td><input data-f="int_larg_m" placeholder="0.000"></td>
+    <td><input data-f="int_alt_m" placeholder="0.000"></td>
+    <td><input data-f="ext_comp_m" placeholder="0.000"></td>
+    <td><input data-f="ext_larg_m" placeholder="0.000"></td>
+    <td><input data-f="ext_alt_m" placeholder="0.000"></td>
+    <td><input data-f="peso_max_kg" placeholder="0.0"></td>
+    <td><button class="save" data-tipo="box-new">Criar</button></td>`;
+  tbody.prepend(tr);
+});
+
+async function carregarRacks() {
+  const racks = await fetch(`${API}/racks`).then(r => r.json());
+  const tbody = document.querySelector("#tabela-racks tbody");
+  tbody.innerHTML = racks.map(r => `
+    <tr data-nome="${r.nome}">
+      <td>${r.nome}</td>
+      <td><input data-f="larg_m" value="${r.larg_m}"></td>
+      <td><input data-f="prof_m" value="${r.prof_m}"></td>
+      <td><input data-f="alt_nivel_m" value="${r.alt_nivel_m}"></td>
+      <td><input data-f="niveis" value="${r.niveis}"></td>
+      <td><input data-f="aceita" value="${r.aceita.join(', ')}"></td>
+      <td><input data-f="comp_braco_m" value="${r.comp_braco_m}"></td>
+      <td><input data-f="corredor_m" value="${r.corredor_m}"></td>
+      <td>
+        <button class="save" data-tipo="rack">Guardar</button>
+        <button class="del" data-tipo="rack" data-id="${r.nome}">Remover</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+document.getElementById("btn-add-rack").addEventListener("click", () => {
+  const tbody = document.querySelector("#tabela-racks tbody");
+  const tr = document.createElement("tr");
+  tr.className = "nova-linha";
+  tr.innerHTML = `
+    <td><input data-f="nome" placeholder="ex: Rack Novo"></td>
+    <td><input data-f="larg_m" placeholder="0.00"></td>
+    <td><input data-f="prof_m" placeholder="0.00"></td>
+    <td><input data-f="alt_nivel_m" placeholder="0.00"></td>
+    <td><input data-f="niveis" placeholder="1"></td>
+    <td><input data-f="aceita" placeholder="S, M"></td>
+    <td><input data-f="comp_braco_m" placeholder="0.0"></td>
+    <td><input data-f="corredor_m" placeholder="0.0"></td>
+    <td><button class="save" data-tipo="rack-new">Criar</button></td>`;
+  tbody.prepend(tr);
+});
+
+// ----------------------------------------------------------------- save / delete (delegado)
+function lerCamposArticle(tr) {
+  const body = {};
+  tr.querySelectorAll("input").forEach(inp => {
+    const f = inp.dataset.f;
+    if (f === "comp_m" || f === "larg_m" || f === "alt_m" || f === "peso_kg") {
+      body[f] = parseFloat(inp.value) || 0;
+    } else if (f === "stock_max_un") {
+      body[f] = parseInt(inp.value, 10) || 0;
+    } else {
+      body[f] = inp.value;
+    }
+  });
+  return body;
+}
+
+function lerCamposBox(tr) {
+  const body = {};
+  tr.querySelectorAll("input").forEach(inp => {
+    const f = inp.dataset.f;
+    body[f] = (f === "nome") ? inp.value : (parseFloat(inp.value) || 0);
+  });
+  return body;
+}
+
+function lerCamposRack(tr) {
+  const body = {};
+  tr.querySelectorAll("input").forEach(inp => {
+    const f = inp.dataset.f;
+    if (f === "nome") {
+      body[f] = inp.value;
+    } else if (f === "aceita") {
+      body[f] = inp.value.split(",").map(s => s.trim()).filter(Boolean);
+    } else if (f === "niveis") {
+      body[f] = parseInt(inp.value, 10) || 1;
+    } else {
+      body[f] = parseFloat(inp.value) || 0;
+    }
+  });
+  return body;
+}
+
+document.addEventListener("click", async (e) => {
+  const isSave = e.target.classList.contains("save");
+  const isDel = e.target.classList.contains("del");
+  if (!isSave && !isDel) return;
+
+  const tipo = e.target.dataset.tipo;
+
+  if (isDel) {
+    if (!confirm("Remover este item? Esta ação grava de imediato no Excel.")) return;
+    const id = e.target.dataset.id;
+    const urlBase = tipo === "article" ? "articles" : (tipo === "box" ? "boxes" : "racks");
+    const resp = await fetch(`${API}/${urlBase}/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (resp.ok) {
+      if (tipo === "article") await carregarArtigos();
+      if (tipo === "box") await carregarCaixas();
+      if (tipo === "rack") await carregarRacks();
+    } else {
+      alert("Erro ao remover.");
+    }
+    return;
+  }
+
+  const tr = e.target.closest("tr");
+
+  if (tipo === "article-new") {
+    const body = lerCamposArticle(tr);
+    const resp = await fetch(`${API}/articles`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const r = await resp.json();
+    if (r.ok) { await carregarArtigos(); } else { alert(r.erro || "Erro ao criar."); }
+    return;
+  }
+  if (tipo === "box-new") {
+    const body = lerCamposBox(tr);
+    const resp = await fetch(`${API}/boxes`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const r = await resp.json();
+    if (r.ok) { await carregarCaixas(); } else { alert(r.erro || "Erro ao criar."); }
+    return;
+  }
+  if (tipo === "rack-new") {
+    const body = lerCamposRack(tr);
+    const resp = await fetch(`${API}/racks`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const r = await resp.json();
+    if (r.ok) { await carregarRacks(); } else { alert(r.erro || "Erro ao criar."); }
+    return;
+  }
+
+  // edição de linha existente
+  const nome = tr.dataset.nome;
+  let body, url;
+  if (tipo === "box") {
+    body = lerCamposBox(tr);
+    url = `${API}/boxes/${encodeURIComponent(nome)}`;
+  } else if (tipo === "rack") {
+    body = lerCamposRack(tr);
+    url = `${API}/racks/${encodeURIComponent(nome)}`;
+  } else {
+    return;
+  }
+  const resp = await fetch(url, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  e.target.textContent = resp.ok ? "Guardado!" : "Erro";
+  setTimeout(() => e.target.textContent = "Guardar", 1200);
+});
+
+// ----------------------------------------------------------------- 3D viewer
+let scene, camera, renderer, controls, raycaster, mouse;
+const CORES = {
+  S: 0x4dabf7, M: 0x69db7c, L: 0xffa94d, PALLET: 0xff6b6b, LONGO: 0xda77f2,
+};
+
+function initViewer() {
+  const el = document.getElementById("viewer");
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x111111);
+
+  camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.1, 1000);
+  camera.position.set(20, 20, 20);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(el.clientWidth, el.clientHeight);
+  el.appendChild(renderer.domElement);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+  dir.position.set(10, 20, 10);
+  scene.add(dir);
+
+  const grid = new THREE.GridHelper(80, 80, 0x444444, 0x2a2a2a);
+  scene.add(grid);
+
+  raycaster = new THREE.Raycaster();
+  mouse = new THREE.Vector2();
+  renderer.domElement.addEventListener("click", onClickViewer);
+
+  window.addEventListener("resize", () => {
+    camera.aspect = el.clientWidth / el.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(el.clientWidth, el.clientHeight);
+  });
+
+  animate();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function limparRacks() {
+  [...scene.children].forEach(obj => {
+    if (obj.userData.isRackGroup) scene.remove(obj);
+  });
+}
+
+function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
+  // nivel.caixas ja vem com x_m/y_m reais do packer 2D (rectpack) -- sem
+  // recalculo de grelha no cliente, so' desenha onde o backend colocou.
+  for (const c of nivel.caixas) {
+    const cx = r.x + c.x_m + c.comp_m / 2;
+    const cz = r.y + c.y_m + c.larg_m / 2;
+    const cy = baseY + c.alt_m / 2;
+
+    const geo = new THREE.BoxGeometry(c.comp_m * 0.92, c.alt_m * 0.92, c.larg_m * 0.92);
+    const cor = CORES[c.load_type] || 0x888888;
+    const ehReserva = nivel.eh_picking === false && c.eh_picking === false;
+    const mat = new THREE.MeshStandardMaterial({
+      color: cor,
+      opacity: ehReserva ? 0.55 : 1,
+      transparent: ehReserva,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(cx, cy, cz);
+    mesh.userData.posicao = r;
+    mesh.userData.caixa = c;
+    mesh.userData.nivel = nivel;
+    grupo.add(mesh);
+
+    const edges = new THREE.EdgesGeometry(geo);
+    const corBorda = c.eh_picking ? 0x00aa00 : 0x000000;
+    const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: corBorda, transparent: true, opacity: 0.4 }));
+    linhas.position.copy(mesh.position);
+    grupo.add(linhas);
+  }
+}
+
+function desenharLayout(layout) {
+  limparRacks();
+  for (const r of layout) {
+    const grupo = new THREE.Group();
+    grupo.userData.isRackGroup = true;
+
+    const cor = CORES[r.load_types[0]] || 0x888888;
+    const altModulo = r.altura_m;
+    const altNivel = r.altura_m / r.niveis;
+
+    for (const bloco of r.blocos) {
+      const baseModulo = bloco.bloco_idx * altModulo;
+
+      // estrutura do rack (semi-transparente, so' para dar nocao da prateleira)
+      const geo = new THREE.BoxGeometry(r.larg_m, altModulo, r.prof_m);
+      const mat = new THREE.MeshStandardMaterial({ color: cor, transparent: true, opacity: 0.12, depthWrite: false });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.set(r.x + r.larg_m / 2, baseModulo + altModulo / 2, r.y + r.prof_m / 2);
+      mesh.userData.posicao = r;
+      grupo.add(mesh);
+
+      const edges = new THREE.EdgesGeometry(geo);
+      const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+      linhas.position.copy(mesh.position);
+      grupo.add(linhas);
+
+      for (const nivel of bloco.niveis) {
+        const baseY = baseModulo + nivel.nivel_idx * altNivel;
+        desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY);
+      }
+    }
+
+    scene.add(grupo);
+  }
+
+  if (layout.length) {
+    const maxX = Math.max(...layout.map(r => r.x + r.larg_m));
+    const maxY = Math.max(...layout.map(r => r.y + r.prof_m));
+    const maxZ = Math.max(...layout.map(r => r.altura_m * (r.blocos_empilhados || 1)));
+    const escala = Math.max(maxX, maxY, maxZ);
+    controls.target.set(maxX / 2, maxZ / 3, maxY / 2);
+    camera.position.set(maxX / 2 + escala * 0.9, maxZ * 0.7 + escala * 0.3, maxY / 2 + escala * 0.9);
+    camera.near = Math.max(escala / 1000, 0.1);
+    camera.far = escala * 10;
+    camera.updateProjectionMatrix();
+  }
+}
+
+function onClickViewer(event) {
+  const el = document.getElementById("viewer");
+  const rect = el.getBoundingClientRect();
+  mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObjects(scene.children, true);
+  const hitCaixa = intersects.find(i => i.object.userData && i.object.userData.caixa);
+  if (hitCaixa) {
+    mostrarPainelCaixa(hitCaixa.object.userData.caixa, hitCaixa.object.userData.nivel, hitCaixa.object.userData.posicao);
+    return;
+  }
+  const hit = intersects.find(i => i.object.userData && i.object.userData.posicao);
+  if (hit) {
+    mostrarPainelRack(hit.object.userData.posicao);
+  }
+}
+
+function mostrarPainelCaixa(caixa, nivel, posicao) {
+  const painel = document.getElementById("painel-rack");
+  let html = `<h4>Caixa — ${caixa.sku}</h4>`;
+  html += `<p><b>Descrição:</b> ${caixa.descricao || "(sem descrição)"}<br>`;
+  html += `<b>Tipo de carga:</b> ${caixa.load_type}<br>`;
+  html += `<b>Peças do artigo nesta caixa:</b> ${caixa.pecas_nesta_caixa}<br>`;
+  html += `<b>Dimensões externas da caixa:</b> ${caixa.comp_m.toFixed(3)} × ${caixa.larg_m.toFixed(3)} × ${caixa.alt_m.toFixed(3)} m</p>`;
+  const tag = caixa.eh_picking
+    ? `<span style="color:#0a0">Zona de picking</span>`
+    : `<span style="color:#999">Zona de reserva</span>`;
+  html += `<p>${tag} — nível ${nivel.nivel_idx + 1}</p>`;
+  html += `<p style="color:#999">Rack: ${posicao.rack_nome} (posição #${posicao.indice + 1})</p>`;
+  painel.innerHTML = html;
+}
+
+function mostrarPainelRack(posicao) {
+  const painel = document.getElementById("painel-rack");
+
+  const agrupado = {};
+  for (const bloco of posicao.blocos) {
+    for (const nivel of bloco.niveis) {
+      for (const c of nivel.caixas) {
+        if (!agrupado[c.sku]) agrupado[c.sku] = { ...c, num_caixas: 0, pecas_nesta_caixa: 0 };
+        agrupado[c.sku].num_caixas += 1;
+        agrupado[c.sku].pecas_nesta_caixa += c.pecas_nesta_caixa;
+      }
+    }
+  }
+  const skus = Object.values(agrupado);
+
+  let html = `<h4>${posicao.rack_nome} (posição #${posicao.indice + 1})</h4>`;
+  html += `<p>Níveis: ${posicao.niveis} · Módulos empilhados: ${posicao.blocos_empilhados}<br>`;
+  html += `Tipos de carga: ${posicao.load_types.join(", ")}</p>`;
+  if (skus.length === 0) {
+    html += `<p style="color:#999">Vazio.</p>`;
+  } else {
+    html += `<p class="dica">Clica numa caixa individual para ver detalhe.</p>`;
+    html += `<table><thead><tr><th>SKU</th><th>Tipo</th><th>Caixas</th><th>Peças</th></tr></thead><tbody>`;
+    for (const s of skus) {
+      html += `<tr><td title="${s.descricao}">${s.sku}</td><td>${s.load_type}</td><td>${s.num_caixas}</td><td>${s.pecas_nesta_caixa}</td></tr>`;
+    }
+    html += `</tbody></table>`;
+  }
+  painel.innerHTML = html;
+}
+
+function desenharLegenda(loadTypes) {
+  const el = document.getElementById("legenda");
+  el.innerHTML = loadTypes.map(lt => `
+    <span><span class="swatch" style="background:#${(CORES[lt] || 0x888888).toString(16).padStart(6,'0')}"></span>${lt}</span>
+  `).join("");
+}
+
+document.getElementById("btn-gerar").addEventListener("click", async () => {
+  const altura = parseFloat(document.getElementById("altura-armazem").value) || 0;
+  const alturaPicking = parseFloat(document.getElementById("altura-picking").value) || 0;
+  const btn = document.getElementById("btn-gerar");
+  btn.textContent = "A gerar...";
+  btn.disabled = true;
+  document.getElementById("painel-rack").innerHTML = `<p style="color:#999">A gerar...</p>`;
+  try {
+    const resp = await fetch(`${API}/gerar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ altura_armazem_m: altura, altura_picking_m: alturaPicking }),
+    });
+    const data = await resp.json();
+    desenharLayout(data.layout);
+
+    const tiposPresentes = [...new Set(data.layout.flatMap(r => r.load_types))];
+    desenharLegenda(tiposPresentes);
+
+    const resumoEl = document.getElementById("resumo");
+    let html = `<p><b>Área total de racks: ${data.area_racks_m2} m²</b></p>`;
+    if (data.area_layout_m2) {
+      html += `<p>Layout físico (filas + corredores): ${data.largura_layout_m} × ${data.profundidade_layout_m} m
+        = <b>${data.area_layout_m2} m²</b> (corredores: ${data.area_corredores_m2} m²)</p>`;
+    }
+    if (data.avisos.length) {
+      html += `<div class="avisos">⚠ ${data.avisos.join("<br>⚠ ")}</div>`;
+    }
+    html += `<table><thead><tr>
+      <th>Tipologia</th><th>Posições de chão</th><th>Módulos empilhados</th>
+      <th>Nº racks total</th><th>Footprint (m²)</th><th>Tipos de carga</th>
+    </tr></thead><tbody>`;
+    for (const r of data.requirements) {
+      html += `<tr>
+        <td>${r.rack_nome}</td><td>${r.posicoes_chao}</td><td>${r.blocos_empilhados}</td>
+        <td>${r.num_racks}</td><td>${r.footprint_total_m2}</td><td>${r.load_types.join(", ")}</td>
+      </tr>`;
+    }
+    html += `</tbody></table>`;
+    resumoEl.innerHTML = html;
+  } finally {
+    btn.textContent = "Gerar armazém";
+    btn.disabled = false;
+  }
+});
+
+// ----------------------------------------------------------------- init
+carregarArtigos();
+carregarCaixas();
+carregarRacks();
+initViewer();
+</script>
+</body>
+</html>
