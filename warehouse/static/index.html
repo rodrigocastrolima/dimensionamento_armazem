@@ -162,6 +162,7 @@
     <button id="btn-add-palete">+ Palete</button>
     <button id="btn-add-prateleira">+ Prateleira</button>
     <button id="btn-add-armario">+ Armário</button>
+    <button id="btn-add-empilhador">+ Empilhador</button>
     <button id="btn-rodar-prop">⟳ Rodar selecionado</button>
     <button id="btn-del-prop">✕ Remover selecionado</button>
     <span class="dica" style="margin:0">Arrasta pessoas/mesas com o rato (botão esquerdo); clica para selecionar.</span>
@@ -398,6 +399,7 @@ function initViewer() {
   document.getElementById("btn-add-palete").addEventListener("click", () => adicionarProp(criarPaleteProp));
   document.getElementById("btn-add-prateleira").addEventListener("click", () => adicionarProp(criarPrateleiraProp));
   document.getElementById("btn-add-armario").addEventListener("click", () => adicionarProp(criarArmario));
+  document.getElementById("btn-add-empilhador").addEventListener("click", () => adicionarProp(criarEmpilhador));
   document.getElementById("btn-rodar-prop").addEventListener("click", () => {
     if (propSel) propSel.rotation.y += Math.PI / 4;
   });
@@ -475,64 +477,64 @@ function texturaChapa() {
   }, 256, 256);
 }
 
-function desenharParedes(maxX, maxY, maxZ) {
+function desenharEdificio(edificio, maxZ) {
+  // edifício com o contorno da UNIÃO dos blocos + 1 m: laje em fiadas e
+  // paredes segmento a segmento (formas em L/U em vez de retângulo)
   const altura = Math.max(maxZ * 1.2, 5);
   const grupo = new THREE.Group();
   grupo.userData.isParedes = true;
-  const margem = 1.5;
-  const larguraTotal = maxX + margem * 2;
-  const profundidadeTotal = maxY + margem * 2;
+  if (!edificio || !edificio.laje || !edificio.laje.length) { scene.add(grupo); return; }
 
-  // laje de betão do edifício
-  const texChao = texturaBetao();
-  texChao.repeat.set(larguraTotal / 5, profundidadeTotal / 5);
-  const laje = new THREE.Mesh(
-    new THREE.PlaneGeometry(larguraTotal, profundidadeTotal),
-    new THREE.MeshStandardMaterial({ map: texChao, roughness: 0.92 }));
-  laje.rotation.x = -Math.PI / 2;
-  laje.position.set(maxX / 2, 0.005, maxY / 2);
-  laje.receiveShadow = true;
-  grupo.add(laje);
+  const texChaoBase = texturaBetao();
+  for (const [x0, y0, x1, y1] of edificio.laje) {
+    const w = x1 - x0, d = y1 - y0;
+    if (w < 0.01 || d < 0.01) continue;
+    const tex = texChaoBase.clone();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(w / 5, d / 5);
+    tex.offset.set((x0 / 5) % 1, (y0 / 5) % 1);
+    tex.needsUpdate = true;
+    const laje = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, d),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.92 }));
+    laje.rotation.x = -Math.PI / 2;
+    laje.position.set(x0 + w / 2, 0.005, y0 + d / 2);
+    laje.receiveShadow = true;
+    grupo.add(laje);
+  }
 
-  // paredes com normais para FORA + BackSide: vistas de fora são invisíveis
-  // (vês o interior); por dentro são chapa ondulada com claraboias
+  // paredes: normal exterior vinda do backend + BackSide -> sólidas por
+  // dentro, invisíveis por fora (a câmara nunca fica tapada)
   const texBase = texturaChapa();
-  const paredes = [
-    { larg: larguraTotal, x: maxX / 2, z: -margem, rotY: Math.PI },
-    { larg: larguraTotal, x: maxX / 2, z: maxY + margem, rotY: 0 },
-    { larg: profundidadeTotal, x: -margem, z: maxY / 2, rotY: -Math.PI / 2 },
-    { larg: profundidadeTotal, x: maxX + margem, z: maxY / 2, rotY: Math.PI / 2 },
-  ];
-  for (const p of paredes) {
+  for (const p of edificio.paredes) {
+    const len = Math.hypot(p.x2 - p.x1, p.y2 - p.y1);
+    if (len < 0.01) continue;
     const tex = texBase.clone();
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(Math.max(p.larg / 8, 1), 1);
+    tex.repeat.set(Math.max(len / 8, 1), 1);
     tex.needsUpdate = true;
     const mesh = new THREE.Mesh(
-      new THREE.PlaneGeometry(p.larg, altura),
+      new THREE.PlaneGeometry(len, altura),
       new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75, metalness: 0.25, side: THREE.BackSide }));
-    mesh.position.set(p.x, altura / 2, p.z);
-    mesh.rotation.y = p.rotY;
+    mesh.position.set((p.x1 + p.x2) / 2, altura / 2, (p.y1 + p.y2) / 2);
+    mesh.rotation.y = Math.atan2(p.nx, p.ny);
     grupo.add(mesh);
   }
 
-  // luminárias highbay suspensas em grelha sobre a área útil
-  for (let lx = 4; lx < maxX - 2; lx += 8) {
-    for (let lz = 4; lz < maxY - 2; lz += 8) {
+  // luminárias highbay em grelha, só sobre a laje
+  const dentro = (x, z) => edificio.laje.some(([x0, y0, x1, y1]) =>
+    x >= x0 && x <= x1 && z >= y0 && z <= y1);
+  const minX = Math.min(...edificio.laje.map(l => l[0]));
+  const maxXL = Math.max(...edificio.laje.map(l => l[2]));
+  const minY = Math.min(...edificio.laje.map(l => l[1]));
+  const maxYL = Math.max(...edificio.laje.map(l => l[3]));
+  for (let lx = minX + 4; lx < maxXL - 2; lx += 8) {
+    for (let lz = minY + 4; lz < maxYL - 2; lz += 8) {
+      if (!dentro(lx, lz)) continue;
       const lum = criarLuminaria();
       lum.position.set(lx, altura - 0.9, lz);
       grupo.add(lum);
     }
-  }
-
-  // empilhadores estacionados na faixa livre junto à parede da frente
-  const posEmp = [[maxX * 0.25, 0], [maxX * 0.62, Math.PI / 7]];
-  for (const [ex, rotE] of posEmp) {
-    if (ex < 2) continue;
-    const emp = criarEmpilhador();
-    emp.position.set(ex, 0, maxY + margem - 1.7);
-    emp.rotation.y = rotE;
-    grupo.add(emp);
   }
 
   scene.add(grupo);
@@ -968,7 +970,7 @@ function desenharLayout(layout) {
   }
 }
 
-function ajustarCenaECamera(layout, zonasLayout) {
+function ajustarCenaECamera(layout, zonasLayout, edificio) {
   const pontosX = [...layout.map(r => r.x + r.larg_m), ...zonasLayout.map(z => z.x + z.larg_m)];
   const pontosY = [...layout.map(r => r.y + r.prof_m), ...zonasLayout.map(z => z.y + z.prof_m)];
   if (!pontosX.length) return;
@@ -977,7 +979,7 @@ function ajustarCenaECamera(layout, zonasLayout) {
   const maxY = Math.max(...pontosY);
   const maxZ = Math.max(1, ...layout.map(r => r.altura_m * (r.blocos_empilhados || 1)));
 
-  desenharParedes(maxX, maxY, maxZ);
+  desenharEdificio(edificio, maxZ);
 
   const escala = Math.max(maxX, maxY, maxZ);
   controls.target.set(maxX / 2, maxZ / 3, maxY / 2);
@@ -1183,7 +1185,8 @@ function inicializarCanvas() {
     let html = "";
     const env = envolvente();
     if (env) {
-      html += `<b>Envolvente do arranjo</b><br>${env.w.toFixed(2)} × ${env.h.toFixed(2)} m = <b>${env.area.toFixed(2)} m²</b><br><br>`;
+      html += `<b>Envolvente retangular (referência)</b><br>${env.w.toFixed(2)} × ${env.h.toFixed(2)} m = ${env.area.toFixed(2)} m²<br>` +
+              `<span style="color:#999">A área real (perímetro a 1 m) é calculada no Renderizar.</span><br><br>`;
     }
     const b = canvasBlocks.find(x => x.id === selBlockId);
     if (b) {
@@ -1297,13 +1300,14 @@ function inicializarCanvas() {
       limparRacks();
       desenharLayout(data.layout);
       desenharZonas(data.zonas_layout);
-      ajustarCenaECamera(data.layout, data.zonas_layout);
+      ajustarCenaECamera(data.layout, data.zonas_layout, data.edificio);
       const tipos = [...new Set(data.layout.flatMap(r => r.load_types))];
       desenharLegenda(tipos, data.zonas_layout.map(z => z.nome));
 
       document.getElementById("resumo").innerHTML = `
-        <p><b>Área total do armazém (envolvente do arranjo): ${data.area_total_m2} m²</b>
-          — ${data.largura_total_m} × ${data.profundidade_total_m} m</p>
+        <p><b>Área total do edifício (perímetro a 1 m dos elementos): ${data.area_total_m2} m²</b>
+          — envolvente retangular de referência: ${data.largura_total_m} × ${data.profundidade_total_m} m
+          (${data.area_retangulo_m2} m²)</p>
         <p>Footprint de racks: ${data.area_racks_m2} m² · Zonas funcionais: ${data.area_zonas_m2} m²</p>`;
     } finally {
       btn.textContent = "2 · Renderizar layout 3D";
