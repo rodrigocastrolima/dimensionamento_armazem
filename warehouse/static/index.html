@@ -519,6 +519,8 @@ function initViewer() {
   renderer.setSize(el.clientWidth, el.clientHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
   el.appendChild(renderer.domElement);
 
   labelRenderer = new CSS2DRenderer();
@@ -550,8 +552,9 @@ function initViewer() {
     }
   }, { passive: false });
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
-  dirLight = new THREE.DirectionalLight(0xfff4e0, 1.0);
+  // luz de nave industrial: hemisférica (céu frio / chão quente) + "sol" das claraboias
+  scene.add(new THREE.HemisphereLight(0xbfd0e2, 0x4a463e, 0.55));
+  dirLight = new THREE.DirectionalLight(0xfff2dd, 1.1);
   dirLight.position.set(15, 30, 10);
   dirLight.castShadow = true;
   dirLight.shadow.mapSize.set(2048, 2048);
@@ -560,15 +563,13 @@ function initViewer() {
   scene.add(dirLight);
   scene.add(dirLight.target);
 
-  const grid = new THREE.GridHelper(200, 200, 0x3a3f47, 0x2a2e34);
-  grid.position.y = 0.005;
-  scene.add(grid);
-
+  // chão exterior (terreno à volta do edifício)
   chao = new THREE.Mesh(
-    new THREE.PlaneGeometry(200, 200),
-    new THREE.MeshStandardMaterial({ color: 0x2b2f35, roughness: 0.95 }),
+    new THREE.PlaneGeometry(400, 400),
+    new THREE.MeshStandardMaterial({ color: 0x35383c, roughness: 0.98 }),
   );
   chao.rotation.x = -Math.PI / 2;
+  chao.position.y = -0.02;
   chao.receiveShadow = true;
   scene.add(chao);
 
@@ -607,30 +608,84 @@ function limparRacks() {
   });
 }
 
+function texturaChapa() {
+  // chapa ondulada: nervuras verticais + faixa de claraboias no topo
+  return _canvasTex((ctx, w, h) => {
+    for (let x = 0; x < w; x += 16) {
+      const g = ctx.createLinearGradient(x, 0, x + 16, 0);
+      g.addColorStop(0, "#5a616c"); g.addColorStop(0.5, "#767e8a"); g.addColorStop(1, "#5a616c");
+      ctx.fillStyle = g;
+      ctx.fillRect(x, 0, 16, h);
+    }
+    ctx.fillStyle = "#aac9dd";                     // claraboias
+    ctx.globalAlpha = 0.85;
+    for (let x = 8; x < w - 20; x += 40) ctx.fillRect(x, h * 0.06, 26, h * 0.13);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = "rgba(30,32,36,0.5)";          // rodapé
+    ctx.fillRect(0, h * 0.92, w, h * 0.08);
+  }, 256, 256);
+}
+
 function desenharParedes(maxX, maxY, maxZ) {
-  const altura = Math.max(maxZ * 1.15, 4);
+  const altura = Math.max(maxZ * 1.2, 5);
   const grupo = new THREE.Group();
   grupo.userData.isParedes = true;
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0x3d434c, roughness: 0.9, side: THREE.DoubleSide, transparent: true, opacity: 0.55,
-  });
   const margem = 1.5;
   const larguraTotal = maxX + margem * 2;
   const profundidadeTotal = maxY + margem * 2;
+
+  // laje de betão do edifício
+  const texChao = texturaBetao();
+  texChao.repeat.set(larguraTotal / 5, profundidadeTotal / 5);
+  const laje = new THREE.Mesh(
+    new THREE.PlaneGeometry(larguraTotal, profundidadeTotal),
+    new THREE.MeshStandardMaterial({ map: texChao, roughness: 0.92 }));
+  laje.rotation.x = -Math.PI / 2;
+  laje.position.set(maxX / 2, 0.005, maxY / 2);
+  laje.receiveShadow = true;
+  grupo.add(laje);
+
+  // paredes com normais para FORA + BackSide: vistas de fora são invisíveis
+  // (vês o interior); por dentro são chapa ondulada com claraboias
+  const texBase = texturaChapa();
   const paredes = [
-    { larg: larguraTotal, x: maxX / 2, z: -margem, rotY: 0 },
+    { larg: larguraTotal, x: maxX / 2, z: -margem, rotY: Math.PI },
     { larg: larguraTotal, x: maxX / 2, z: maxY + margem, rotY: 0 },
-    { larg: profundidadeTotal, x: -margem, z: maxY / 2, rotY: Math.PI / 2 },
+    { larg: profundidadeTotal, x: -margem, z: maxY / 2, rotY: -Math.PI / 2 },
     { larg: profundidadeTotal, x: maxX + margem, z: maxY / 2, rotY: Math.PI / 2 },
   ];
   for (const p of paredes) {
-    const geo = new THREE.PlaneGeometry(p.larg, altura);
-    const mesh = new THREE.Mesh(geo, mat);
+    const tex = texBase.clone();
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(Math.max(p.larg / 8, 1), 1);
+    tex.needsUpdate = true;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(p.larg, altura),
+      new THREE.MeshStandardMaterial({ map: tex, roughness: 0.75, metalness: 0.25, side: THREE.BackSide }));
     mesh.position.set(p.x, altura / 2, p.z);
     mesh.rotation.y = p.rotY;
-    mesh.receiveShadow = true;
     grupo.add(mesh);
   }
+
+  // luminárias highbay suspensas em grelha sobre a área útil
+  for (let lx = 4; lx < maxX - 2; lx += 8) {
+    for (let lz = 4; lz < maxY - 2; lz += 8) {
+      const lum = criarLuminaria();
+      lum.position.set(lx, altura - 0.9, lz);
+      grupo.add(lum);
+    }
+  }
+
+  // empilhadores estacionados na faixa livre junto à parede da frente
+  const posEmp = [[maxX * 0.25, 0], [maxX * 0.62, Math.PI / 7]];
+  for (const [ex, rotE] of posEmp) {
+    if (ex < 2) continue;
+    const emp = criarEmpilhador();
+    emp.position.set(ex, 0, maxY + margem - 1.7);
+    emp.rotation.y = rotE;
+    grupo.add(emp);
+  }
+
   scene.add(grupo);
 }
 
@@ -643,93 +698,294 @@ function corZona(texto) {
 
 const ALTURA_ZONA_M = 0.3;
 
+// ------------------------------------------------------- materiais e adereços
+function _canvasTex(draw, w = 256, h = 256) {
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  draw(cv.getContext("2d"), w, h);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function hashInt(s) {
+  let x = 0;
+  for (let i = 0; i < s.length; i++) x = (x * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(x);
+}
+
+function texturaBetao() {
+  const tex = _canvasTex((ctx, w, h) => {
+    ctx.fillStyle = "#93938e"; ctx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 2200; i++) {
+      const g = 110 + Math.random() * 50 | 0;
+      ctx.fillStyle = `rgba(${g},${g},${g - 4},0.10)`;
+      ctx.fillRect(Math.random() * w, Math.random() * h, 1 + Math.random() * 4, 1 + Math.random() * 4);
+    }
+    ctx.strokeStyle = "rgba(60,60,60,0.45)"; ctx.lineWidth = 3;
+    ctx.strokeRect(1, 1, w - 2, h - 2);   // junta de dilatação por "laje"
+  }, 512, 512);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+// cartão: tons por SKU, tampa com fita-cola, frente com etiqueta da cor do tipo de carga
+const TINTAS_CARTAO = ["#b48a5a", "#a97f52", "#bd9464", "#a2794e", "#b58e63", "#ab8155"];
+const _matCache = new Map();
+const _geoCache = new Map();
+
+function geoCaixa(w, h, d) {
+  const k = `${w.toFixed(3)}|${h.toFixed(3)}|${d.toFixed(3)}`;
+  if (!_geoCache.has(k)) _geoCache.set(k, new THREE.BoxGeometry(w, h, d));
+  return _geoCache.get(k);
+}
+
+function materiaisCaixa(tintIdx, corTipo) {
+  const key = `${tintIdx}|${corTipo}`;
+  if (_matCache.has(key)) return _matCache.get(key);
+  const tinta = TINTAS_CARTAO[tintIdx % TINTAS_CARTAO.length];
+
+  const lado = new THREE.MeshStandardMaterial({
+    roughness: 0.85,
+    map: _canvasTex((ctx, w, h) => {
+      ctx.fillStyle = tinta; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = "rgba(0,0,0,0.08)"; ctx.fillRect(0, h - 10, w, 10);   // vinco inferior
+      ctx.strokeStyle = "rgba(0,0,0,0.10)"; ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, w - 2, h - 2);
+    }, 128, 128),
+  });
+  const topo = new THREE.MeshStandardMaterial({
+    roughness: 0.85,
+    map: _canvasTex((ctx, w, h) => {
+      ctx.fillStyle = tinta; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = "rgba(0,0,0,0.14)";                       // sombra da junta das abas
+      ctx.fillRect(0, h / 2 - 2, w, 4);
+      ctx.fillStyle = "rgba(224,214,180,0.9)";                  // fita-cola
+      ctx.fillRect(0, h / 2 - 9, w, 18);
+    }, 128, 128),
+  });
+  const frente = new THREE.MeshStandardMaterial({
+    roughness: 0.85,
+    map: _canvasTex((ctx, w, h) => {
+      ctx.fillStyle = tinta; ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(0,0,0,0.10)"; ctx.lineWidth = 2;
+      ctx.strokeRect(1, 1, w - 2, h - 2);
+      ctx.fillStyle = "#f2f0e8";                                 // etiqueta
+      ctx.fillRect(w * 0.56, h * 0.14, w * 0.32, h * 0.30);
+      ctx.fillStyle = corTipo;                                   // canto na cor do tipo de carga
+      ctx.fillRect(w * 0.56, h * 0.14, w * 0.32, h * 0.08);
+      ctx.fillStyle = "rgba(40,40,40,0.75)";                     // "texto" da etiqueta
+      for (let i = 0; i < 3; i++) ctx.fillRect(w * 0.59, h * (0.27 + i * 0.045), w * 0.24, h * 0.016);
+    }, 128, 128),
+  });
+  const mats = [frente, lado, topo, lado.clone(), frente.clone(), lado];
+  _matCache.set(key, mats);
+  return mats;
+}
+
+const MAT_PRUMO = new THREE.MeshStandardMaterial({ color: 0x2e5aa0, roughness: 0.45, metalness: 0.4 });
+const MAT_VIGA = new THREE.MeshStandardMaterial({ color: 0xe0641e, roughness: 0.5, metalness: 0.3 });
+const MAT_PRATELEIRA = new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.6, metalness: 0.5 });
+const MAT_MADEIRA = new THREE.MeshStandardMaterial({ color: 0x9a6b3f, roughness: 0.85 });
+const MAT_PERFIL_LONGO = new THREE.MeshStandardMaterial({ color: 0x8b9098, roughness: 0.35, metalness: 0.75 });
+
+function criarPalete(comp, prof) {
+  const g = new THREE.Group();
+  const deck = new THREE.Mesh(geoCaixa(comp, 0.03, prof), MAT_MADEIRA);
+  deck.position.y = 0.105;
+  g.add(deck);
+  for (let i = 0; i < 3; i++) {
+    const bloco = new THREE.Mesh(geoCaixa(comp, 0.09, 0.1), MAT_MADEIRA);
+    bloco.position.set(0, 0.045, -prof / 2 + 0.05 + i * (prof - 0.1) / 2);
+    g.add(bloco);
+  }
+  return g;
+}
+
+function criarEstruturaRack(grupo, r, baseY, altModulo) {
+  const nivAlt = altModulo / r.niveis;
+  // prumos verticais (pares frente/trás, a cada ~1.4 m de largura)
+  const nSec = Math.max(1, Math.round(r.larg_m / 1.4));
+  for (let i = 0; i <= nSec; i++) {
+    let x = r.x + (r.larg_m * i) / nSec;
+    x = Math.min(Math.max(x, r.x + 0.04), r.x + r.larg_m - 0.04);
+    for (const zz of [r.y + 0.04, r.y + r.prof_m - 0.04]) {
+      const prumo = new THREE.Mesh(geoCaixa(0.08, altModulo, 0.08), MAT_PRUMO);
+      prumo.position.set(x, baseY + altModulo / 2, zz);
+      prumo.userData.posicao = r;
+      grupo.add(prumo);
+    }
+  }
+  // por nível: 2 vigas laranja + prateleira
+  for (let nvl = 0; nvl < r.niveis; nvl++) {
+    const y = baseY + nvl * nivAlt;
+    const deck = new THREE.Mesh(geoCaixa(r.larg_m, 0.035, r.prof_m), MAT_PRATELEIRA);
+    deck.position.set(r.x + r.larg_m / 2, y + 0.0175, r.y + r.prof_m / 2);
+    deck.userData.posicao = r;
+    deck.castShadow = true;
+    grupo.add(deck);
+    for (const zz of [r.y + 0.03, r.y + r.prof_m - 0.03]) {
+      const viga = new THREE.Mesh(geoCaixa(r.larg_m, 0.1, 0.05), MAT_VIGA);
+      viga.position.set(r.x + r.larg_m / 2, y + 0.05, zz);
+      viga.userData.posicao = r;
+      grupo.add(viga);
+    }
+  }
+}
+
+function criarEmpilhador() {
+  const g = new THREE.Group();
+  const corpo = new THREE.MeshStandardMaterial({ color: 0xf0a007, roughness: 0.5 });
+  const escuro = new THREE.MeshStandardMaterial({ color: 0x26282c, roughness: 0.7 });
+  const cinza = new THREE.MeshStandardMaterial({ color: 0x55585e, roughness: 0.5, metalness: 0.5 });
+
+  const chassis = new THREE.Mesh(geoCaixa(1.1, 0.55, 1.7), corpo);
+  chassis.position.set(0, 0.5, 0.15);
+  g.add(chassis);
+  const contrapeso = new THREE.Mesh(geoCaixa(1.05, 0.5, 0.45), corpo);
+  contrapeso.position.set(0, 0.55, 0.85);
+  g.add(contrapeso);
+  const assento = new THREE.Mesh(geoCaixa(0.5, 0.35, 0.5), escuro);
+  assento.position.set(0, 0.95, 0.35);
+  g.add(assento);
+  // gaiola de proteção
+  for (const [px, pz] of [[-0.45, -0.35], [0.45, -0.35], [-0.45, 0.65], [0.45, 0.65]]) {
+    const poste = new THREE.Mesh(geoCaixa(0.06, 1.25, 0.06), escuro);
+    poste.position.set(px, 1.4, pz);
+    g.add(poste);
+  }
+  const teto = new THREE.Mesh(geoCaixa(1.05, 0.05, 1.15), escuro);
+  teto.position.set(0, 2.05, 0.15);
+  g.add(teto);
+  // mastro + garfos
+  for (const px of [-0.3, 0.3]) {
+    const barra = new THREE.Mesh(geoCaixa(0.09, 2.2, 0.09), cinza);
+    barra.position.set(px, 1.1, -0.78);
+    g.add(barra);
+  }
+  for (const px of [-0.28, 0.28]) {
+    const garfo = new THREE.Mesh(geoCaixa(0.12, 0.045, 1.0), escuro);
+    garfo.position.set(px, 0.08, -1.3);
+    g.add(garfo);
+  }
+  // rodas
+  const geoRoda = new THREE.CylinderGeometry(0.28, 0.28, 0.2, 16);
+  for (const [px, pz] of [[-0.52, -0.5], [0.52, -0.5], [-0.52, 0.75], [0.52, 0.75]]) {
+    const roda = new THREE.Mesh(geoRoda, escuro);
+    roda.rotation.z = Math.PI / 2;
+    roda.position.set(px, 0.28, pz);
+    g.add(roda);
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarLuminaria() {
+  const g = new THREE.Group();
+  const haste = new THREE.Mesh(geoCaixa(0.03, 0.6, 0.03),
+    new THREE.MeshStandardMaterial({ color: 0x2a2a2a }));
+  haste.position.y = 0.55;
+  g.add(haste);
+  const campanula = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.34, 0.26, 14),
+    new THREE.MeshStandardMaterial({ color: 0x3a3d40, roughness: 0.4, metalness: 0.6 }));
+  campanula.position.y = 0.14;
+  g.add(campanula);
+  const lampada = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 14),
+    new THREE.MeshBasicMaterial({ color: 0xfff3cf }));
+  g.add(lampada);
+  return g;
+}
+
 function desenharZonas(zonasLayout) {
+  // zonas como marcação pintada no pavimento: preenchimento translúcido,
+  // contorno sólido e nome estampado (stencil), como tinta industrial.
   for (const z of zonasLayout) {
     const grupo = new THREE.Group();
     grupo.userData.isZonaGroup = true;
+    grupo.position.set(z.x + z.larg_m / 2, 0, z.y + z.prof_m / 2);
+    grupo.rotation.y = -THREE.MathUtils.degToRad(z.rot || 0);
 
-    const geo = new THREE.BoxGeometry(z.larg_m, ALTURA_ZONA_M, z.prof_m);
-    const mat = new THREE.MeshStandardMaterial({ color: corZona(z.nome) });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(z.x + z.larg_m / 2, ALTURA_ZONA_M / 2, z.y + z.prof_m / 2);
-    mesh.rotation.y = -THREE.MathUtils.degToRad(z.rot || 0);
-    mesh.userData.zona = z;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    grupo.add(mesh);
+    const cor = "#" + corZona(z.nome).getHexString();
+    const aspecto = Math.min(Math.max(z.prof_m / Math.max(z.larg_m, 0.1), 0.15), 6);
+    const texH = Math.min(Math.max(Math.round(512 * aspecto), 96), 1024);
+    const tex = _canvasTex((ctx, w, h) => {
+      ctx.fillStyle = cor; ctx.globalAlpha = 0.24; ctx.fillRect(0, 0, w, h);
+      ctx.globalAlpha = 1; ctx.lineWidth = 12; ctx.strokeStyle = cor;
+      ctx.strokeRect(8, 8, w - 16, h - 16);
+      ctx.setLineDash([26, 16]); ctx.lineWidth = 4;
+      ctx.strokeRect(30, 30, w - 60, h - 60);
+      ctx.setLineDash([]);
+      const nome = z.nome.toUpperCase();
+      const fs = Math.min((w - 80) / Math.max(nome.length * 0.62, 1), h * 0.22, 90);
+      ctx.font = `bold ${Math.max(fs, 14)}px system-ui, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillStyle = cor;
+      ctx.fillText(nome, w / 2, h / 2);
+    }, 512, texH);
 
-    const edges = new THREE.EdgesGeometry(geo);
-    const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
-    linhas.position.copy(mesh.position);
-    linhas.rotation.copy(mesh.rotation);
-    grupo.add(linhas);
-
-    const div = document.createElement("div");
-    div.className = "rotulo-zona";
-    div.textContent = z.nome;
-    const rotulo = new CSS2DObject(div);
-    rotulo.position.set(z.x + z.larg_m / 2, ALTURA_ZONA_M + 0.5, z.y + z.prof_m / 2);
-    grupo.add(rotulo);
-    zonaLabelEls.push(div);
+    const placa = new THREE.Mesh(
+      new THREE.PlaneGeometry(z.larg_m, z.prof_m),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+    placa.rotation.x = -Math.PI / 2;
+    placa.position.y = 0.03;
+    placa.userData.zona = z;
+    grupo.add(placa);
 
     scene.add(grupo);
   }
 }
 
+function _marcarCaixa(mesh, r, c, nivel, grupo) {
+  mesh.userData.posicao = r;
+  mesh.userData.caixa = c;
+  mesh.userData.nivel = nivel;
+  grupo.add(mesh);
+}
+
 function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
-  // nivel.caixas ja vem com x_m/y_m reais do packer 2D (rectpack) -- sem
-  // recalculo de grelha no cliente, so' desenha onde o backend colocou.
-  // Cada caixa pode ser um stack de multiplas caixas (num_boxes_in_stack > 1).
+  // nivel.caixas ja vem com x_m/y_m reais do packer 2D (rectpack).
+  // Stacks (num_boxes_in_stack > 1) sao desenhados como caixas fisicas
+  // empilhadas; PALLET assenta numa palete de madeira; LONGO e' perfil metalico.
+  const folga = 0.04;   // caixas pousadas em cima da prateleira (3.5 cm de deck)
   for (const c of nivel.caixas) {
     const cx = r.x + c.x_m + c.comp_m / 2;
     const cz = r.y + c.y_m + c.larg_m / 2;
-    const cy = baseY + c.alt_m / 2;
+    const corTipo = "#" + (CORES[c.load_type] || 0x888888).toString(16).padStart(6, "0");
+    const n = Math.max(c.num_boxes_in_stack || 1, 1);
+    const tint = hashInt(c.sku) % TINTAS_CARTAO.length;
 
-    const geo = new THREE.BoxGeometry(c.comp_m * 0.92, c.alt_m * 0.92, c.larg_m * 0.92);
-    const cor = CORES[c.load_type] || 0x888888;
-    const ehReserva = nivel.eh_picking === false && c.eh_picking === false;
-    const isStack = (c.num_boxes_in_stack || 1) > 1;
+    if (c.load_type === "LONGO") {
+      const perfil = new THREE.Mesh(
+        geoCaixa(c.comp_m * 0.98, c.alt_m * 0.55, c.larg_m * 0.7), MAT_PERFIL_LONGO);
+      perfil.position.set(cx, baseY + folga + c.alt_m * 0.3, cz);
+      _marcarCaixa(perfil, r, c, nivel, grupo);
+      continue;
+    }
 
-    const mat = new THREE.MeshStandardMaterial({
-      color: cor,
-      opacity: ehReserva ? 0.55 : 1,
-      transparent: ehReserva,
-      metalness: isStack ? 0.6 : 0.2,
-      roughness: isStack ? 0.3 : 0.7,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(cx, cy, cz);
-    mesh.userData.posicao = r;
-    mesh.userData.caixa = c;
-    mesh.userData.nivel = nivel;
-    grupo.add(mesh);
+    const altUnit = c.alt_m / n;
 
-    const edges = new THREE.EdgesGeometry(geo);
-    const corBorda = c.eh_picking ? 0x00aa00 : (isStack ? 0xffaa00 : 0x000000);
-    const larguraBorda = isStack ? 2 : 1;
-    const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
-      color: corBorda,
-      transparent: true,
-      opacity: isStack ? 0.8 : 0.4,
-      linewidth: larguraBorda,
-    }));
-    linhas.position.copy(mesh.position);
-    grupo.add(linhas);
+    if (c.load_type === "PALLET") {
+      for (let s = 0; s < n; s++) {
+        const yBase = baseY + folga + s * altUnit;
+        const palete = criarPalete(c.comp_m * 0.96, c.larg_m * 0.96);
+        palete.position.set(cx, yBase, cz);
+        palete.traverse(o => { if (o.isMesh) { o.userData.posicao = r; o.userData.caixa = c; o.userData.nivel = nivel; } });
+        grupo.add(palete);
+        const hCarga = Math.max(altUnit - 0.12 - 0.06, 0.1);
+        const carga = new THREE.Mesh(
+          geoCaixa(c.comp_m * 0.9, hCarga, c.larg_m * 0.9), materiaisCaixa(tint, corTipo));
+        carga.position.set(cx, yBase + 0.12 + hCarga / 2, cz);
+        _marcarCaixa(carga, r, c, nivel, grupo);
+      }
+      continue;
+    }
 
-    // Label para stacks mostrando quantas caixas
-    if (isStack) {
-      const div = document.createElement("div");
-      div.className = "rotulo-zona";
-      div.style.background = "rgba(255, 170, 0, 0.8)";
-      div.style.padding = "2px 4px";
-      div.style.borderRadius = "2px";
-      div.textContent = `${c.num_boxes_in_stack}x`;
-      div.style.fontSize = "10px";
-      div.style.fontWeight = "bold";
-      const rotulo = new CSS2DObject(div);
-      rotulo.position.set(cx, cy + c.alt_m / 2 + 0.3, cz);
-      grupo.add(rotulo);
-      zonaLabelEls.push(div);
+    for (let s = 0; s < n; s++) {
+      const caixa = new THREE.Mesh(
+        geoCaixa(c.comp_m * 0.94, altUnit * 0.92, c.larg_m * 0.94),
+        materiaisCaixa(tint, corTipo));
+      caixa.position.set(cx, baseY + folga + s * altUnit + (altUnit * 0.92) / 2, cz);
+      _marcarCaixa(caixa, r, c, nivel, grupo);
     }
   }
 }
@@ -740,27 +996,12 @@ function desenharLayout(layout) {
     const grupo = new THREE.Group();
     grupo.userData.isRackGroup = true;
 
-    const cor = CORES[r.load_types[0]] || 0x888888;
     const altModulo = r.altura_m;
     const altNivel = r.altura_m / r.niveis;
 
     for (const bloco of r.blocos) {
       const baseModulo = bloco.bloco_idx * altModulo;
-
-      // estrutura do rack (semi-transparente, so' para dar nocao da prateleira)
-      const geo = new THREE.BoxGeometry(r.larg_m, altModulo, r.prof_m);
-      const mat = new THREE.MeshStandardMaterial({ color: cor, transparent: true, opacity: 0.12, depthWrite: false });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.set(r.x + r.larg_m / 2, baseModulo + altModulo / 2, r.y + r.prof_m / 2);
-      mesh.userData.posicao = r;
-      mesh.castShadow = true;
-      grupo.add(mesh);
-
-      const edges = new THREE.EdgesGeometry(geo);
-      const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
-      linhas.position.copy(mesh.position);
-      grupo.add(linhas);
-
+      criarEstruturaRack(grupo, r, baseModulo, altModulo);
       for (const nivel of bloco.niveis) {
         const baseY = baseModulo + nivel.nivel_idx * altNivel;
         desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY);
