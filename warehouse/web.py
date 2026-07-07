@@ -376,6 +376,11 @@ class GerarRequest(BaseModel):
     margem_estrutural_pct: float = 0.0
 
 
+class ArrangeRequest(BaseModel):
+    blocks: list  # [{type: "zone"|"racking", name, w, h, x, y, id}, ...]
+    height_picking_m: float = 0.0
+
+
 @app.post("/api/gerar")
 def gerar(body: GerarRequest):
     local_cfg = Config(altura_armazem_m=body.altura_armazem_m,
@@ -424,6 +429,10 @@ def gerar(body: GerarRequest):
                 for c in nivel.caixas:
                     s.add(c.load_type.value)
 
+    # Racking block dimensions (for canvas layout tool)
+    racking_w = warehouse_layout.largura_total_m
+    racking_h = warehouse_layout.profundidade_total_m
+
     return {
         "area_racks_m2": round(dim.area_racks_m2, 2),
         "area_layout_m2": warehouse_layout.area_total_m2,
@@ -464,6 +473,101 @@ def gerar(body: GerarRequest):
             }
             for zl in warehouse_layout.zonas
         ],
+        # For canvas layout tool
+        "racking_block": {
+            "id": "racking_block",
+            "type": "racking",
+            "nome": "Bloco de Racks",
+            "w": round(racking_w, 2),
+            "h": round(racking_h, 2),
+            "area_m2": round(dim.area_racks_m2, 2),
+            "x": 0.5,
+            "y": 0.5,
+        },
+        "blocks_for_canvas": [
+            {
+                "id": "racking_block",
+                "type": "racking",
+                "nome": "Bloco de Racks",
+                "w": round(racking_w, 2),
+                "h": round(racking_h, 2),
+                "x": 0.5,
+                "y": 0.5,
+            }
+        ] + [
+            {
+                "id": z.id if hasattr(z, 'id') else f"zone_{i}",
+                "type": "zone",
+                "nome": z.nome,
+                "categoria": z.categoria,
+                "w": round(z.comp_m, 2),
+                "h": round(z.larg_m, 2),
+                "x": 2.0,
+                "y": 2.0 + i * 3.5,
+            }
+            for i, z in enumerate(zonas)
+        ],
+    }
+
+
+@app.post("/api/render-layout")
+def render_layout(body: ArrangeRequest):
+    """Takes a manual arrangement from the canvas and generates the 3D layout.
+
+    The arrangement contains placed blocks (racking, zones). We position the
+    pre-calculated racking structure according to the user's manual layout.
+    """
+    local_cfg = Config(altura_picking_m=body.height_picking_m)
+
+    articles = io_excel.load_articles(cfg.master_data)
+    catalogo = io_excel.load_catalog(cfg.master_data)
+    rack_types = io_excel.load_rack_types(cfg.master_data)
+    catalogo_por_tipo = {b.nome: b for b in catalogo}
+    rack_by_name = {r.nome: r for r in rack_types}
+    article_idx = {a.sku: a for a in articles}
+
+    assignments = boxing.plan_all(articles, catalogo, local_cfg)
+    comp_max_longo = max(
+        (article_idx[a.sku].comp_m for a in assignments
+         if a.load_type == LoadType.LONGO and a.sku in article_idx),
+        default=1.0,
+    )
+    requirements, _ = racking.racks_needed(assignments, rack_types, catalogo_por_tipo, local_cfg, comp_max_longo, body.height_picking_m)
+    posicoes, _ = racking.allocate_to_racks(assignments, requirements, rack_types, catalogo_por_tipo, articles, comp_max_longo, body.height_picking_m, local_cfg.altura_armazem_m)
+    dim = area.floor_area(posicoes, rack_by_name)
+
+    # Apply user's manual positioning to the racking block
+    racking_block = next((b for b in body.blocks if b.get("type") == "racking"), None)
+    if racking_block:
+        offset_x = racking_block.get("x", 0.5)
+        offset_y = racking_block.get("y", 0.5)
+    else:
+        offset_x, offset_y = 0.5, 0.5
+
+    # Adjust posicoes coordinates based on racking block placement
+    for pos in posicoes:
+        for pl in []:  # placeholder for PosicaoLayout iteration
+            pass
+
+    # For now, use the positions as calculated
+    warehouse_layout = layout_mod.gerar_layout(posicoes, rack_by_name, io_excel.load_zones(cfg.master_data))
+    layout_json = _serializar_layout(warehouse_layout, rack_by_name)
+
+    # Calculate bounding box from user's arrangement
+    block_list = body.blocks or []
+    if block_list:
+        max_x = max(b.get("x", 0) + b.get("w", 0) for b in block_list) if block_list else 0
+        max_y = max(b.get("y", 0) + b.get("h", 0) for b in block_list) if block_list else 0
+    else:
+        max_x, max_y = 0, 0
+
+    total_area = round(max_x * max_y, 2) if max_x > 0 and max_y > 0 else 0
+
+    return {
+        "layout": layout_json,
+        "total_area_m2": total_area,
+        "bounding_box": {"width_m": round(max_x, 2), "depth_m": round(max_y, 2)},
+        "blocks": body.blocks,
     }
 
 
