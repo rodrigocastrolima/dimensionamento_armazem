@@ -531,10 +531,24 @@ function initViewer() {
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
-  controls.enableZoom = true;
-  controls.zoomSpeed = 1.0;
-  controls.enableDamping = true;   // aproximação progressiva e suave
+  controls.enableDamping = true;   // rotação/pan suaves
   controls.dampingFactor = 0.1;
+  // zoom personalizado: a roda DESLOCA a câmara na direção do olhar (voo),
+  // em vez do dolly do OrbitControls (que só aproxima/afasta de um alvo fixo)
+  controls.enableZoom = false;
+  renderer.domElement.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    const dist = camera.position.distanceTo(controls.target);
+    const passo = (e.deltaY < 0 ? 1 : -1) * Math.max(dist * 0.15, 0.4);
+    camera.position.addScaledVector(dir, passo);
+    // ao chegar muito perto do alvo, empurra-o para a frente -> permite
+    // continuar a "voar" através da cena em vez de travar
+    if (e.deltaY < 0 && camera.position.distanceTo(controls.target) < 1.5) {
+      controls.target.copy(camera.position).addScaledVector(dir, 1.5);
+    }
+  }, { passive: false });
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.45));
   dirLight = new THREE.DirectionalLight(0xfff4e0, 1.0);
@@ -774,8 +788,8 @@ function ajustarCenaECamera(layout, zonasLayout) {
   camera.near = Math.max(escala / 1000, 0.1);
   camera.far = escala * 20 + 400;
   camera.updateProjectionMatrix();
-  controls.minDistance = escala * 0.02;
-  controls.maxDistance = escala * 5;
+  controls.minDistance = 0.5;
+  controls.maxDistance = escala * 10;
   scene.fog.near = escala * 4;
   scene.fog.far = escala * 15;
 
