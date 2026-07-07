@@ -295,103 +295,6 @@ def download_pecas_caixas():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-def _uniao_edificio(blocks: list, margem: float = 1.0) -> dict:
-    """Edifício como UNIÃO dos blocos expandidos pela margem (1 m), em vez do
-    retângulo envolvente -- permite formas em L/U sem áreas mortas.
-
-    Devolve: area_m2 (área real da união), laje (fiadas retangulares sem
-    sobreposição, para o chão 3D) e paredes (segmentos do contorno com a
-    normal exterior). Blocos rodados entram pela sua caixa envolvente alinhada
-    aos eixos: as paredes são sempre ortogonais."""
-    rects = []
-    for b in blocks:
-        rot = math.radians(float(b.get("rot", 0.0) or 0.0))
-        w, h = float(b.get("w", 0.0)), float(b.get("h", 0.0))
-        cx, cy = float(b.get("x", 0.0)) + w / 2, float(b.get("y", 0.0)) + h / 2
-        pts = [(cx + dx * math.cos(rot) - dy * math.sin(rot),
-                cy + dx * math.sin(rot) + dy * math.cos(rot))
-               for dx, dy in ((-w / 2, -h / 2), (w / 2, -h / 2),
-                              (w / 2, h / 2), (-w / 2, h / 2))]
-        xs_b = [p[0] for p in pts]
-        ys_b = [p[1] for p in pts]
-        rects.append((round(min(xs_b) - margem, 4), round(min(ys_b) - margem, 4),
-                      round(max(xs_b) + margem, 4), round(max(ys_b) + margem, 4)))
-    if not rects:
-        return {"area_m2": 0.0, "laje": [], "paredes": []}
-
-    xs = sorted({v for r in rects for v in (r[0], r[2])})
-    ys = sorted({v for r in rects for v in (r[1], r[3])})
-    nx, ny = len(xs) - 1, len(ys) - 1
-    cheio = [[False] * nx for _ in range(ny)]
-    for x0, y0, x1, y1 in rects:
-        i0, i1 = xs.index(x0), xs.index(x1)
-        j0, j1 = ys.index(y0), ys.index(y1)
-        for j in range(j0, j1):
-            for i in range(i0, i1):
-                cheio[j][i] = True
-
-    area_total = sum((xs[i + 1] - xs[i]) * (ys[j + 1] - ys[j])
-                     for j in range(ny) for i in range(nx) if cheio[j][i])
-
-    # laje: fiadas horizontais de células cheias, fundidas (sem sobreposição)
-    laje = []
-    for j in range(ny):
-        i = 0
-        while i < nx:
-            if cheio[j][i]:
-                i0 = i
-                while i < nx and cheio[j][i]:
-                    i += 1
-                laje.append([round(xs[i0], 3), round(ys[j], 3),
-                             round(xs[i], 3), round(ys[j + 1], 3)])
-            else:
-                i += 1
-
-    # paredes: arestas entre célula cheia e vazio, com normal para fora,
-    # fundidas quando colineares e contíguas
-    def _ocupado(i, j):
-        return 0 <= i < nx and 0 <= j < ny and cheio[j][i]
-
-    segs = []   # (orientacao, coord_fixa, a0, a1, nx, ny)
-    for j in range(ny):
-        for i in range(nx):
-            if not cheio[j][i]:
-                continue
-            if not _ocupado(i, j - 1):
-                segs.append(("h", ys[j], xs[i], xs[i + 1], 0.0, -1.0))
-            if not _ocupado(i, j + 1):
-                segs.append(("h", ys[j + 1], xs[i], xs[i + 1], 0.0, 1.0))
-            if not _ocupado(i - 1, j):
-                segs.append(("v", xs[i], ys[j], ys[j + 1], -1.0, 0.0))
-            if not _ocupado(i + 1, j):
-                segs.append(("v", xs[i + 1], ys[j], ys[j + 1], 1.0, 0.0))
-
-    from itertools import groupby
-    paredes = []
-    segs.sort(key=lambda s: (s[0], s[4], s[5], s[1], s[2]))
-    for chave, grupo in groupby(segs, key=lambda s: (s[0], s[4], s[5], s[1])):
-        atual = None
-        for s in grupo:
-            if atual is not None and abs(s[2] - atual[1]) < 1e-6:
-                atual = (atual[0], s[3])
-            else:
-                if atual is not None:
-                    paredes.append((chave, atual))
-                atual = (s[2], s[3])
-        if atual is not None:
-            paredes.append((chave, atual))
-
-    out = []
-    for (orient, nx_, ny_, coord), (a0, a1) in paredes:
-        if orient == "h":
-            out.append({"x1": round(a0, 3), "y1": coord, "x2": round(a1, 3), "y2": coord,
-                        "nx": nx_, "ny": ny_})
-        else:
-            out.append({"x1": coord, "y1": round(a0, 3), "x2": coord, "y2": round(a1, 3),
-                        "nx": nx_, "ny": ny_})
-    return {"area_m2": round(area_total, 2), "laje": laje, "paredes": out}
-
-
 @app.post("/api/render-layout")
 def render_layout(body: ArrangeRequest):
     """Gera o 3D a partir do arranjo manual do canvas.
@@ -500,8 +403,6 @@ def render_layout(body: ArrangeRequest):
     largura = max_x - min_x
     profundidade = max_y - min_y
 
-    edificio = _uniao_edificio(body.blocks, margem=1.0)
-
     return {
         "layout": layout_json,
         "zonas_layout": zonas_layout,
@@ -509,10 +410,7 @@ def render_layout(body: ArrangeRequest):
         "area_zonas_m2": round(sum(z["area_m2"] for z in zonas_layout), 2),
         "largura_total_m": round(largura, 2),
         "profundidade_total_m": round(profundidade, 2),
-        # área REAL do edifício: união dos blocos + 1 m de margem (permite L)
-        "area_total_m2": edificio["area_m2"],
-        "area_retangulo_m2": round(largura * profundidade, 2),
-        "edificio": edificio,
+        "area_total_m2": round(largura * profundidade, 2),
     }
 
 
