@@ -135,11 +135,13 @@ def _larguras_alinhadas(por_tipologia: dict[str, list[PosicaoChao]],
     melhor_ks: dict[str, int] = {}
     melhor_area, melhor_perimetro = float("inf"), float("inf")
 
+    transicoes = sum(max(_corredor_m(tips[i][0]), _corredor_m(tips[i + 1][0]))
+                     for i in range(len(tips) - 1))
     for alvo in candidatos:
         ks = {rack.nome: max(int(alvo / rack.larg_m + 1e-9), 1) for rack, _ in tips}
         largura = max(min(ks[rack.nome], len(lista)) * rack.larg_m for rack, lista in tips)
         profundidade = (sum(_profundidade(rack, len(lista), ks[rack.nome]) for rack, lista in tips)
-                        + CORREDOR_TRANSICAO_M * (len(tips) - 1))
+                        + transicoes)
         area_env = largura * profundidade
         perimetro = 2 * (largura + profundidade)
         if (area_env < melhor_area - 1e-9
@@ -174,16 +176,22 @@ def gerar_layout(posicoes: list[PosicaoChao],
     largura_total = 0.0
     area_racks = 0.0
 
+    anterior: RackType | None = None
     for rack_nome, lista in por_tipologia.items():
         rack = rack_types[rack_nome]
+        if anterior is not None:
+            # corredor entre blocos de tipologias: serve os dois lados, logo
+            # usa o MAIOR dos corredores das duas (não um valor fixo)
+            y_cursor += max(_corredor_m(anterior), _corredor_m(rack))
         layout_tipo, largura, profundidade = _layout_tipologia(
             rack, lista, y_cursor, ks_por_tipologia.get(rack_nome))
         todas.extend(layout_tipo)
         largura_total = max(largura_total, largura)
-        y_cursor += profundidade + CORREDOR_TRANSICAO_M
+        y_cursor += profundidade
         area_racks += rack_footprint_m2(rack) * len(lista)
+        anterior = rack
 
-    profundidade_total = max(y_cursor - CORREDOR_TRANSICAO_M - y0_racks, 0.0)
+    profundidade_total = max(y_cursor - y0_racks, 0.0)
     area_envolvente = largura_total * profundidade_total
     area_corredores = max(area_envolvente - area_racks, 0.0)
 
