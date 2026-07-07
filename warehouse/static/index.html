@@ -1470,7 +1470,8 @@ function inicializarCanvas() {
       desenharBlocks();
       const rb = lastGerarData.racking_block;
       let html = `<b>Bloco de racks:</b> ${rb.w} × ${rb.h} m = ${(rb.w * rb.h).toFixed(1)} m² ` +
-                 `(footprint de racks: ${lastGerarData.area_racks_m2} m²; corredores internos incluídos no bloco)`;
+                 `(footprint de racks: ${lastGerarData.area_racks_m2} m²; corredores internos incluídos no bloco)` +
+                 ` · <a href="/api/download/pecas-caixas" download style="color:#7fb3f0">⬇ Excel peças → tipo de caixa</a>`;
       if (lastGerarData.avisos && lastGerarData.avisos.length) {
         html += `<div class="avisos">⚠ ${lastGerarData.avisos.join("<br>⚠ ")}</div>`;
       }

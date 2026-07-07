@@ -175,6 +175,32 @@ def load_zones(path: Path) -> list[Zona]:
     return zonas
 
 
+def write_pecas_com_caixa(master_path: Path, out_path: Path,
+                          assignments: list[BoxAssignment]) -> None:
+    """Copia a folha «Peças» do master data tal e qual (todas as colunas,
+    valores originais) e acrescenta a coluna 'Tipo_Caixa': a unidade de carga
+    escolhida no Passo 1 (boxing) para cada SKU."""
+    wb_in = openpyxl.load_workbook(master_path, data_only=True)
+    ws_in = _ws(wb_in, "Peças")
+    por_sku = {a.sku: a.load_type.value for a in assignments}
+
+    wb_out = openpyxl.Workbook()
+    ws_out = wb_out.active
+    ws_out.title = "Peças"
+    rows = list(ws_in.iter_rows(values_only=True))
+    if rows:
+        from openpyxl.styles import Font
+        ws_out.append(list(rows[0]) + ["Tipo_Caixa"])
+        for cell in ws_out[1]:
+            cell.font = Font(bold=True)
+        for r in rows[1:]:
+            if r[0] is None:
+                continue
+            ws_out.append(list(r) + [por_sku.get(str(r[0]), "")])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    wb_out.save(out_path)
+
+
 def write_results(path: Path,
                   assignments: list[BoxAssignment],
                   requirements: list[RackRequirement],

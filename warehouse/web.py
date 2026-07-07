@@ -397,6 +397,9 @@ def gerar(body: GerarRequest):
     article_idx = {a.sku: a for a in articles}
 
     assignments = boxing.plan_all(articles, catalogo, local_cfg)
+    io_excel.write_pecas_com_caixa(cfg.master_data,
+                                   cfg.master_data.parent / "pecas_tipo_caixa.xlsx",
+                                   assignments)
 
     comp_max_longo = max(
         (article_idx[a.sku].comp_m for a in assignments
@@ -510,6 +513,15 @@ def gerar(body: GerarRequest):
             for i, z in enumerate(zonas)
         ],
     }
+
+
+@app.get("/api/download/pecas-caixas")
+def download_pecas_caixas():
+    """Excel com a folha «Peças» original + coluna Tipo_Caixa (gerado no /api/gerar)."""
+    path = cfg.master_data.parent / "pecas_tipo_caixa.xlsx"
+    return FileResponse(
+        path, filename="pecas_tipo_caixa.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @app.post("/api/render-layout")
