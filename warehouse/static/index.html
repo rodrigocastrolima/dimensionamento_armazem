@@ -128,24 +128,34 @@
 
 <section id="arranjar" class="tab">
   <div class="toolbar">
-    <button class="action" id="btn-carregar-blocos">Carregar blocos (após Gerar)</button>
+    <label>Altura do armazém (m, 0 = sem limite):
+      <input id="altura-armazem" type="number" step="0.1" value="0" style="width:80px">
+    </label>
+    <label>Altura de picking (m, 0 = desativado):
+      <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
+    </label>
+    <button class="action" id="btn-gerar-racks">1 · Gerar racks</button>
+    <button id="btn-rodar-zona">⟳ Rodar zona 45°</button>
     <button id="btn-reset-canvas">↺ Repor</button>
-    <button class="action" id="btn-renderizar">Renderizar 3D</button>
     <span style="flex:1"></span>
     <button id="btn-guardar-arranjo">⬇ Guardar arranjo</button>
     <button id="btn-carregar-arranjo">⬆ Carregar arranjo</button>
     <input type="file" id="fileInArranjo" accept=".json" style="display:none">
+    <button class="action" id="btn-renderizar">2 · Renderizar layout 3D</button>
   </div>
-  <div class="dica">Arrasta blocos para reorganizar. Escala: 1 m = 20 px. Clica em bloco para ver dimensões.</div>
+  <div class="dica">1) «Gerar racks» calcula o bloco de racks e carrega os blocos no canvas (sem 3D).
+    2) Arrasta os blocos — os corredores são o espaço que deixares entre eles — e roda zonas se necessário.
+    3) «Renderizar layout 3D» mostra os racks, as zonas e a área total. Escala: 1 m = 20 px, grelha de 0.25 m.</div>
+  <div id="canvas-resumo" style="font-size:13px; margin-bottom:8px;"></div>
   <div style="display:flex; gap:12px;">
-    <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid #ccc; border-radius:8px; overflow:auto; position:relative; height:500px;">
-      <svg id="canvas" style="position:absolute; top:0; left:0; background:#fff; cursor:default;"></svg>
+    <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid #555; border-radius:8px; overflow:auto; position:relative; height:520px;">
+      <svg id="canvas" style="background:#fff; cursor:default;"></svg>
     </div>
-    <div style="width:250px;">
-      <div class="panel">
-        <h2>Informações</h2>
+    <div style="width:260px;">
+      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
+        <h3 style="margin:0 0 8px 0; font-size:13px;">Informações</h3>
         <div id="canvas-info" style="font-size:12px;">
-          <p style="color:#999;">Carregue os blocos para começar.</p>
+          <p style="color:#999;">Gera os racks para começar.</p>
         </div>
       </div>
     </div>
@@ -153,19 +163,8 @@
 </section>
 
 <section id="armazem" class="tab">
-  <div class="toolbar">
-    <label>Altura do armazém (m, 0 = sem limite):
-      <input id="altura-armazem" type="number" step="0.1" value="0" style="width:80px">
-    </label>
-    <label>Altura de picking (m, 0 = desativado):
-      <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
-    </label>
-    <label>Margem estrutural (%, 0 = sem margem):
-      <input id="margem-estrutural" type="number" step="1" value="0" style="width:70px">
-    </label>
-    <button class="action" id="btn-gerar">Gerar armazém</button>
-  </div>
-  <div class="dica">Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
+  <div class="dica">Resultado do «Renderizar layout 3D» (separador Arranjar Layout).
+    Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
   <div class="viewer-wrap">
     <div id="viewer"></div>
     <div id="painel-rack"><p style="color:#999">Clica numa caixa ou rack para ver detalhe aqui.</p></div>
@@ -630,6 +629,7 @@ function desenharZonas(zonasLayout) {
     const mat = new THREE.MeshStandardMaterial({ color: corZona(z.nome) });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(z.x + z.larg_m / 2, ALTURA_ZONA_M / 2, z.y + z.prof_m / 2);
+    mesh.rotation.y = -THREE.MathUtils.degToRad(z.rot || 0);
     mesh.userData.zona = z;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -638,6 +638,7 @@ function desenharZonas(zonasLayout) {
     const edges = new THREE.EdgesGeometry(geo);
     const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
     linhas.position.copy(mesh.position);
+    linhas.rotation.copy(mesh.rotation);
     grupo.add(linhas);
 
     const div = document.createElement("div");
@@ -868,81 +869,9 @@ function desenharLegenda(loadTypes, zonaNomes) {
   el.innerHTML = html;
 }
 
-document.getElementById("btn-gerar").addEventListener("click", async () => {
-  const altura = parseFloat(document.getElementById("altura-armazem").value) || 0;
-  const alturaPicking = parseFloat(document.getElementById("altura-picking").value) || 0;
-  const margemEstrutural = (parseFloat(document.getElementById("margem-estrutural").value) || 0) / 100;
-  const btn = document.getElementById("btn-gerar");
-  btn.textContent = "A gerar...";
-  btn.disabled = true;
-  document.getElementById("painel-rack").innerHTML = `<p style="color:#999">A gerar...</p>`;
-  try {
-    const resp = await fetch(`${API}/gerar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        altura_armazem_m: altura, altura_picking_m: alturaPicking,
-        margem_estrutural_pct: margemEstrutural,
-      }),
-    });
-    const data = await resp.json();
-    desenharLayout(data.layout);
-    desenharZonas(data.zonas_layout);
-    ajustarCenaECamera(data.layout, data.zonas_layout);
-
-    const tiposPresentes = [...new Set(data.layout.flatMap(r => r.load_types))];
-    const zonaNomes = data.zonas.map(z => z.nome);
-    desenharLegenda(tiposPresentes, zonaNomes);
-
-    const resumoEl = document.getElementById("resumo");
-    let html = `<p><b>Área total de racks: ${data.area_racks_m2} m²</b></p>`;
-    if (data.area_layout_m2) {
-      html += `<p>Layout físico (filas + corredores): ${data.largura_layout_m} × ${data.profundidade_layout_m} m
-        = <b>${data.area_layout_m2} m²</b> (corredores: ${data.area_corredores_m2} m²)</p>`;
-    }
-    if (data.avisos.length) {
-      html += `<div class="avisos">⚠ ${data.avisos.join("<br>⚠ ")}</div>`;
-    }
-    html += `<table><thead><tr>
-      <th>Tipologia</th><th>Posições de chão</th><th>Módulos empilhados</th>
-      <th>Nº racks total</th><th>Footprint (m²)</th><th>Tipos de carga</th>
-    </tr></thead><tbody>`;
-    for (const r of data.requirements) {
-      html += `<tr>
-        <td>${r.rack_nome}</td><td>${r.posicoes_chao}</td><td>${r.blocos_empilhados}</td>
-        <td>${r.num_racks}</td><td>${r.footprint_total_m2}</td><td>${r.load_types.join(", ")}</td>
-      </tr>`;
-    }
-    html += `</tbody></table>`;
-
-    if (data.zonas.length) {
-      html += `<p style="margin-top:14px"><b>Zonas funcionais</b></p>`;
-      html += `<table><thead><tr><th>Nome</th><th>Categoria</th><th>Área (m²)</th><th>Justificação</th></tr></thead><tbody>`;
-      for (const z of data.zonas) {
-        html += `<tr><td>${z.nome}</td><td>${z.categoria}</td><td>${z.area_m2}</td><td>${z.justificacao || ""}</td></tr>`;
-      }
-      html += `</tbody></table>`;
-    }
-
-    html += `<p style="margin-top:14px"><b>Área bruta total estimada</b></p>`;
-    html += `<table><tbody>
-      <tr><td>Footprint de racks</td><td>${data.area_racks_m2} m²</td></tr>
-      <tr><td>Corredores</td><td>${data.area_corredores_m2} m²</td></tr>
-      <tr><td>Zonas funcionais</td><td>${data.area_zonas_m2} m²</td></tr>
-      <tr><td>Margem estrutural</td><td>${data.margem_estrutural_m2} m²</td></tr>
-      <tr><td><b>ÁREA BRUTA TOTAL ESTIMADA</b></td><td><b>${data.area_bruta_total_m2} m²</b></td></tr>
-    </tbody></table>`;
-
-    resumoEl.innerHTML = html;
-  } finally {
-    btn.textContent = "Gerar armazém";
-    btn.disabled = false;
-  }
-});
-
 // ----------------------------------------------------------------- canvas layout tool
-const PXM = 20; // pixels per meter
-const GRID = 0.25; // grid snapping
+const PXM = 20; // pixels por metro
+const GRID = 0.25; // snap da grelha (m)
 const snap = v => Math.round(v / GRID) * GRID;
 let canvasBlocks = [];
 let selBlockId = null;
@@ -954,125 +883,163 @@ function inicializarCanvas() {
   const container = document.getElementById("canvas-container");
 
   function updateSVGSize() {
-    svg.setAttribute("width", container.clientWidth);
-    svg.setAttribute("height", container.clientHeight);
+    svg.setAttribute("width", Math.max(container.clientWidth - 2, 1400));
+    svg.setAttribute("height", Math.max(container.clientHeight - 2, 900));
   }
   updateSVGSize();
-  window.addEventListener("resize", updateSVGSize);
+  window.addEventListener("resize", () => { updateSVGSize(); desenharBlocks(); });
+
+  function cantosRodados(b) {
+    const rot = (b.rot || 0) * Math.PI / 180;
+    const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    return [[-b.w / 2, -b.h / 2], [b.w / 2, -b.h / 2], [b.w / 2, b.h / 2], [-b.w / 2, b.h / 2]]
+      .map(([dx, dy]) => [cx + dx * Math.cos(rot) - dy * Math.sin(rot),
+                          cy + dx * Math.sin(rot) + dy * Math.cos(rot)]);
+  }
+
+  function envolvente() {
+    if (!canvasBlocks.length) return null;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const b of canvasBlocks) {
+      for (const [px, py] of cantosRodados(b)) {
+        minX = Math.min(minX, px); minY = Math.min(minY, py);
+        maxX = Math.max(maxX, px); maxY = Math.max(maxY, py);
+      }
+    }
+    return { w: maxX - minX, h: maxY - minY, area: (maxX - minX) * (maxY - minY) };
+  }
 
   function desenharBlocks() {
-    svg.innerHTML = "";
-    // Grid
-    for (let i = 0; i < container.clientWidth; i += PXM * GRID) {
-      svg.innerHTML += `<line x1="${i}" y1="0" x2="${i}" y2="100%" stroke="#eee" stroke-width="0.5"/>`;
-    }
-    for (let i = 0; i < container.clientHeight; i += PXM * GRID) {
-      svg.innerHTML += `<line x1="0" y1="${i}" x2="100%" y2="${i}" stroke="#eee" stroke-width="0.5"/>`;
-    }
+    const W = +svg.getAttribute("width"), H = +svg.getAttribute("height");
+    let grid = "";
+    for (let i = 0; i <= W; i += PXM) grid += `<line x1="${i}" y1="0" x2="${i}" y2="${H}" stroke="#eee"/>`;
+    for (let i = 0; i <= H; i += PXM) grid += `<line x1="0" y1="${i}" x2="${W}" y2="${i}" stroke="#eee"/>`;
+    svg.innerHTML = grid;
 
-    // Blocks
     canvasBlocks.forEach(b => {
-      const x = b.x * PXM;
-      const y = b.y * PXM;
-      const w = b.w * PXM;
-      const h = b.h * PXM;
-      const isSelected = b.id === selBlockId;
+      const x = b.x * PXM, y = b.y * PXM, w = b.w * PXM, h = b.h * PXM;
+      const cx = x + w / 2, cy = y + h / 2;
+      const isSel = b.id === selBlockId;
       const isRacking = b.type === "racking";
-      const fill = isRacking ? "#e0d7f0" : "#f0e8d8";
-      const stroke = isSelected ? "#2563eb" : (isRacking ? "#7c3aed" : "#d97706");
-      const strokeWidth = isSelected ? "2" : "1";
+
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.setAttribute("transform", `rotate(${b.rot || 0} ${cx} ${cy})`);
 
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-      rect.setAttribute("x", x);
-      rect.setAttribute("y", y);
-      rect.setAttribute("width", w);
-      rect.setAttribute("height", h);
-      rect.setAttribute("fill", fill);
-      rect.setAttribute("stroke", stroke);
-      rect.setAttribute("stroke-width", strokeWidth);
+      rect.setAttribute("x", x); rect.setAttribute("y", y);
+      rect.setAttribute("width", w); rect.setAttribute("height", h);
+      rect.setAttribute("fill", isRacking ? "#d8cef0" : "#f5e7c4");
+      rect.setAttribute("stroke", isSel ? "#2563eb" : (isRacking ? "#7c3aed" : "#d97706"));
+      rect.setAttribute("stroke-width", isSel ? "3" : "1.5");
       rect.setAttribute("cursor", "grab");
-      rect.setAttribute("data-id", b.id);
       rect.addEventListener("mousedown", (e) => iniciarDrag(b, e));
-      rect.addEventListener("click", () => {
-        selBlockId = b.id;
-        desenharBlocks();
-        atualizarInfo();
-      });
-      svg.appendChild(rect);
+      g.appendChild(rect);
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.setAttribute("x", x + 4);
+      text.setAttribute("x", x + 5);
       text.setAttribute("y", y + 16);
       text.setAttribute("font-size", "12");
       text.setAttribute("fill", "#333");
       text.setAttribute("pointer-events", "none");
-      text.textContent = `${b.nome} (${b.w.toFixed(1)}×${b.h.toFixed(1)}m)`;
-      svg.appendChild(text);
+      text.textContent = `${b.nome} (${b.w.toFixed(1)}×${b.h.toFixed(1)}m${b.rot ? ", " + b.rot + "°" : ""})`;
+      g.appendChild(text);
+
+      svg.appendChild(g);
     });
+    atualizarInfo();
   }
 
-  function iniciarDrag(block, e) {
-    const rect = svg.getBoundingClientRect();
-    dragging = {
-      block, startX: e.clientX - rect.left, startY: e.clientY - rect.top,
-      origX: block.x, origY: block.y,
-    };
+  function iniciarDrag(b, e) {
+    selBlockId = b.id;
+    const r = svg.getBoundingClientRect();
+    dragging = { block: b, startX: e.clientX - r.left, startY: e.clientY - r.top, origX: b.x, origY: b.y };
+    desenharBlocks();
   }
 
   function atualizarInfo() {
     const el = document.getElementById("canvas-info");
-    if (!selBlockId) {
-      el.innerHTML = "<p style=\"color:#999;\">Clica num bloco para ver detalhes.</p>";
-      return;
+    let html = "";
+    const env = envolvente();
+    if (env) {
+      html += `<b>Envolvente do arranjo</b><br>${env.w.toFixed(2)} × ${env.h.toFixed(2)} m = <b>${env.area.toFixed(2)} m²</b><br><br>`;
     }
     const b = canvasBlocks.find(x => x.id === selBlockId);
-    if (!b) { el.innerHTML = ""; return; }
-    let html = `<b>${b.nome}</b><br><br>`;
-    html += `Tipo: ${b.type === "racking" ? "Bloco de Racks" : "Zona"}<br>`;
-    html += `Dimensões: ${b.w.toFixed(2)} × ${b.h.toFixed(2)} m<br>`;
-    html += `Área: ${(b.w * b.h).toFixed(2)} m²<br>`;
-    html += `Posição: (${b.x.toFixed(2)}, ${b.y.toFixed(2)}) m<br>`;
+    if (b) {
+      html += `<b>${b.nome}</b><br>`;
+      html += `Tipo: ${b.type === "racking" ? "Bloco de racks" : "Zona"}<br>`;
+      html += `Dimensões: ${b.w.toFixed(2)} × ${b.h.toFixed(2)} m<br>`;
+      html += `Área: ${(b.w * b.h).toFixed(2)} m²<br>`;
+      html += `Posição: (${b.x.toFixed(2)}, ${b.y.toFixed(2)}) m<br>`;
+      html += `Rotação: ${b.rot || 0}°`;
+    } else if (canvasBlocks.length) {
+      html += `<span style="color:#999">Clica num bloco para o selecionar.</span>`;
+    } else {
+      html += `<span style="color:#999">Gera os racks para começar.</span>`;
+    }
     el.innerHTML = html;
   }
 
   svg.addEventListener("mousemove", (e) => {
     if (!dragging) return;
-    const rect = svg.getBoundingClientRect();
-    const dx = (e.clientX - rect.left - dragging.startX) / PXM;
-    const dy = (e.clientY - rect.top - dragging.startY) / PXM;
-    dragging.block.x = snap(Math.max(0, dragging.origX + dx));
-    dragging.block.y = snap(Math.max(0, dragging.origY + dy));
+    const r = svg.getBoundingClientRect();
+    dragging.block.x = snap(Math.max(0, dragging.origX + (e.clientX - r.left - dragging.startX) / PXM));
+    dragging.block.y = snap(Math.max(0, dragging.origY + (e.clientY - r.top - dragging.startY) / PXM));
     desenharBlocks();
-    atualizarInfo();
   });
-
   svg.addEventListener("mouseup", () => { dragging = null; });
   svg.addEventListener("mouseleave", () => { dragging = null; });
 
-  document.getElementById("btn-carregar-blocos").addEventListener("click", async () => {
-    if (!lastGerarData) {
-      alert("Clica em 'Gerar armazém' primeiro.");
-      return;
+  // 1 · Gerar racks: corre o pipeline, carrega os blocos e mostra SÓ a área do bloco de racks (sem 3D)
+  document.getElementById("btn-gerar-racks").addEventListener("click", async () => {
+    const btn = document.getElementById("btn-gerar-racks");
+    btn.textContent = "A gerar...";
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`${API}/gerar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          altura_armazem_m: parseFloat(document.getElementById("altura-armazem").value) || 0,
+          altura_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
+          margem_estrutural_pct: 0,
+        }),
+      });
+      lastGerarData = await resp.json();
+      canvasBlocks = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b }));
+      selBlockId = null;
+      desenharBlocks();
+      const rb = lastGerarData.racking_block;
+      let html = `<b>Bloco de racks:</b> ${rb.w} × ${rb.h} m = ${(rb.w * rb.h).toFixed(1)} m² ` +
+                 `(footprint de racks: ${lastGerarData.area_racks_m2} m²; corredores internos incluídos no bloco)`;
+      if (lastGerarData.avisos && lastGerarData.avisos.length) {
+        html += `<div class="avisos">⚠ ${lastGerarData.avisos.join("<br>⚠ ")}</div>`;
+      }
+      document.getElementById("canvas-resumo").innerHTML = html;
+    } finally {
+      btn.textContent = "1 · Gerar racks";
+      btn.disabled = false;
     }
-    canvasBlocks = (lastGerarData.blocks_for_canvas || []).map(b => ({ ...b }));
-    selBlockId = null;
+  });
+
+  document.getElementById("btn-rodar-zona").addEventListener("click", () => {
+    const b = canvasBlocks.find(x => x.id === selBlockId);
+    if (!b) { alert("Seleciona primeiro um bloco no canvas."); return; }
+    if (b.type === "racking") { alert("O bloco de racks não pode ser rodado."); return; }
+    b.rot = ((b.rot || 0) + 45) % 360;
     desenharBlocks();
-    atualizarInfo();
-    alert(`${canvasBlocks.length} blocos carregados!`);
   });
 
   document.getElementById("btn-reset-canvas").addEventListener("click", () => {
     canvasBlocks = [];
     selBlockId = null;
+    lastGerarData = null;
+    document.getElementById("canvas-resumo").innerHTML = "";
     desenharBlocks();
-    atualizarInfo();
   });
 
+  // 2 · Renderizar: manda o arranjo ao backend e mostra racks + zonas + área total no 3D
   document.getElementById("btn-renderizar").addEventListener("click", async () => {
-    if (canvasBlocks.length === 0) {
-      alert("Carregue blocos primeiro.");
-      return;
-    }
+    if (!canvasBlocks.length) { alert("Gera os racks e arranja o layout primeiro."); return; }
     const btn = document.getElementById("btn-renderizar");
     btn.textContent = "A renderizar...";
     btn.disabled = true;
@@ -1082,12 +1049,13 @@ function inicializarCanvas() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           blocks: canvasBlocks,
-          height_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
+          altura_armazem_m: parseFloat(document.getElementById("altura-armazem").value) || 0,
+          altura_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
         }),
       });
       const data = await resp.json();
 
-      // Switch to 3D tab and render
+      // muda para o separador 3D e desenha racks + zonas
       document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
       document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
       document.querySelector('[data-tab="armazem"]').classList.add("active");
@@ -1095,19 +1063,23 @@ function inicializarCanvas() {
 
       limparRacks();
       desenharLayout(data.layout);
-      ajustarCenaECamera(data.layout, []);
+      desenharZonas(data.zonas_layout);
+      ajustarCenaECamera(data.layout, data.zonas_layout);
+      const tipos = [...new Set(data.layout.flatMap(r => r.load_types))];
+      desenharLegenda(tipos, data.zonas_layout.map(z => z.nome));
 
-      const info = document.getElementById("canvas-info");
-      info.innerHTML = `<b>Layout renderizado!</b><br>Área total: ${data.total_area_m2} m²<br>Dimensões: ${data.bounding_box.width_m} × ${data.bounding_box.depth_m} m`;
+      document.getElementById("resumo").innerHTML = `
+        <p><b>Área total do armazém (envolvente do arranjo): ${data.area_total_m2} m²</b>
+          — ${data.largura_total_m} × ${data.profundidade_total_m} m</p>
+        <p>Footprint de racks: ${data.area_racks_m2} m² · Zonas funcionais: ${data.area_zonas_m2} m²</p>`;
     } finally {
-      btn.textContent = "Renderizar 3D";
+      btn.textContent = "2 · Renderizar layout 3D";
       btn.disabled = false;
     }
   });
 
   document.getElementById("btn-guardar-arranjo").addEventListener("click", () => {
-    const data = { blocks: canvasBlocks };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify({ blocks: canvasBlocks }, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.download = "arranjo_layout.json";
     a.href = URL.createObjectURL(blob);
@@ -1128,8 +1100,6 @@ function inicializarCanvas() {
         if (d.blocks) canvasBlocks = d.blocks;
         selBlockId = null;
         desenharBlocks();
-        atualizarInfo();
-        alert("Arranjo carregado!");
       } catch (err) {
         alert("Ficheiro inválido.");
       }
@@ -1139,36 +1109,6 @@ function inicializarCanvas() {
 
   desenharBlocks();
 }
-
-// Store last gerar response
-const origBtnGerar = document.getElementById("btn-gerar");
-const origClick = origBtnGerar.onclick;
-document.getElementById("btn-gerar").addEventListener("click", async () => {
-  const altura = parseFloat(document.getElementById("altura-armazem").value) || 0;
-  const alturaPicking = parseFloat(document.getElementById("altura-picking").value) || 0;
-  const margemEstrutural = (parseFloat(document.getElementById("margem-estrutural").value) || 0) / 100;
-  const btn = document.getElementById("btn-gerar");
-  btn.textContent = "A gerar...";
-  btn.disabled = true;
-  try {
-    const resp = await fetch(`${API}/gerar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        altura_armazem_m: altura, altura_picking_m: alturaPicking,
-        margem_estrutural_pct: margemEstrutural,
-      }),
-    });
-    lastGerarData = await resp.json();
-    desenharLayout(lastGerarData.layout);
-    desenharZonas(lastGerarData.zonas_layout);
-    ajustarCenaECamera(lastGerarData.layout, lastGerarData.zonas_layout);
-    // ... (rest of the gerar logic - reuse from above)
-  } finally {
-    btn.textContent = "Gerar armazém";
-    btn.disabled = false;
-  }
-});
 
 // ----------------------------------------------------------------- init
 carregarArtigos();
