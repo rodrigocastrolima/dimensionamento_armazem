@@ -351,7 +351,11 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             box = catalogo.get(load_type)
             if box:
                 box_height = box.ext_alt_m
-                compatible_racks = [r for r in rack_types if load_type in r.aceita]
+                # só racks onde a caixa CABE de facto (aceitar não chega: a
+                # Prateleira Leve "aceita" L mas não tem profundidade para ela,
+                # e o nível baixo dela matava o empilhamento de L nos porta-paletes)
+                compatible_racks = [r for r in rack_types
+                                    if load_type in r.aceita and rack_capacity(r, box) > 0]
                 if compatible_racks:
                     min_level_height = min(r.alt_nivel_m for r in compatible_racks)
                     boxes_per_stack = max(1, int(min_level_height / box_height))
