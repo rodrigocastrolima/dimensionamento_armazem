@@ -163,6 +163,13 @@
 </section>
 
 <section id="armazem" class="tab">
+  <div class="toolbar">
+    <button id="btn-add-pessoa">+ Pessoa</button>
+    <button id="btn-add-mesa">+ Mesa</button>
+    <button id="btn-rodar-prop">⟳ Rodar selecionado</button>
+    <button id="btn-del-prop">✕ Remover selecionado</button>
+    <span class="dica" style="margin:0">Arrasta pessoas/mesas com o rato (botão esquerdo); clica para selecionar.</span>
+  </div>
   <div class="dica">Resultado do «Renderizar layout 3D» (separador Arranjar Layout).
     Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
   <div class="viewer-wrap">
@@ -588,6 +595,80 @@ function initViewer() {
   window.addEventListener("resize", window.redimensionarViewer);
   window.redimensionarViewer();
 
+  // ---------------------------------------- adereços móveis (pessoas, mesas)
+  // sobrevivem a re-renders do layout (não têm as flags que limparRacks remove)
+  let propSel = null;
+  let dragProp = null;
+  const planoChao = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+  const ptChao = new THREE.Vector3();
+
+  const aroSel = new THREE.Mesh(
+    new THREE.RingGeometry(0.55, 0.68, 32),
+    new THREE.MeshBasicMaterial({ color: 0x3a7bd5, transparent: true, opacity: 0.9, side: THREE.DoubleSide }));
+  aroSel.rotation.x = -Math.PI / 2;
+  aroSel.position.y = 0.03;
+
+  function _propRoot(obj) {
+    while (obj && !(obj.userData && obj.userData.isProp)) obj = obj.parent;
+    return obj || null;
+  }
+
+  function selecionarProp(p) {
+    if (aroSel.parent) aroSel.parent.remove(aroSel);
+    propSel = p;
+    if (p) p.add(aroSel);
+  }
+
+  function adicionarProp(factory) {
+    const p = factory();
+    p.userData.isProp = true;
+    p.position.set(controls.target.x + (Math.random() - 0.5) * 2, 0,
+                   controls.target.z + (Math.random() - 0.5) * 2);
+    scene.add(p);
+    selecionarProp(p);
+  }
+
+  document.getElementById("btn-add-pessoa").addEventListener("click", () => adicionarProp(criarPessoa));
+  document.getElementById("btn-add-mesa").addEventListener("click", () => adicionarProp(criarMesa));
+  document.getElementById("btn-rodar-prop").addEventListener("click", () => {
+    if (propSel) propSel.rotation.y += Math.PI / 4;
+  });
+  document.getElementById("btn-del-prop").addEventListener("click", () => {
+    if (!propSel) return;
+    scene.remove(propSel);
+    selecionarProp(null);
+  });
+
+  function _mouseNDC(event) {
+    const rect = el.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  }
+
+  renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    _mouseNDC(event);
+    raycaster.setFromCamera(mouse, camera);
+    const hit = raycaster.intersectObjects(scene.children, true)
+      .map(i => _propRoot(i.object)).find(Boolean);
+    if (hit) {
+      selecionarProp(hit);
+      dragProp = hit;
+      controls.enabled = false;   // enquanto arrasta, não orbita
+    }
+  });
+  renderer.domElement.addEventListener("pointermove", (event) => {
+    if (!dragProp) return;
+    _mouseNDC(event);
+    raycaster.setFromCamera(mouse, camera);
+    if (raycaster.ray.intersectPlane(planoChao, ptChao)) {
+      dragProp.position.set(ptChao.x, 0, ptChao.z);
+    }
+  });
+  const soltarProp = () => { dragProp = null; controls.enabled = true; };
+  renderer.domElement.addEventListener("pointerup", soltarProp);
+  renderer.domElement.addEventListener("pointerleave", soltarProp);
+
   animate();
 }
 
@@ -893,6 +974,64 @@ function criarLuminaria() {
   const lampada = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.03, 14),
     new THREE.MeshBasicMaterial({ color: 0xfff3cf }));
   g.add(lampada);
+  return g;
+}
+
+function criarPessoa() {
+  const g = new THREE.Group();
+  const corColete = Math.random() < 0.5 ? 0xf7c948 : 0xf28c28;   // colete hi-vis amarelo/laranja
+  const pele = new THREE.MeshStandardMaterial({ color: 0xd9a781, roughness: 0.8 });
+  const calca = new THREE.MeshStandardMaterial({ color: 0x2f3a4a, roughness: 0.85 });
+  const colete = new THREE.MeshStandardMaterial({ color: corColete, roughness: 0.65 });
+  const manga = new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.8 });
+
+  for (const px of [-0.09, 0.09]) {
+    const perna = new THREE.Mesh(geoCaixa(0.13, 0.8, 0.16), calca);
+    perna.position.set(px, 0.4, 0);
+    g.add(perna);
+  }
+  const tronco = new THREE.Mesh(geoCaixa(0.4, 0.55, 0.22), colete);
+  tronco.position.y = 1.08;
+  g.add(tronco);
+  const faixa = new THREE.Mesh(geoCaixa(0.41, 0.05, 0.23),
+    new THREE.MeshStandardMaterial({ color: 0xdedede, emissive: 0x555555 }));
+  faixa.position.y = 1.02;
+  g.add(faixa);
+  for (const px of [-0.27, 0.27]) {
+    const braco = new THREE.Mesh(geoCaixa(0.11, 0.52, 0.13), manga);
+    braco.position.set(px, 1.06, 0);
+    g.add(braco);
+    const mao = new THREE.Mesh(geoCaixa(0.09, 0.09, 0.1), pele);
+    mao.position.set(px, 0.76, 0);
+    g.add(mao);
+  }
+  const cabeca = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 10), pele);
+  cabeca.position.y = 1.5;
+  g.add(cabeca);
+  const capacete = new THREE.Mesh(
+    new THREE.SphereGeometry(0.15, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.35 }));
+  capacete.position.y = 1.52;
+  g.add(capacete);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarMesa() {
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x4a4e55, roughness: 0.5, metalness: 0.55 });
+  const tampo = new THREE.Mesh(geoCaixa(1.6, 0.06, 0.8), MAT_MADEIRA);
+  tampo.position.y = 0.9;
+  g.add(tampo);
+  for (const [px, pz] of [[-0.74, -0.35], [0.74, -0.35], [-0.74, 0.35], [0.74, 0.35]]) {
+    const perna = new THREE.Mesh(geoCaixa(0.06, 0.87, 0.06), metal);
+    perna.position.set(px, 0.435, pz);
+    g.add(perna);
+  }
+  const prateleira = new THREE.Mesh(geoCaixa(1.5, 0.04, 0.7), metal);
+  prateleira.position.y = 0.28;
+  g.add(prateleira);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
 
