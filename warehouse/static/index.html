@@ -195,6 +195,7 @@ document.querySelectorAll("nav button").forEach(btn => {
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
     btn.classList.add("active");
     document.getElementById(btn.dataset.tab).classList.add("active");
+    if (btn.dataset.tab === "armazem" && window.redimensionarViewer) window.redimensionarViewer();
   });
 });
 
@@ -511,7 +512,7 @@ function initViewer() {
   scene.background = new THREE.Color(0x1a1d21);
   scene.fog = new THREE.Fog(0x1a1d21, 40, 160);
 
-  camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.1, 1000);
+  camera = new THREE.PerspectiveCamera(50, Math.max(el.clientWidth, 1) / Math.max(el.clientHeight, 1), 0.1, 1000);
   camera.position.set(20, 20, 20);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -530,6 +531,8 @@ function initViewer() {
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
+  controls.enableZoom = true;
+  controls.zoomToCursor = true;
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.45));
   dirLight = new THREE.DirectionalLight(0xfff4e0, 1.0);
@@ -557,12 +560,16 @@ function initViewer() {
   mouse = new THREE.Vector2();
   renderer.domElement.addEventListener("click", onClickViewer);
 
-  window.addEventListener("resize", () => {
-    camera.aspect = el.clientWidth / el.clientHeight;
+  window.redimensionarViewer = function () {
+    const w = el.clientWidth, h = el.clientHeight;
+    if (!w || !h) return;   // separador escondido: adia até estar visível
+    camera.aspect = w / h;
     camera.updateProjectionMatrix();
-    renderer.setSize(el.clientWidth, el.clientHeight);
-    labelRenderer.setSize(el.clientWidth, el.clientHeight);
-  });
+    renderer.setSize(w, h);
+    labelRenderer.setSize(w, h);
+  };
+  window.addEventListener("resize", window.redimensionarViewer);
+  window.redimensionarViewer();
 
   animate();
 }
@@ -763,10 +770,12 @@ function ajustarCenaECamera(layout, zonasLayout) {
   controls.target.set(maxX / 2, maxZ / 3, maxY / 2);
   camera.position.set(maxX / 2 + escala * 0.9, maxZ * 0.7 + escala * 0.3, maxY / 2 + escala * 0.9);
   camera.near = Math.max(escala / 1000, 0.1);
-  camera.far = escala * 10 + 200;
+  camera.far = escala * 20 + 400;
   camera.updateProjectionMatrix();
-  scene.fog.near = escala * 1.5;
-  scene.fog.far = escala * 5;
+  controls.minDistance = escala * 0.02;
+  controls.maxDistance = escala * 5;
+  scene.fog.near = escala * 4;
+  scene.fog.far = escala * 15;
 
   dirLight.position.set(maxX / 2 + escala * 0.5, escala * 1.2, maxY / 2 + escala * 0.3);
   dirLight.target.position.set(maxX / 2, 0, maxY / 2);
@@ -1060,6 +1069,7 @@ function inicializarCanvas() {
       document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
       document.querySelector('[data-tab="armazem"]').classList.add("active");
       document.getElementById("armazem").classList.add("active");
+      if (window.redimensionarViewer) window.redimensionarViewer();
 
       limparRacks();
       desenharLayout(data.layout);
