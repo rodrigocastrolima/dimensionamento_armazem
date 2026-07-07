@@ -378,7 +378,11 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             boxes_per_stack = boxes_per_stack_per_type.get(a.load_type, 1)
 
         pecas_total = art.stock_max_un if art else 0
-        num_unidades_picking = math.ceil(art.pecas_por_carro / a.pecas_por_unidade) if art else 0
+        # modo picking desligado (altura_picking_m <= 0): nenhum nível é de
+        # picking, logo não se marca caixa nenhuma como "precisa picking" --
+        # senão TODAS falhavam a colocação estrita e geravam aviso falso.
+        num_unidades_picking = (math.ceil(art.pecas_por_carro / a.pecas_por_unidade)
+                                if art and altura_picking_m > 0 else 0)
 
         # Create stacks instead of individual boxes
         boxes_allocated = 0
