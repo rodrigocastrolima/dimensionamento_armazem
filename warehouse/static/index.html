@@ -166,6 +166,9 @@
   <div class="toolbar">
     <button id="btn-add-pessoa">+ Pessoa</button>
     <button id="btn-add-mesa">+ Mesa</button>
+    <button id="btn-add-palete">+ Palete</button>
+    <button id="btn-add-prateleira">+ Prateleira</button>
+    <button id="btn-add-armario">+ Armário</button>
     <button id="btn-rodar-prop">⟳ Rodar selecionado</button>
     <button id="btn-del-prop">✕ Remover selecionado</button>
     <span class="dica" style="margin:0">Arrasta pessoas/mesas com o rato (botão esquerdo); clica para selecionar.</span>
@@ -630,6 +633,9 @@ function initViewer() {
 
   document.getElementById("btn-add-pessoa").addEventListener("click", () => adicionarProp(criarPessoa));
   document.getElementById("btn-add-mesa").addEventListener("click", () => adicionarProp(criarMesa));
+  document.getElementById("btn-add-palete").addEventListener("click", () => adicionarProp(criarPaleteProp));
+  document.getElementById("btn-add-prateleira").addEventListener("click", () => adicionarProp(criarPrateleiraProp));
+  document.getElementById("btn-add-armario").addEventListener("click", () => adicionarProp(criarArmario));
   document.getElementById("btn-rodar-prop").addEventListener("click", () => {
     if (propSel) propSel.rotation.y += Math.PI / 4;
   });
@@ -1018,19 +1024,68 @@ function criarPessoa() {
 }
 
 function criarMesa() {
+  // mesa de trabalho 1.8 x 0.8 m, tampo à altura standard de 0.75 m
   const g = new THREE.Group();
   const metal = new THREE.MeshStandardMaterial({ color: 0x4a4e55, roughness: 0.5, metalness: 0.55 });
-  const tampo = new THREE.Mesh(geoCaixa(1.6, 0.06, 0.8), MAT_MADEIRA);
-  tampo.position.y = 0.9;
+  const tampo = new THREE.Mesh(geoCaixa(1.8, 0.05, 0.8), MAT_MADEIRA);
+  tampo.position.y = 0.725;
   g.add(tampo);
-  for (const [px, pz] of [[-0.74, -0.35], [0.74, -0.35], [-0.74, 0.35], [0.74, 0.35]]) {
-    const perna = new THREE.Mesh(geoCaixa(0.06, 0.87, 0.06), metal);
-    perna.position.set(px, 0.435, pz);
+  for (const [px, pz] of [[-0.85, -0.36], [0.85, -0.36], [-0.85, 0.36], [0.85, 0.36]]) {
+    const perna = new THREE.Mesh(geoCaixa(0.05, 0.7, 0.05), metal);
+    perna.position.set(px, 0.35, pz);
     g.add(perna);
   }
-  const prateleira = new THREE.Mesh(geoCaixa(1.5, 0.04, 0.7), metal);
-  prateleira.position.y = 0.28;
+  const prateleira = new THREE.Mesh(geoCaixa(1.7, 0.03, 0.7), metal);
+  prateleira.position.y = 0.2;
   g.add(prateleira);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarPaleteProp() {
+  // europalete solta 1.2 x 0.8 m
+  const g = new THREE.Group();
+  const palete = criarPalete(1.2, 0.8);
+  g.add(palete);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarPrateleiraProp() {
+  // estante 1.8 x 0.6 m, 1.8 m de altura, 3 níveis (4 tabuleiros de 0.6 em 0.6)
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x707880, roughness: 0.5, metalness: 0.5 });
+  for (const [px, pz] of [[-0.875, -0.275], [0.875, -0.275], [-0.875, 0.275], [0.875, 0.275]]) {
+    const poste = new THREE.Mesh(geoCaixa(0.05, 1.8, 0.05), metal);
+    poste.position.set(px, 0.9, pz);
+    g.add(poste);
+  }
+  for (let nvl = 0; nvl <= 3; nvl++) {
+    const tabuleiro = new THREE.Mesh(geoCaixa(1.8, 0.03, 0.6), MAT_PRATELEIRA);
+    tabuleiro.position.y = Math.max(nvl * 0.6 - 0.015, 0.03);
+    g.add(tabuleiro);
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarArmario() {
+  // armário metálico pequeno: 0.8 x 0.4 m, 1.0 m de altura, 2 portas
+  const g = new THREE.Group();
+  const corpoMat = new THREE.MeshStandardMaterial({ color: 0x5d6a75, roughness: 0.45, metalness: 0.4 });
+  const portaMat = new THREE.MeshStandardMaterial({ color: 0x6e7c88, roughness: 0.4, metalness: 0.4 });
+  const corpo = new THREE.Mesh(geoCaixa(0.8, 1.0, 0.4), corpoMat);
+  corpo.position.y = 0.5;
+  g.add(corpo);
+  for (const px of [-0.195, 0.195]) {
+    const porta = new THREE.Mesh(geoCaixa(0.37, 0.92, 0.02), portaMat);
+    porta.position.set(px, 0.5, 0.21);
+    g.add(porta);
+    const puxador = new THREE.Mesh(geoCaixa(0.03, 0.12, 0.03),
+      new THREE.MeshStandardMaterial({ color: 0x22262a }));
+    puxador.position.set(px + (px < 0 ? 0.13 : -0.13), 0.5, 0.235);
+    g.add(puxador);
+  }
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
 }
