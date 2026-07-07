@@ -24,12 +24,6 @@
   button.action { background: #3a7bd5; color: white; border: none; padding: 8px 16px;
                   border-radius: 4px; cursor: pointer; font-size: 13px; }
   button.action:hover { background: #2d63ad; }
-  button.save { background: #2a8c4a; color: white; border: none; padding: 3px 10px;
-                border-radius: 3px; cursor: pointer; font-size: 11px; margin-right: 4px; }
-  button.del { background: #b03a3a; color: white; border: none; padding: 3px 10px;
-               border-radius: 3px; cursor: pointer; font-size: 11px; }
-  button.add-row { background: #2a8c4a; color: white; border: none; padding: 6px 14px;
-                   border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 8px; }
   .viewer-wrap { display: flex; gap: 12px; }
   #viewer { flex: 1; height: calc(100vh - 170px); background: #111; border: 1px solid #3a3a3a; position: relative; overflow: hidden; }
   .rotulo-zona { color: #fff; background: rgba(0,0,0,0.55); padding: 2px 6px; border-radius: 3px;
@@ -65,13 +59,13 @@
   <div class="toolbar">
     <input id="filtro-artigos" placeholder="filtrar por SKU ou descrição..." style="max-width:300px">
   </div>
-  <button class="add-row" id="btn-add-artigo">+ Novo artigo</button>
+  <div class="dica">Só leitura — edita diretamente o Excel (dados/master_data_classificado_v1.xlsx) e recarrega a página.</div>
   <div class="table-wrap">
     <table id="tabela-artigos">
       <thead>
         <tr>
           <th>SKU</th><th>Descrição</th><th>Comp (m)</th><th>Larg (m)</th><th>Alt (m)</th>
-          <th>Peso (kg)</th><th>Stock máx</th><th>Peças/carro</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th><th></th>
+          <th>Peso (kg)</th><th>Stock máx</th><th>Peças/carro</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -80,14 +74,14 @@
 </section>
 
 <section id="catalogo" class="tab">
+  <div class="dica">Só leitura — edita diretamente o Excel (folhas «Caixas» e «Racks») e recarrega a página.</div>
   <h3>Caixas (S / M / L / PALLET)</h3>
-  <button class="add-row" id="btn-add-caixa">+ Nova caixa</button>
   <div class="table-wrap" style="max-height:260px">
     <table id="tabela-caixas">
       <thead>
         <tr>
           <th>Nome</th><th>Int Comp</th><th>Int Larg</th><th>Int Alt</th>
-          <th>Ext Comp</th><th>Ext Larg</th><th>Ext Alt</th><th>Peso máx (kg)</th><th></th>
+          <th>Ext Comp</th><th>Ext Larg</th><th>Ext Alt</th><th>Peso máx (kg)</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -95,14 +89,13 @@
   </div>
 
   <h3 style="margin-top:24px">Racks</h3>
-  <button class="add-row" id="btn-add-rack">+ Novo rack</button>
   <div class="table-wrap" style="max-height:260px">
     <table id="tabela-racks">
       <thead>
         <tr>
           <th>Nome</th><th>Larg (m)</th><th>Prof (m)</th><th>Alt/nível (m)</th>
           <th>Níveis</th><th>Aceita (S,M,L,PALLET,LONGO)</th><th>Comp braço (m)</th>
-          <th>Corredor (m)</th><th></th>
+          <th>Corredor (m)</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -112,13 +105,13 @@
 
 <section id="zonas" class="tab">
   <h3>Zonas funcionais (receção, expedição, equipamento, staging, ...)</h3>
-  <button class="add-row" id="btn-add-zona">+ Nova zona</button>
+  <div class="dica">Só leitura — edita diretamente o Excel (folha «Zonas») e recarrega a página.</div>
   <div class="table-wrap" style="max-height:400px">
     <table id="tabela-zonas">
       <thead>
         <tr>
           <th>Nome</th><th>Categoria</th><th>Comp (m)</th><th>Larg (m)</th>
-          <th>Área (m²)</th><th>Justificação</th><th></th>
+          <th>Área (m²)</th><th>Justificação</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -224,7 +217,6 @@ function linhaArtigo(a) {
       <td>${a.comp_m.toFixed(3)}</td><td>${a.larg_m.toFixed(3)}</td><td>${a.alt_m.toFixed(3)}</td>
       <td>${a.peso_kg.toFixed(2)}</td><td>${a.stock_max_un}</td><td>${a.pecas_por_carro}</td>
       <td>${a.empilhamento}</td><td>${a.geometria}</td><td>${a.classe}</td>
-      <td><button class="del" data-tipo="article" data-id="${a.sku}">Remover</button></td>
     </tr>`;
 }
 
@@ -239,276 +231,46 @@ document.getElementById("filtro-artigos").addEventListener("input", (e) => {
     a.sku.toLowerCase().includes(q) || a.descricao.toLowerCase().includes(q)));
 });
 
-document.getElementById("btn-add-artigo").addEventListener("click", () => {
-  const tbody = document.querySelector("#tabela-artigos tbody");
-  const tr = document.createElement("tr");
-  tr.className = "nova-linha";
-  tr.innerHTML = `
-    <td><input data-f="sku" placeholder="SKU"></td>
-    <td><input data-f="descricao" placeholder="Descrição"></td>
-    <td><input data-f="comp_m" placeholder="0.000"></td>
-    <td><input data-f="larg_m" placeholder="0.000"></td>
-    <td><input data-f="alt_m" placeholder="0.000"></td>
-    <td><input data-f="peso_kg" placeholder="0.0"></td>
-    <td><input data-f="stock_max_un" placeholder="0"></td>
-    <td><input data-f="pecas_por_carro" placeholder="0"></td>
-    <td><input data-f="empilhamento" value="EMPILHAVEL"></td>
-    <td><input data-f="geometria" value="Regular"></td>
-    <td><input data-f="classe" value="RIGIDO"></td>
-    <td><button class="save" data-tipo="article-new">Criar</button></td>`;
-  tbody.prepend(tr);
-});
-
 // ----------------------------------------------------------------- caixas
 async function carregarCaixas() {
   const caixas = await fetch(`${API}/boxes`).then(r => r.json());
   const tbody = document.querySelector("#tabela-caixas tbody");
   tbody.innerHTML = caixas.map(b => `
-    <tr data-nome="${b.nome}">
+    <tr>
       <td>${b.nome}</td>
-      <td><input data-f="int_comp_m" value="${b.int_comp_m}"></td>
-      <td><input data-f="int_larg_m" value="${b.int_larg_m}"></td>
-      <td><input data-f="int_alt_m" value="${b.int_alt_m}"></td>
-      <td><input data-f="ext_comp_m" value="${b.ext_comp_m}"></td>
-      <td><input data-f="ext_larg_m" value="${b.ext_larg_m}"></td>
-      <td><input data-f="ext_alt_m" value="${b.ext_alt_m}"></td>
-      <td><input data-f="peso_max_kg" value="${b.peso_max_kg}"></td>
-      <td>
-        <button class="save" data-tipo="box">Guardar</button>
-        <button class="del" data-tipo="box" data-id="${b.nome}">Remover</button>
-      </td>
+      <td>${b.int_comp_m}</td><td>${b.int_larg_m}</td><td>${b.int_alt_m}</td>
+      <td>${b.ext_comp_m}</td><td>${b.ext_larg_m}</td><td>${b.ext_alt_m}</td>
+      <td>${b.peso_max_kg}</td>
     </tr>
   `).join("");
 }
-
-document.getElementById("btn-add-caixa").addEventListener("click", () => {
-  const tbody = document.querySelector("#tabela-caixas tbody");
-  const tr = document.createElement("tr");
-  tr.className = "nova-linha";
-  tr.innerHTML = `
-    <td><input data-f="nome" placeholder="ex: XL"></td>
-    <td><input data-f="int_comp_m" placeholder="0.000"></td>
-    <td><input data-f="int_larg_m" placeholder="0.000"></td>
-    <td><input data-f="int_alt_m" placeholder="0.000"></td>
-    <td><input data-f="ext_comp_m" placeholder="0.000"></td>
-    <td><input data-f="ext_larg_m" placeholder="0.000"></td>
-    <td><input data-f="ext_alt_m" placeholder="0.000"></td>
-    <td><input data-f="peso_max_kg" placeholder="0.0"></td>
-    <td><button class="save" data-tipo="box-new">Criar</button></td>`;
-  tbody.prepend(tr);
-});
 
 async function carregarRacks() {
   const racks = await fetch(`${API}/racks`).then(r => r.json());
   const tbody = document.querySelector("#tabela-racks tbody");
   tbody.innerHTML = racks.map(r => `
-    <tr data-nome="${r.nome}">
+    <tr>
       <td>${r.nome}</td>
-      <td><input data-f="larg_m" value="${r.larg_m}"></td>
-      <td><input data-f="prof_m" value="${r.prof_m}"></td>
-      <td><input data-f="alt_nivel_m" value="${r.alt_nivel_m}"></td>
-      <td><input data-f="niveis" value="${r.niveis}"></td>
-      <td><input data-f="aceita" value="${r.aceita.join(', ')}"></td>
-      <td><input data-f="comp_braco_m" value="${r.comp_braco_m}"></td>
-      <td><input data-f="corredor_m" value="${r.corredor_m}"></td>
-      <td>
-        <button class="save" data-tipo="rack">Guardar</button>
-        <button class="del" data-tipo="rack" data-id="${r.nome}">Remover</button>
-      </td>
+      <td>${r.larg_m}</td><td>${r.prof_m}</td><td>${r.alt_nivel_m}</td>
+      <td>${r.niveis}</td><td>${r.aceita.join(', ')}</td>
+      <td>${r.comp_braco_m}</td><td>${r.corredor_m}</td>
     </tr>
   `).join("");
 }
-
-document.getElementById("btn-add-rack").addEventListener("click", () => {
-  const tbody = document.querySelector("#tabela-racks tbody");
-  const tr = document.createElement("tr");
-  tr.className = "nova-linha";
-  tr.innerHTML = `
-    <td><input data-f="nome" placeholder="ex: Rack Novo"></td>
-    <td><input data-f="larg_m" placeholder="0.00"></td>
-    <td><input data-f="prof_m" placeholder="0.00"></td>
-    <td><input data-f="alt_nivel_m" placeholder="0.00"></td>
-    <td><input data-f="niveis" placeholder="1"></td>
-    <td><input data-f="aceita" placeholder="S, M"></td>
-    <td><input data-f="comp_braco_m" placeholder="0.0"></td>
-    <td><input data-f="corredor_m" placeholder="0.0"></td>
-    <td><button class="save" data-tipo="rack-new">Criar</button></td>`;
-  tbody.prepend(tr);
-});
 
 // ----------------------------------------------------------------- zonas
 async function carregarZonas() {
   const zonas = await fetch(`${API}/zones`).then(r => r.json());
   const tbody = document.querySelector("#tabela-zonas tbody");
   tbody.innerHTML = zonas.map(z => `
-    <tr data-nome="${z.nome}">
-      <td><input data-f="nome" value="${z.nome}" disabled></td>
-      <td><input data-f="categoria" value="${z.categoria}"></td>
-      <td><input data-f="comp_m" value="${z.comp_m}"></td>
-      <td><input data-f="larg_m" value="${z.larg_m}"></td>
+    <tr>
+      <td>${z.nome}</td><td>${z.categoria}</td>
+      <td>${z.comp_m}</td><td>${z.larg_m}</td>
       <td>${(z.comp_m * z.larg_m).toFixed(2)}</td>
-      <td><input data-f="justificacao" value="${z.justificacao}"></td>
-      <td>
-        <button class="save" data-tipo="zone">Guardar</button>
-        <button class="del" data-tipo="zone" data-id="${z.nome}">Remover</button>
-      </td>
+      <td>${z.justificacao}</td>
     </tr>
   `).join("");
 }
-
-document.getElementById("btn-add-zona").addEventListener("click", () => {
-  const tbody = document.querySelector("#tabela-zonas tbody");
-  const tr = document.createElement("tr");
-  tr.className = "nova-linha";
-  tr.innerHTML = `
-    <td><input data-f="nome" placeholder="ex: Zona IN"></td>
-    <td><input data-f="categoria" placeholder="ex: Receção" value="Outra"></td>
-    <td><input data-f="comp_m" placeholder="0.0"></td>
-    <td><input data-f="larg_m" placeholder="0.0"></td>
-    <td>-</td>
-    <td><input data-f="justificacao" placeholder="opcional"></td>
-    <td><button class="save" data-tipo="zone-new">Criar</button></td>`;
-  tbody.prepend(tr);
-});
-
-function lerCamposZona(tr) {
-  const body = {};
-  tr.querySelectorAll("input").forEach(inp => {
-    const f = inp.dataset.f;
-    if (f === "comp_m" || f === "larg_m") {
-      body[f] = parseFloat(inp.value) || 0;
-    } else {
-      body[f] = inp.value;
-    }
-  });
-  return body;
-}
-
-// ----------------------------------------------------------------- save / delete (delegado)
-function lerCamposArticle(tr) {
-  const body = {};
-  tr.querySelectorAll("input").forEach(inp => {
-    const f = inp.dataset.f;
-    if (f === "comp_m" || f === "larg_m" || f === "alt_m" || f === "peso_kg") {
-      body[f] = parseFloat(inp.value) || 0;
-    } else if (f === "stock_max_un" || f === "pecas_por_carro") {
-      body[f] = parseInt(inp.value, 10) || 0;
-    } else {
-      body[f] = inp.value;
-    }
-  });
-  return body;
-}
-
-function lerCamposBox(tr) {
-  const body = {};
-  tr.querySelectorAll("input").forEach(inp => {
-    const f = inp.dataset.f;
-    body[f] = (f === "nome") ? inp.value : (parseFloat(inp.value) || 0);
-  });
-  return body;
-}
-
-function lerCamposRack(tr) {
-  const body = {};
-  tr.querySelectorAll("input").forEach(inp => {
-    const f = inp.dataset.f;
-    if (f === "nome") {
-      body[f] = inp.value;
-    } else if (f === "aceita") {
-      body[f] = inp.value.split(",").map(s => s.trim()).filter(Boolean);
-    } else if (f === "niveis") {
-      body[f] = parseInt(inp.value, 10) || 1;
-    } else {
-      body[f] = parseFloat(inp.value) || 0;
-    }
-  });
-  return body;
-}
-
-document.addEventListener("click", async (e) => {
-  const isSave = e.target.classList.contains("save");
-  const isDel = e.target.classList.contains("del");
-  if (!isSave && !isDel) return;
-
-  const tipo = e.target.dataset.tipo;
-
-  if (isDel) {
-    if (!confirm("Remover este item? Esta ação grava de imediato no Excel.")) return;
-    const id = e.target.dataset.id;
-    const urlBase = tipo === "article" ? "articles" : (tipo === "box" ? "boxes" : (tipo === "rack" ? "racks" : "zones"));
-    const resp = await fetch(`${API}/${urlBase}/${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (resp.ok) {
-      if (tipo === "article") await carregarArtigos();
-      if (tipo === "box") await carregarCaixas();
-      if (tipo === "rack") await carregarRacks();
-      if (tipo === "zone") await carregarZonas();
-    } else {
-      alert("Erro ao remover.");
-    }
-    return;
-  }
-
-  const tr = e.target.closest("tr");
-
-  if (tipo === "article-new") {
-    const body = lerCamposArticle(tr);
-    const resp = await fetch(`${API}/articles`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    const r = await resp.json();
-    if (r.ok) { await carregarArtigos(); } else { alert(r.erro || "Erro ao criar."); }
-    return;
-  }
-  if (tipo === "box-new") {
-    const body = lerCamposBox(tr);
-    const resp = await fetch(`${API}/boxes`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    const r = await resp.json();
-    if (r.ok) { await carregarCaixas(); } else { alert(r.erro || "Erro ao criar."); }
-    return;
-  }
-  if (tipo === "rack-new") {
-    const body = lerCamposRack(tr);
-    const resp = await fetch(`${API}/racks`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    const r = await resp.json();
-    if (r.ok) { await carregarRacks(); } else { alert(r.erro || "Erro ao criar."); }
-    return;
-  }
-  if (tipo === "zone-new") {
-    const body = lerCamposZona(tr);
-    const resp = await fetch(`${API}/zones`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    const r = await resp.json();
-    if (r.ok) { await carregarZonas(); } else { alert(r.erro || "Erro ao criar."); }
-    return;
-  }
-
-  // edição de linha existente
-  const nome = tr.dataset.nome;
-  let body, url;
-  if (tipo === "box") {
-    body = lerCamposBox(tr);
-    url = `${API}/boxes/${encodeURIComponent(nome)}`;
-  } else if (tipo === "rack") {
-    body = lerCamposRack(tr);
-    url = `${API}/racks/${encodeURIComponent(nome)}`;
-  } else if (tipo === "zone") {
-    body = lerCamposZona(tr);
-    url = `${API}/zones/${encodeURIComponent(nome)}`;
-  } else {
-    return;
-  }
-  const resp = await fetch(url, {
-    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  e.target.textContent = resp.ok ? "Guardado!" : "Erro";
-  setTimeout(() => e.target.textContent = "Guardar", 1200);
-});
 
 // ----------------------------------------------------------------- 3D viewer
 let scene, camera, renderer, labelRenderer, controls, raycaster, mouse, dirLight, chao;

@@ -11,7 +11,6 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-import openpyxl
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,69 +45,6 @@ def get_articles():
     ]
 
 
-class ArticleUpdate(BaseModel):
-    sku: str
-    descricao: str
-    comp_m: float
-    larg_m: float
-    alt_m: float
-    peso_kg: float
-    stock_max_un: int
-    pecas_por_carro: int
-    orientacao: str = "Livre"
-    empilhamento: str = "EMPILHAVEL"
-    fragilidade: str = "Normal"
-    geometria: str = "Regular"
-    classe: str = "RIGIDO"
-    subtipo_longo: str = ""
-
-
-def _article_row_values(body: "ArticleUpdate") -> list:
-    return [body.sku, body.descricao, body.comp_m, body.larg_m, body.alt_m,
-            body.peso_kg, body.stock_max_un, body.pecas_por_carro, body.orientacao,
-            body.empilhamento, body.fragilidade, body.geometria, body.classe,
-            body.subtipo_longo]
-
-
-@app.post("/api/articles")
-def create_article(body: ArticleUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Peças"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == body.sku:
-            wb.close()
-            return {"ok": False, "erro": f"SKU '{body.sku}' já existe."}
-    ws.append(_article_row_values(body))
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.put("/api/articles/{sku}")
-def update_article(sku: str, body: ArticleUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Peças"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == sku:
-            valores = _article_row_values(body)
-            for col, v in enumerate(valores, 1):
-                ws.cell(row[0].row, col).value = v
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.delete("/api/articles/{sku}")
-def delete_article(sku: str):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Peças"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == sku:
-            ws.delete_rows(row[0].row, 1)
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
 @app.get("/api/boxes")
 def get_boxes():
     boxes = io_excel.load_catalog(cfg.master_data)
@@ -121,61 +57,6 @@ def get_boxes():
         }
         for b in boxes
     ]
-
-
-class BoxUpdate(BaseModel):
-    nome: str
-    int_comp_m: float
-    int_larg_m: float
-    int_alt_m: float
-    ext_comp_m: float
-    ext_larg_m: float
-    ext_alt_m: float
-    peso_max_kg: float
-
-
-@app.put("/api/boxes/{nome}")
-def update_box(nome: str, body: BoxUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Caixas"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == nome:
-            row[1].value = body.int_comp_m
-            row[2].value = body.int_larg_m
-            row[3].value = body.int_alt_m
-            row[4].value = body.ext_comp_m
-            row[5].value = body.ext_larg_m
-            row[6].value = body.ext_alt_m
-            row[7].value = body.peso_max_kg
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.post("/api/boxes")
-def create_box(body: BoxUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Caixas"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == body.nome:
-            wb.close()
-            return {"ok": False, "erro": f"Caixa '{body.nome}' já existe."}
-    ws.append([body.nome, body.int_comp_m, body.int_larg_m, body.int_alt_m,
-               body.ext_comp_m, body.ext_larg_m, body.ext_alt_m, body.peso_max_kg])
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.delete("/api/boxes/{nome}")
-def delete_box(nome: str):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Caixas"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == nome:
-            ws.delete_rows(row[0].row, 1)
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
 
 
 @app.get("/api/racks")
@@ -193,69 +74,7 @@ def get_racks():
     ]
 
 
-class RackUpdate(BaseModel):
-    nome: str
-    larg_m: float
-    prof_m: float
-    alt_nivel_m: float
-    niveis: int
-    aceita: list[str]
-    comp_braco_m: float = 0.0
-    corredor_m: float = 0.0
-
-
-@app.put("/api/racks/{nome}")
-def update_rack(nome: str, body: RackUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Racks"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == nome:
-            row[1].value = body.larg_m
-            row[2].value = body.prof_m
-            row[3].value = body.alt_nivel_m
-            row[4].value = body.niveis
-            row[5].value = ", ".join(body.aceita)
-            row[7].value = body.comp_braco_m
-            row[8].value = body.corredor_m
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.post("/api/racks")
-def create_rack(body: RackUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Racks"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == body.nome:
-            wb.close()
-            return {"ok": False, "erro": f"Rack '{body.nome}' já existe."}
-    ws.append([body.nome, body.larg_m, body.prof_m, body.alt_nivel_m, body.niveis,
-               ", ".join(body.aceita), 0.0, body.comp_braco_m, body.corredor_m])
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.delete("/api/racks/{nome}")
-def delete_rack(nome: str):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = wb["Racks"]
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == nome:
-            ws.delete_rows(row[0].row, 1)
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
 # ------------------------------------------------------------------- zonas
-
-def _zonas_sheet(wb):
-    if "Zonas" not in wb.sheetnames:
-        ws = wb.create_sheet("Zonas")
-        ws.append(["Nome", "Categoria", "Comp_m", "Larg_m", "Justificacao"])
-    return wb["Zonas"]
-
 
 @app.get("/api/zones")
 def get_zones():
@@ -267,54 +86,6 @@ def get_zones():
         }
         for z in zonas
     ]
-
-
-class ZoneUpdate(BaseModel):
-    nome: str
-    categoria: str = "Outra"
-    comp_m: float
-    larg_m: float
-    justificacao: str = ""
-
-
-@app.put("/api/zones/{nome}")
-def update_zone(nome: str, body: ZoneUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = _zonas_sheet(wb)
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == nome:
-            row[1].value = body.categoria
-            row[2].value = body.comp_m
-            row[3].value = body.larg_m
-            row[4].value = body.justificacao
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.post("/api/zones")
-def create_zone(body: ZoneUpdate):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = _zonas_sheet(wb)
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == body.nome:
-            wb.close()
-            return {"ok": False, "erro": f"Zona '{body.nome}' já existe."}
-    ws.append([body.nome, body.categoria, body.comp_m, body.larg_m, body.justificacao])
-    wb.save(cfg.master_data)
-    return {"ok": True}
-
-
-@app.delete("/api/zones/{nome}")
-def delete_zone(nome: str):
-    wb = openpyxl.load_workbook(cfg.master_data)
-    ws = _zonas_sheet(wb)
-    for row in ws.iter_rows(min_row=2):
-        if row[0].value and str(row[0].value).strip() == nome:
-            ws.delete_rows(row[0].row, 1)
-            break
-    wb.save(cfg.master_data)
-    return {"ok": True}
 
 
 # ------------------------------------------------------------------- gerar
