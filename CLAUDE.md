@@ -22,6 +22,8 @@ racks e a área de chão necessária.
 
 ## Tipos de carga (`LoadType`)
 - **S / M / L** — caixas de repacking (catálogo na folha «Caixas»).
+- **MEIA** — meia-palete (0.8 × 0.6 m, mesma altura útil da PALLET): mais uma
+  entrada do catálogo «Caixas», candidata entre L e PALLET no best-fit.
 - **PALLET** — a palete é **mais uma entrada do catálogo** (BoxType): para o
   packer é um bin (footprint × altura de empilhamento + peso). Não há dataclass
   `Pallet` nem `load_pallet` separados.

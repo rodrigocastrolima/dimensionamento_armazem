@@ -106,7 +106,8 @@ def choose_load(article: Article, catalogo: list[BoxType],
         return LoadType.LONGO, 1
 
     catalogo_idx = {b.nome: b for b in catalogo}
-    candidatas = _CAIXAS + [LoadType.PALLET]
+    # ordem crescente de tamanho: em empate no nº de unidades ganha a menor
+    candidatas = _CAIXAS + [LoadType.MEIA, LoadType.PALLET]
 
     melhor: tuple[LoadType, int] | None = None
     melhor_num_unidades = None

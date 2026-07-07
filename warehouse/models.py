@@ -11,6 +11,7 @@ class LoadType(str, Enum):
     S = "S"
     M = "M"
     L = "L"
+    MEIA = "MEIA"         # meia-palete (0.8 x 0.6): entrada do catálogo, como a PALLET
     PALLET = "PALLET"     # palete: entrada do catálogo (BoxType), packed como um bin
     LONGO = "LONGO"       # material comprido: NÃO é caixa -> vai direto para cantilever
 
