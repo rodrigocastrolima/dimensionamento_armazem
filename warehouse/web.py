@@ -552,9 +552,43 @@ def render_layout(body: ArrangeRequest):
     bloco_racks = next((b for b in body.blocks if b.get("type") == "racking"), None)
     off_x = float(bloco_racks.get("x", 0.0)) if bloco_racks else 0.0
     off_y = float(bloco_racks.get("y", 0.0)) if bloco_racks else 0.0
+    rot_racks = int(float(bloco_racks.get("rot", 0) or 0)) % 360 if bloco_racks else 0
+    bloco_w = float(bloco_racks.get("w", 0.0)) if bloco_racks else 0.0
+    bloco_h = float(bloco_racks.get("h", 0.0)) if bloco_racks else 0.0
+
+    def _roda_rect(x, y, l, p, cont_w, cont_h):
+        """Roda um retângulo axis-aligned dentro de um contentor cont_w x cont_h,
+        em passos de 90° (rot_racks). Devolve (x, y, larg, prof) no novo frame."""
+        if rot_racks == 90:
+            return cont_h - (y + p), x, p, l
+        if rot_racks == 180:
+            return cont_w - (x + l), cont_h - (y + p), l, p
+        if rot_racks == 270:
+            return y, cont_w - (x + l), p, l
+        return x, y, l, p
+
+    # o canvas roda o bloco em torno do centro: origem do bloco rodado
+    if rot_racks in (90, 270):
+        centro_x, centro_y = off_x + bloco_w / 2, off_y + bloco_h / 2
+        base_x, base_y = centro_x - bloco_h / 2, centro_y - bloco_w / 2
+    else:
+        base_x, base_y = off_x, off_y
+
     for item in layout_json:
-        item["x"] = round(item["x"] + off_x, 4)
-        item["y"] = round(item["y"] + off_y, 4)
+        larg_orig, prof_orig = item["larg_m"], item["prof_m"]
+        if rot_racks:
+            # roda as caixas dentro de cada nível (frame do footprint do rack)
+            for bloco in item["blocos"]:
+                for nivel in bloco["niveis"]:
+                    for c in nivel["caixas"]:
+                        cx, cy, cl, cp = _roda_rect(c["x_m"], c["y_m"], c["comp_m"],
+                                                    c["larg_m"], larg_orig, prof_orig)
+                        c["x_m"], c["y_m"] = round(cx, 4), round(cy, 4)
+                        c["comp_m"], c["larg_m"] = cl, cp
+        x, y, l, p = _roda_rect(item["x"], item["y"], larg_orig, prof_orig, bloco_w, bloco_h)
+        item["x"] = round(base_x + x, 4)
+        item["y"] = round(base_y + y, 4)
+        item["larg_m"], item["prof_m"] = l, p
 
     zonas_layout = [
         {

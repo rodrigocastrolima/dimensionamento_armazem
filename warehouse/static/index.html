@@ -135,7 +135,7 @@
       <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
     </label>
     <button class="action" id="btn-gerar-racks">1 · Gerar racks</button>
-    <button id="btn-rodar-zona">⟳ Rodar zona 45°</button>
+    <button id="btn-rodar-zona">⟳ Rodar (zona 45° · racks 90°)</button>
     <button id="btn-reset-canvas">↺ Repor</button>
     <span style="flex:1"></span>
     <button id="btn-guardar-arranjo">⬇ Guardar arranjo</button>
@@ -148,7 +148,7 @@
     3) «Renderizar layout 3D» mostra os racks, as zonas e a área total. Escala: 1 m = 20 px, grelha de 0.25 m.</div>
   <div id="canvas-resumo" style="font-size:13px; margin-bottom:8px;"></div>
   <div style="display:flex; gap:12px;">
-    <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid #555; border-radius:8px; overflow:auto; position:relative; height:520px;">
+    <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid #555; border-radius:8px; overflow:auto; position:relative; height:calc(100vh - 210px);">
       <svg id="canvas" style="background:#fff; cursor:default;"></svg>
     </div>
     <div style="width:260px;">
@@ -883,8 +883,8 @@ function inicializarCanvas() {
   const container = document.getElementById("canvas-container");
 
   function updateSVGSize() {
-    svg.setAttribute("width", Math.max(container.clientWidth - 2, 1400));
-    svg.setAttribute("height", Math.max(container.clientHeight - 2, 900));
+    svg.setAttribute("width", Math.max(container.clientWidth - 2, 2000));
+    svg.setAttribute("height", Math.max(container.clientHeight - 2, 1400));
   }
   updateSVGSize();
   window.addEventListener("resize", () => { updateSVGSize(); desenharBlocks(); });
@@ -1024,8 +1024,8 @@ function inicializarCanvas() {
   document.getElementById("btn-rodar-zona").addEventListener("click", () => {
     const b = canvasBlocks.find(x => x.id === selBlockId);
     if (!b) { alert("Seleciona primeiro um bloco no canvas."); return; }
-    if (b.type === "racking") { alert("O bloco de racks não pode ser rodado."); return; }
-    b.rot = ((b.rot || 0) + 45) % 360;
+    // zonas rodam de 45° em 45°; o bloco de racks só a 90° (layout interno é ortogonal)
+    b.rot = ((b.rot || 0) + (b.type === "racking" ? 90 : 45)) % 360;
     desenharBlocks();
   });
 
