@@ -39,9 +39,11 @@ def _melhor_num_por_fiada(n: int, larg_m: float, prof_dupla_m: float, corredor_m
 
 
 def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
-                      y0: float) -> tuple[list[PosicaoLayout], float, float]:
+                      y0: float, k: int | None = None) -> tuple[list[PosicaoLayout], float, float]:
     """Dispõe as posições de UMA tipologia em filas duplas costas-com-costas,
-    a partir de y0. Devolve (layout, largura_ocupada_m, profundidade_ocupada_m)."""
+    a partir de y0. k = posições por fiada; se None, otimiza só para esta
+    tipologia (perímetro próprio). Devolve (layout, largura_ocupada_m,
+    profundidade_ocupada_m)."""
     n = len(posicoes)
     if n == 0:
         return [], 0.0, 0.0
@@ -50,7 +52,8 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     corredor = _corredor_m(rack)
     prof_dupla = 2 * prof
 
-    k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor)
+    if k is None:
+        k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor)
 
     resultado: list[PosicaoLayout] = []
     idx = 0
@@ -58,6 +61,7 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     y_fila = y0
     largura_max = 0.0
     while idx < n:
+        cols_fila = min(k, n - idx)   # largura realmente usada nesta fila dupla
         for lado, y_lado in (("frente", y_fila), ("tras", y_fila + prof)):
             for col in range(k):
                 if idx >= n:
@@ -70,7 +74,7 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
                     fila_idx=fila_idx, lado=lado,
                 ))
                 idx += 1
-        largura_max = max(largura_max, k * larg)
+        largura_max = max(largura_max, cols_fila * larg)
         y_fila += prof_dupla + corredor
         fila_idx += 1
 
@@ -109,6 +113,42 @@ def _layout_zonas(zonas: list[Zona], y0: float) -> list[ZonaLayout]:
     return resultado
 
 
+def _larguras_alinhadas(por_tipologia: dict[str, list[PosicaoChao]],
+                        rack_types: dict[str, RackType]) -> dict[str, int]:
+    """Escolhe k (posições por fiada) por tipologia de modo a que TODAS as
+    tipologias encham filas até uma largura-alvo comum, minimizando a área do
+    retângulo envolvente do bloco inteiro — em vez de cada tipologia otimizar
+    o seu próprio retângulo (que deixa cantos vazios ao lado das tipologias
+    mais pequenas).
+
+    Testa como largura-alvo todos os múltiplos k x larg_m de cada tipologia."""
+    tips = [(rack_types[nome], lista) for nome, lista in por_tipologia.items() if lista]
+    if not tips:
+        return {}
+
+    def _profundidade(rack: RackType, n: int, k: int) -> float:
+        filas = math.ceil(n / (2 * k))
+        return filas * 2 * rack.prof_m + max(filas - 1, 0) * _corredor_m(rack)
+
+    candidatos = sorted({k * rack.larg_m for rack, lista in tips
+                         for k in range(1, len(lista) + 1)})
+    melhor_ks: dict[str, int] = {}
+    melhor_area, melhor_perimetro = float("inf"), float("inf")
+
+    for alvo in candidatos:
+        ks = {rack.nome: max(int(alvo / rack.larg_m + 1e-9), 1) for rack, _ in tips}
+        largura = max(min(ks[rack.nome], len(lista)) * rack.larg_m for rack, lista in tips)
+        profundidade = (sum(_profundidade(rack, len(lista), ks[rack.nome]) for rack, lista in tips)
+                        + CORREDOR_TRANSICAO_M * (len(tips) - 1))
+        area_env = largura * profundidade
+        perimetro = 2 * (largura + profundidade)
+        if (area_env < melhor_area - 1e-9
+                or (abs(area_env - melhor_area) <= 1e-9 and perimetro < melhor_perimetro)):
+            melhor_area, melhor_perimetro, melhor_ks = area_env, perimetro, ks
+
+    return melhor_ks
+
+
 def gerar_layout(posicoes: list[PosicaoChao],
                  rack_types: dict[str, RackType],
                  zonas: list[Zona] | None = None) -> WarehouseLayout:
@@ -127,6 +167,8 @@ def gerar_layout(posicoes: list[PosicaoChao],
         profundidade_zonas = max(zl.y_m + zl.profundidade_m for zl in zonas_layout)
         y0_racks = profundidade_zonas + CORREDOR_TRANSICAO_M
 
+    ks_por_tipologia = _larguras_alinhadas(por_tipologia, rack_types)
+
     todas: list[PosicaoLayout] = []
     y_cursor = y0_racks
     largura_total = 0.0
@@ -134,7 +176,8 @@ def gerar_layout(posicoes: list[PosicaoChao],
 
     for rack_nome, lista in por_tipologia.items():
         rack = rack_types[rack_nome]
-        layout_tipo, largura, profundidade = _layout_tipologia(rack, lista, y_cursor)
+        layout_tipo, largura, profundidade = _layout_tipologia(
+            rack, lista, y_cursor, ks_por_tipologia.get(rack_nome))
         todas.extend(layout_tipo)
         largura_total = max(largura_total, largura)
         y_cursor += profundidade + CORREDOR_TRANSICAO_M
