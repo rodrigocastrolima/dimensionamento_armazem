@@ -60,13 +60,17 @@ def run(cfg: Config) -> None:
     avisos = avisos_estimativa + avisos_alocacao
 
     dim = area.floor_area(posicoes, rack_by_name)                             # Passo 3
-    wl = layout_mod.gerar_layout(posicoes, rack_by_name)                      # Passo 3b
+    zonas = io_excel.load_zones(cfg.master_data)
+    wl = layout_mod.gerar_layout(posicoes, rack_by_name, zonas)               # Passo 3b
+    resumo = area.resumo_area_total(dim, wl, zonas, cfg.margem_estrutural_pct)
 
     slots = _flatten_para_excel(posicoes)
-    io_excel.write_results(cfg.output, assignments, requirements, dim, slots, avisos, wl)
+    io_excel.write_results(cfg.output, assignments, requirements, dim, slots, avisos, wl,
+                           zonas, resumo)
     print(f"Area de racks: {dim.area_racks_m2:,.1f} m2")
     print(f"Layout fisico: {wl.largura_total_m:,.1f} x {wl.profundidade_total_m:,.1f} m "
          f"= {wl.area_total_m2:,.1f} m2 (corredores: {wl.area_corredores_m2:,.1f} m2)")
+    print(f"Area bruta total estimada: {resumo.area_bruta_total_m2:,.1f} m2")
     if avisos:
         print(f"ATENCAO: {len(avisos)} aviso(s) -- ver sheet 'Avisos' em {cfg.output}")
 

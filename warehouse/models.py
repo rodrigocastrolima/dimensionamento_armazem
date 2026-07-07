@@ -33,6 +33,7 @@ class Article:
     alt_m: float
     peso_kg: float
     stock_max_un: int
+    pecas_por_carro: int           # quantidade para uma car (picking unit)
     orientacao: str = "Livre"      # restrição de rotação no packing
     empilhamento: Empilhamento = Empilhamento.EMPILHAVEL
     fragilidade: str = "Normal"
@@ -113,11 +114,12 @@ class RackRequirement:
 
 @dataclass
 class CaixaColocada:
-    """Uma caixa física individual, já posicionada (Passo 2, packer 2D real).
+    """Uma caixa (ou stack de caixas) posicionada (Passo 2, packer 2D real).
 
     x_m/y_m: canto inferior-esquerdo da caixa dentro do nível (footprint
     larg_m x prof_m do rack), já na orientação escolhida pelo packer.
-    pecas_nesta_caixa: peças do artigo dentro desta caixa específica.
+    pecas_nesta_caixa: peças do artigo dentro desta caixa/stack.
+    num_boxes_in_stack: quantas caixas físicas estão empilhadas (altura combinada).
     """
     sku: str
     descricao: str
@@ -129,6 +131,7 @@ class CaixaColocada:
     alt_m: float
     pecas_nesta_caixa: int = 0
     eh_picking: bool = False
+    num_boxes_in_stack: int = 1  # quantas caixas neste stack
 
 
 @dataclass
@@ -168,6 +171,32 @@ class WarehouseDimensioning:
 
 
 @dataclass
+class Zona:
+    """Zona funcional do armazém (INPUT): área fora dos racks -- receção, expedição,
+    equipamento, staging, etc. Dimensão dada diretamente (comp x larg), sem SKU/stock
+    associado. Área somada à área total à parte dos corredores de racks (aisle_factor)."""
+    nome: str
+    categoria: str          # livre (ex: "Receção", "Expedição", "Equipamento", "Staging")
+    comp_m: float
+    larg_m: float
+    justificacao: str = ""
+
+    @property
+    def area_m2(self) -> float:
+        return self.comp_m * self.larg_m
+
+
+@dataclass
+class ZonaLayout:
+    """Posição física de uma Zona no layout 3D (Passo 3b), ao lado do bloco de racks."""
+    zona: Zona
+    x_m: float
+    y_m: float
+    largura_m: float
+    profundidade_m: float
+
+
+@dataclass
 class PosicaoLayout:
     """Passo 3b — posição de chão com coordenadas físicas reais (layout.py).
 
@@ -195,3 +224,4 @@ class WarehouseLayout:
     profundidade_total_m: float = 0.0
     area_total_m2: float = 0.0          # racks + corredores, retângulo envolvente
     area_corredores_m2: float = 0.0
+    zonas: list[ZonaLayout] = field(default_factory=list)  # posicionadas à parte, ver Zona

@@ -6,7 +6,7 @@ from pathlib import Path
 import openpyxl
 
 from .models import (Article, BoxType, RackType, LoadType, Empilhamento,
-                     BoxAssignment, RackRequirement, WarehouseDimensioning)
+                     BoxAssignment, RackRequirement, WarehouseDimensioning, Zona)
 
 
 _EMPILHAMENTO_MAP = {
@@ -36,32 +36,55 @@ def load_articles(path: Path) -> list[Article]:
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = _ws(wb, "Peças")
     rows = list(ws.iter_rows(values_only=True))
-    # linha 0 = cabeçalho
-    header = [str(c).strip() if c else "" for c in rows[0]]
-    idx_classe = header.index("Classe") if "Classe" in header else None
-    idx_subtipo = header.index("Subtipo_LONGO") if "Subtipo_LONGO" in header else None
 
     articles = []
     for r in rows[1:]:
-        sku, desc, comp, larg, alt, peso, stock, orient, empilh, frag, geom, *resto = r
-        if sku is None:
+        # Column positions (0-indexed): fixed order regardless of encoding issues
+        # 0: SKU, 1: Descrição, 2: Comprimento_m, 3: Largura_m, 4: Altura_m,
+        # 5: Peso_kg, 6: Stock_máx_un, 7: Peças_por_carro, 8: Orientação_permitida,
+        # 9: Empilhável, 10: Fragilidade, 11: Geometria, 12: Volume_unit_m³,
+        # 13: Subtipo_LONGO, 14: Classe
+        if not r or r[0] is None:
             continue
-        peso_kg = float(peso) if peso is not None and str(peso) != "#N/A" else 0.0
+
+        sku = str(r[0])
+        desc = str(r[1]) if r[1] else ""
+        comp = float(r[2]) if r[2] else 0.0
+        larg = float(r[3]) if r[3] else 0.0
+        alt = float(r[4]) if r[4] else 0.0
+
+        peso_val = r[5]
+        peso_kg = float(peso_val) if peso_val is not None and str(peso_val) != "#N/A" else 0.0
+
+        stock = int(r[6]) if r[6] else 0
+
+        pecas_por_carro_val = r[7]
+        if pecas_por_carro_val is None or str(pecas_por_carro_val) == "#N/A":
+            raise ValueError(f"SKU {sku}: Peças_por_carro is required but missing or #N/A")
+        pecas_por_carro = int(pecas_por_carro_val)
+
+        orient = str(r[8]) if r[8] else "Livre"
+        empilh = r[9]
         empilhamento = _parse_empilhamento(empilh)
-        classe = str(r[idx_classe]).strip() if idx_classe is not None and r[idx_classe] else "RIGIDO"
-        subtipo_longo = str(r[idx_subtipo]).strip() if idx_subtipo is not None and r[idx_subtipo] else ""
+        frag = str(r[10]) if r[10] else "Normal"
+        geom = str(r[11]) if r[11] else "Regular"
+
+        subtipo_longo = str(r[13]).strip() if r[13] else ""
+        classe = str(r[14]).strip() if r[14] else "RIGIDO"
+
         articles.append(Article(
-            sku=str(sku),
-            descricao=str(desc) if desc else "",
-            comp_m=float(comp),
-            larg_m=float(larg),
-            alt_m=float(alt),
+            sku=sku,
+            descricao=desc,
+            comp_m=comp,
+            larg_m=larg,
+            alt_m=alt,
             peso_kg=peso_kg,
-            stock_max_un=int(stock),
-            orientacao=str(orient) if orient else "Livre",
+            stock_max_un=stock,
+            pecas_por_carro=pecas_por_carro,
+            orientacao=orient,
             empilhamento=empilhamento,
-            fragilidade=str(frag) if frag else "Normal",
-            geometria=str(geom) if geom else "Regular",
+            fragilidade=frag,
+            geometria=geom,
             classe=classe,
             subtipo_longo=subtipo_longo,
         ))
@@ -127,13 +150,40 @@ def load_rack_types(path: Path) -> list[RackType]:
     return racks
 
 
+def load_zones(path: Path) -> list[Zona]:
+    """Folha «Zonas» -> list[Zona]. Sheet opcional: devolve [] se não existir."""
+    wb = openpyxl.load_workbook(path, data_only=True)
+    if "Zonas" not in wb.sheetnames:
+        return []
+    ws = wb["Zonas"]
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return []
+    zonas = []
+    for r in rows[1:]:
+        if r[0] is None:
+            continue
+        nome, categoria, comp, larg, *resto = r
+        justificacao = str(resto[0]) if resto and resto[0] else ""
+        zonas.append(Zona(
+            nome=str(nome),
+            categoria=str(categoria) if categoria else "Outra",
+            comp_m=float(comp),
+            larg_m=float(larg),
+            justificacao=justificacao,
+        ))
+    return zonas
+
+
 def write_results(path: Path,
                   assignments: list[BoxAssignment],
                   requirements: list[RackRequirement],
                   dimensioning: WarehouseDimensioning,
                   slots: list,
                   avisos: list[str] | None = None,
-                  warehouse_layout=None) -> None:
+                  warehouse_layout=None,
+                  zonas: list[Zona] | None = None,
+                  resumo_area=None) -> None:
     """Escreve resultados.xlsx com sheets: Lógica, Resumo, Detalhe (e Avisos, se houver)."""
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
@@ -260,6 +310,24 @@ def write_results(path: Path,
         par(ws_res, "Profundidade do envolvente (m)", warehouse_layout.profundidade_total_m, linha + 2)
         par(ws_res, "Área total (racks + corredores) (m²)", warehouse_layout.area_total_m2, linha + 3)
         par(ws_res, "Área de corredores (m²)", warehouse_layout.area_corredores_m2, linha + 4)
+
+    if zonas:
+        linha = ws_res.max_row + 2
+        titulo(ws_res, "Zonas funcionais", linha)
+        hdr_row(ws_res, ["Nome", "Categoria", "Área (m²)"], linha + 1)
+        for i, z in enumerate(zonas):
+            ws_res.cell(linha + 2 + i, 1, z.nome)
+            ws_res.cell(linha + 2 + i, 2, z.categoria)
+            ws_res.cell(linha + 2 + i, 3, round(z.area_m2, 2))
+
+    if resumo_area is not None:
+        linha = ws_res.max_row + 2
+        titulo(ws_res, "Área bruta total estimada", linha)
+        par(ws_res, "Footprint de racks (m²)", round(resumo_area.area_racks_m2, 2), linha + 1)
+        par(ws_res, "Corredores (m²)", round(resumo_area.area_corredores_m2, 2), linha + 2)
+        par(ws_res, "Zonas funcionais (m²)", round(resumo_area.area_zonas_m2, 2), linha + 3)
+        par(ws_res, "Margem estrutural (m²)", round(resumo_area.margem_estrutural_m2, 2), linha + 4)
+        par(ws_res, "ÁREA BRUTA TOTAL ESTIMADA (m²)", round(resumo_area.area_bruta_total_m2, 2), linha + 5)
 
     # ------------------------------------------------------------------ Detalhe
     ws_det = wb.create_sheet("Detalhe")

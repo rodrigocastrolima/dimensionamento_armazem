@@ -11,11 +11,12 @@ Unidades: metros / m².
 from __future__ import annotations
 import math
 
-from .models import RackType, PosicaoChao, PosicaoLayout, WarehouseLayout
+from .models import RackType, PosicaoChao, PosicaoLayout, WarehouseLayout, Zona, ZonaLayout
 from .area import rack_footprint_m2
 
 CORREDOR_DEFAULT_M = 2.5         # usado quando RackType.corredor_m == 0
 CORREDOR_TRANSICAO_M = 3.0       # entre o bloco de uma tipologia e a seguinte
+GAP_ZONAS_M = 1.0                # espaçamento entre zonas funcionais, na sua fila
 
 
 def _corredor_m(rack: RackType) -> float:
@@ -77,17 +78,57 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     return resultado, largura_max, profundidade_total
 
 
+def _layout_zonas(zonas: list[Zona], y0: float) -> list[ZonaLayout]:
+    """Dispõe as zonas funcionais em prateleiras (shelf packing): tamanhos
+    variáveis, por isso não dá para replicar o truque de "k por fiada" dos
+    racks (todos iguais). Ordena por profundidade decrescente e vai enchendo
+    uma fiada até à largura-alvo (~raiz da área total), quebrando para a
+    fiada seguinte -- aproxima um retângulo compacto em vez de uma tira única.
+    Só dá coordenadas para não sobrepor o bloco de racks na cena 3D -- a área
+    das zonas é reportada à parte (area.resumo_area_total), não entra em
+    largura_total_m/profundidade_total_m/area_total_m2."""
+    if not zonas:
+        return []
+
+    area_total = sum(z.area_m2 for z in zonas)
+    largura_alvo = max(math.sqrt(area_total), max(z.comp_m for z in zonas))
+    ordenadas = sorted(zonas, key=lambda z: z.larg_m, reverse=True)
+
+    resultado = []
+    x, y, altura_fiada = 0.0, y0, 0.0
+    for zona in ordenadas:
+        if x > 0 and x + zona.comp_m > largura_alvo:
+            y += altura_fiada + GAP_ZONAS_M
+            x, altura_fiada = 0.0, 0.0
+        resultado.append(ZonaLayout(
+            zona=zona, x_m=round(x, 4), y_m=round(y, 4),
+            largura_m=zona.comp_m, profundidade_m=zona.larg_m,
+        ))
+        x += zona.comp_m + GAP_ZONAS_M
+        altura_fiada = max(altura_fiada, zona.larg_m)
+    return resultado
+
+
 def gerar_layout(posicoes: list[PosicaoChao],
-                 rack_types: dict[str, RackType]) -> WarehouseLayout:
-    """Gera o layout físico completo: uma tipologia a seguir à outra (eixo Y),
-    cada uma com as suas filas duplas costas-com-costas, separadas por um
-    corredor de transição entre tipologias diferentes."""
+                 rack_types: dict[str, RackType],
+                 zonas: list[Zona] | None = None) -> WarehouseLayout:
+    """Gera o layout físico completo: zonas funcionais primeiro (entrada do
+    armazém, longe dos racks), depois uma tipologia de rack a seguir à outra
+    (eixo Y), cada uma com as suas filas duplas costas-com-costas, separadas
+    por um corredor de transição -- entre o bloco de zonas e o de racks, e
+    entre tipologias diferentes."""
     por_tipologia: dict[str, list[PosicaoChao]] = {}
     for pos in posicoes:
         por_tipologia.setdefault(pos.rack_nome, []).append(pos)
 
+    zonas_layout = _layout_zonas(zonas, 0.0) if zonas else []
+    y0_racks = 0.0
+    if zonas_layout:
+        profundidade_zonas = max(zl.y_m + zl.profundidade_m for zl in zonas_layout)
+        y0_racks = profundidade_zonas + CORREDOR_TRANSICAO_M
+
     todas: list[PosicaoLayout] = []
-    y_cursor = 0.0
+    y_cursor = y0_racks
     largura_total = 0.0
     area_racks = 0.0
 
@@ -99,7 +140,7 @@ def gerar_layout(posicoes: list[PosicaoChao],
         y_cursor += profundidade + CORREDOR_TRANSICAO_M
         area_racks += rack_footprint_m2(rack) * len(lista)
 
-    profundidade_total = max(y_cursor - CORREDOR_TRANSICAO_M, 0.0)
+    profundidade_total = max(y_cursor - CORREDOR_TRANSICAO_M - y0_racks, 0.0)
     area_envolvente = largura_total * profundidade_total
     area_corredores = max(area_envolvente - area_racks, 0.0)
 
@@ -109,4 +150,5 @@ def gerar_layout(posicoes: list[PosicaoChao],
         profundidade_total_m=round(profundidade_total, 3),
         area_total_m2=round(area_envolvente, 3),
         area_corredores_m2=round(area_corredores, 3),
+        zonas=zonas_layout,
     )

@@ -181,6 +181,7 @@ class _ItemParaColocar:
     alt_m: float
     pecas_nesta_caixa: int
     eh_primeira_do_sku: bool    # True = precisa picking; False = overflow/reserva
+    num_boxes_in_stack: int = 1  # quantas caixas físicas estão empilhadas neste item
 
 
 def _cabe_no_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -> tuple[float, float] | None:
@@ -228,6 +229,7 @@ def _colocar(nivel: NivelRack, x: float, y: float, item: _ItemParaColocar) -> No
         x_m=round(x, 4), y_m=round(y, 4),
         comp_m=item.comp_m, larg_m=item.larg_m, alt_m=item.alt_m,
         pecas_nesta_caixa=item.pecas_nesta_caixa, eh_picking=nivel.eh_picking,
+        num_boxes_in_stack=item.num_boxes_in_stack,
     ))
 
 
@@ -340,29 +342,65 @@ def allocate_to_racks(assignments: list[BoxAssignment],
         compativeis.sort(key=lambda r: _rack_footprint_m2(r))
         candidatos_por_tipo[lt] = compativeis
 
+    # Pre-calculate stacking capacity per load type
+    boxes_per_stack_per_type: dict[LoadType, int] = {}
+    for load_type in LoadType:
+        if load_type == LoadType.LONGO:
+            boxes_per_stack_per_type[load_type] = 1
+        else:
+            box = catalogo.get(load_type)
+            if box:
+                box_height = box.ext_alt_m
+                compatible_racks = [r for r in rack_types if load_type in r.aceita]
+                if compatible_racks:
+                    min_level_height = min(r.alt_nivel_m for r in compatible_racks)
+                    boxes_per_stack = max(1, int(min_level_height / box_height))
+                    boxes_per_stack_per_type[load_type] = boxes_per_stack
+                else:
+                    boxes_per_stack_per_type[load_type] = 1
+            else:
+                boxes_per_stack_per_type[load_type] = 1
+
     itens: list[_ItemParaColocar] = []
     for a in assignments:
         art = article_idx.get(a.sku)
         desc = art.descricao if art else ""
+
         if a.load_type == LoadType.LONGO:
             comp_dim = art.comp_m if art else (comp_max_longo if comp_max_longo > 0 else 1.0)
             larg_dim, alt_dim = 0.3, 0.3
+            boxes_per_stack = 1
         else:
             box = catalogo.get(a.load_type)
             if box is None:
                 continue
             comp_dim, larg_dim, alt_dim = box.ext_comp_m, box.ext_larg_m, box.ext_alt_m
+            boxes_per_stack = boxes_per_stack_per_type.get(a.load_type, 1)
 
         pecas_total = art.stock_max_un if art else 0
-        for i in range(a.num_unidades):
-            pecas_cheias = i * a.pecas_por_unidade
-            pecas_aqui = max(min(a.pecas_por_unidade, pecas_total - pecas_cheias), 0)
+        num_unidades_picking = math.ceil(art.pecas_por_carro / a.pecas_por_unidade) if art else 0
+
+        # Create stacks instead of individual boxes
+        boxes_allocated = 0
+        while boxes_allocated < a.num_unidades:
+            boxes_in_stack = min(boxes_per_stack, a.num_unidades - boxes_allocated)
+            stack_height = boxes_in_stack * alt_dim
+
+            # Calculate pieces in this stack
+            pecas_cheias = boxes_allocated * a.pecas_por_unidade
+            pecas_aqui = max(min(boxes_in_stack * a.pecas_por_unidade, pecas_total - pecas_cheias), 0)
+
+            # Determine if this stack contains picking boxes
+            eh_primeira_do_sku = boxes_allocated < num_unidades_picking
+
             itens.append(_ItemParaColocar(
                 sku=a.sku, descricao=desc, load_type=a.load_type,
-                comp_m=comp_dim, larg_m=larg_dim, alt_m=alt_dim,
+                comp_m=comp_dim, larg_m=larg_dim, alt_m=stack_height,
                 pecas_nesta_caixa=pecas_aqui,
-                eh_primeira_do_sku=(i == 0),
+                eh_primeira_do_sku=eh_primeira_do_sku,
+                num_boxes_in_stack=boxes_in_stack,
             ))
+            boxes_allocated += boxes_in_stack
 
     # first-fit-decreasing por área (footprint exterior); sort estável
     # preserva a ordem i=0,1,2.. dentro do mesmo SKU (mesma área).

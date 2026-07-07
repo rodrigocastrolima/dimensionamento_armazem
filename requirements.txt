@@ -7,5 +7,10 @@ rectpack>=0.2        # Passo 2: footprint 2D (caixas por nível de rack)
 ortools>=9.0         # minimizar nº de racks via bin packing (CP-SAT)
 pandas>=2.0          # conveniência na leitura de tabelas
 
+# --- web (warehouse/web.py) ---
+fastapi>=0.110        # API do simulador
+uvicorn>=0.29          # servidor ASGI
+pydantic>=2.0          # validação dos payloads da API
+
 # --- dev ---
 pytest>=8.0           # testes

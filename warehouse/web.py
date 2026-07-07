@@ -244,6 +244,75 @@ def delete_rack(nome: str):
     return {"ok": True}
 
 
+# ------------------------------------------------------------------- zonas
+
+def _zonas_sheet(wb):
+    if "Zonas" not in wb.sheetnames:
+        ws = wb.create_sheet("Zonas")
+        ws.append(["Nome", "Categoria", "Comp_m", "Larg_m", "Justificacao"])
+    return wb["Zonas"]
+
+
+@app.get("/api/zones")
+def get_zones():
+    zonas = io_excel.load_zones(cfg.master_data)
+    return [
+        {
+            "nome": z.nome, "categoria": z.categoria,
+            "comp_m": z.comp_m, "larg_m": z.larg_m, "justificacao": z.justificacao,
+        }
+        for z in zonas
+    ]
+
+
+class ZoneUpdate(BaseModel):
+    nome: str
+    categoria: str = "Outra"
+    comp_m: float
+    larg_m: float
+    justificacao: str = ""
+
+
+@app.put("/api/zones/{nome}")
+def update_zone(nome: str, body: ZoneUpdate):
+    wb = openpyxl.load_workbook(cfg.master_data)
+    ws = _zonas_sheet(wb)
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value and str(row[0].value).strip() == nome:
+            row[1].value = body.categoria
+            row[2].value = body.comp_m
+            row[3].value = body.larg_m
+            row[4].value = body.justificacao
+            break
+    wb.save(cfg.master_data)
+    return {"ok": True}
+
+
+@app.post("/api/zones")
+def create_zone(body: ZoneUpdate):
+    wb = openpyxl.load_workbook(cfg.master_data)
+    ws = _zonas_sheet(wb)
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value and str(row[0].value).strip() == body.nome:
+            wb.close()
+            return {"ok": False, "erro": f"Zona '{body.nome}' já existe."}
+    ws.append([body.nome, body.categoria, body.comp_m, body.larg_m, body.justificacao])
+    wb.save(cfg.master_data)
+    return {"ok": True}
+
+
+@app.delete("/api/zones/{nome}")
+def delete_zone(nome: str):
+    wb = openpyxl.load_workbook(cfg.master_data)
+    ws = _zonas_sheet(wb)
+    for row in ws.iter_rows(min_row=2):
+        if row[0].value and str(row[0].value).strip() == nome:
+            ws.delete_rows(row[0].row, 1)
+            break
+    wb.save(cfg.master_data)
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------- gerar
 
 def _serializar_layout(warehouse_layout, rack_by_name):
@@ -300,12 +369,14 @@ def _serializar_layout(warehouse_layout, rack_by_name):
 class GerarRequest(BaseModel):
     altura_armazem_m: float = 0.0
     altura_picking_m: float = 0.0
+    margem_estrutural_pct: float = 0.0
 
 
 @app.post("/api/gerar")
 def gerar(body: GerarRequest):
     local_cfg = Config(altura_armazem_m=body.altura_armazem_m,
-                       altura_picking_m=body.altura_picking_m)
+                       altura_picking_m=body.altura_picking_m,
+                       margem_estrutural_pct=body.margem_estrutural_pct)
 
     articles = io_excel.load_articles(cfg.master_data)
     catalogo = io_excel.load_catalog(cfg.master_data)
@@ -332,8 +403,10 @@ def gerar(body: GerarRequest):
     avisos = avisos_estimativa + avisos_alocacao
 
     dim = area.floor_area(posicoes, rack_by_name)
-    warehouse_layout = layout_mod.gerar_layout(posicoes, rack_by_name)
+    zonas = io_excel.load_zones(cfg.master_data)
+    warehouse_layout = layout_mod.gerar_layout(posicoes, rack_by_name, zonas)
     layout_json = _serializar_layout(warehouse_layout, rack_by_name)
+    resumo = area.resumo_area_total(dim, warehouse_layout, zonas, local_cfg.margem_estrutural_pct)
 
     totais_carga: dict[str, int] = {}
     for a in assignments:
@@ -353,6 +426,9 @@ def gerar(body: GerarRequest):
         "area_corredores_m2": warehouse_layout.area_corredores_m2,
         "largura_layout_m": warehouse_layout.largura_total_m,
         "profundidade_layout_m": warehouse_layout.profundidade_total_m,
+        "area_zonas_m2": round(resumo.area_zonas_m2, 2),
+        "margem_estrutural_m2": round(resumo.margem_estrutural_m2, 2),
+        "area_bruta_total_m2": round(resumo.area_bruta_total_m2, 2),
         "avisos": avisos,
         "totais_por_carga": totais_carga,
         "requirements": [
@@ -367,6 +443,23 @@ def gerar(body: GerarRequest):
             for rack_nome, info in dim.detalhe.items()
         ],
         "layout": layout_json,
+        "zonas": [
+            {
+                "nome": z.nome, "categoria": z.categoria,
+                "area_m2": round(z.area_m2, 2), "justificacao": z.justificacao,
+            }
+            for z in zonas
+        ],
+        "zonas_layout": [
+            {
+                "nome": zl.zona.nome, "categoria": zl.zona.categoria,
+                "x": zl.x_m, "y": zl.y_m,
+                "larg_m": zl.largura_m, "prof_m": zl.profundidade_m,
+                "area_m2": round(zl.zona.area_m2, 2),
+                "justificacao": zl.zona.justificacao,
+            }
+            for zl in warehouse_layout.zonas
+        ],
     }
 
 

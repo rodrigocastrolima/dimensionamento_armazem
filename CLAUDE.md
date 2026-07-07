@@ -16,6 +16,9 @@ racks e a área de chão necessária.
 2. **Racking (`racking.py`)** — dadas as tipologias de rack (input), calcular
    quantos racks de cada uma guardam todas as unidades.
 3. **Área (`area.py`)** — footprints dos racks + corredores → m² totais.
+4. **Zonas funcionais (`area.resumo_area_total`)** — soma a área de racks +
+   corredores (Passo 3) + zonas funcionais (input direto, folha «Zonas») +
+   margem estrutural → área bruta total do edifício.
 
 ## Tipos de carga (`LoadType`)
 - **S / M / L** — caixas de repacking (catálogo na folha «Caixas»).
@@ -47,6 +50,16 @@ vêm com níveis e altura por nível definidos). Não reintroduzir.
 - PALLET é entrada do catálogo «Caixas» (não dataclass separado).
 - `alt_nivel_m` = altura por nível.
 - Convenção de unidades: metros / m³.
+- **Zona** (área fora dos racks: receção, expedição, equipamento, staging, ...)
+  é input direto (`Comp_m × Larg_m`, folha «Zonas», sem SKU/stock associado) —
+  não replica as fórmulas de fluxo de receção de uma folha de referência
+  (evita depender de dados de encomendas que não existem no master data). A
+  área de zonas soma-se à área total **à parte** dos corredores de racks: o
+  `aisle_factor`/`layout.py` não mudam. `Config.margem_estrutural_pct` (0 =
+  desligado) aplica-se sobre racks + corredores + zonas para chegar à área
+  bruta total (`area.resumo_area_total`). No layout 3D, as zonas só recebem
+  coordenadas para não sobrepor o bloco de racks (`layout._layout_zonas`);
+  não entram em `largura_total_m`/`profundidade_total_m`/`area_total_m2`.
 
 ## Em aberto (ver `config.py`, "A CONFIRMAR")
 - Regra de escolha de caixa (`BoxStrategy`): default = minimizar nº de caixas.

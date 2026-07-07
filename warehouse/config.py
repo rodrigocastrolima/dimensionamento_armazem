@@ -62,3 +62,8 @@ class Config:
     # para todos os SKUs, abrem-se mais posições de chão até caber.
     # 0 = modo picking desativado.
     altura_picking_m: float = 0.0
+
+    # Margem estrutural (paredes, pilares, etc.) aplicada sobre racks + corredores +
+    # zonas funcionais, para chegar à área bruta total do edifício.
+    # 0 = sem margem estrutural aplicada.
+    margem_estrutural_pct: float = 0.0

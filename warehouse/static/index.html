@@ -31,7 +31,9 @@
   button.add-row { background: #2a8c4a; color: white; border: none; padding: 6px 14px;
                    border-radius: 4px; cursor: pointer; font-size: 12px; margin-bottom: 8px; }
   .viewer-wrap { display: flex; gap: 12px; }
-  #viewer { width: 55%; height: 42vh; background: #111; border: 1px solid #3a3a3a; }
+  #viewer { width: 55%; height: 42vh; background: #111; border: 1px solid #3a3a3a; position: relative; overflow: hidden; }
+  .rotulo-zona { color: #fff; background: rgba(0,0,0,0.55); padding: 2px 6px; border-radius: 3px;
+                 font-size: 11px; white-space: nowrap; transform: translateY(-100%); pointer-events: none; }
   #painel-rack { flex: 1; height: 42vh; background: #181818; border: 1px solid #3a3a3a;
                  padding: 10px; overflow-y: auto; font-size: 12px; }
   #painel-rack h4 { margin: 0 0 8px 0; font-size: 13px; }
@@ -53,6 +55,7 @@
   <nav>
     <button data-tab="artigos" class="active">Artigos</button>
     <button data-tab="catalogo">Caixas &amp; Racks</button>
+    <button data-tab="zonas">Zonas</button>
     <button data-tab="armazem">Armazém 3D</button>
   </nav>
 </header>
@@ -106,6 +109,22 @@
   </div>
 </section>
 
+<section id="zonas" class="tab">
+  <h3>Zonas funcionais (receção, expedição, equipamento, staging, ...)</h3>
+  <button class="add-row" id="btn-add-zona">+ Nova zona</button>
+  <div class="table-wrap" style="max-height:400px">
+    <table id="tabela-zonas">
+      <thead>
+        <tr>
+          <th>Nome</th><th>Categoria</th><th>Comp (m)</th><th>Larg (m)</th>
+          <th>Área (m²)</th><th>Justificação</th><th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
 <section id="armazem" class="tab">
   <div class="toolbar">
     <label>Altura do armazém (m, 0 = sem limite):
@@ -113,6 +132,9 @@
     </label>
     <label>Altura de picking (m, 0 = desativado):
       <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
+    </label>
+    <label>Margem estrutural (%, 0 = sem margem):
+      <input id="margem-estrutural" type="number" step="1" value="0" style="width:70px">
     </label>
     <button class="action" id="btn-gerar">Gerar armazém</button>
   </div>
@@ -136,6 +158,7 @@
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 
 const API = "/api";
 
@@ -275,6 +298,54 @@ document.getElementById("btn-add-rack").addEventListener("click", () => {
   tbody.prepend(tr);
 });
 
+// ----------------------------------------------------------------- zonas
+async function carregarZonas() {
+  const zonas = await fetch(`${API}/zones`).then(r => r.json());
+  const tbody = document.querySelector("#tabela-zonas tbody");
+  tbody.innerHTML = zonas.map(z => `
+    <tr data-nome="${z.nome}">
+      <td><input data-f="nome" value="${z.nome}" disabled></td>
+      <td><input data-f="categoria" value="${z.categoria}"></td>
+      <td><input data-f="comp_m" value="${z.comp_m}"></td>
+      <td><input data-f="larg_m" value="${z.larg_m}"></td>
+      <td>${(z.comp_m * z.larg_m).toFixed(2)}</td>
+      <td><input data-f="justificacao" value="${z.justificacao}"></td>
+      <td>
+        <button class="save" data-tipo="zone">Guardar</button>
+        <button class="del" data-tipo="zone" data-id="${z.nome}">Remover</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+document.getElementById("btn-add-zona").addEventListener("click", () => {
+  const tbody = document.querySelector("#tabela-zonas tbody");
+  const tr = document.createElement("tr");
+  tr.className = "nova-linha";
+  tr.innerHTML = `
+    <td><input data-f="nome" placeholder="ex: Zona IN"></td>
+    <td><input data-f="categoria" placeholder="ex: Receção" value="Outra"></td>
+    <td><input data-f="comp_m" placeholder="0.0"></td>
+    <td><input data-f="larg_m" placeholder="0.0"></td>
+    <td>-</td>
+    <td><input data-f="justificacao" placeholder="opcional"></td>
+    <td><button class="save" data-tipo="zone-new">Criar</button></td>`;
+  tbody.prepend(tr);
+});
+
+function lerCamposZona(tr) {
+  const body = {};
+  tr.querySelectorAll("input").forEach(inp => {
+    const f = inp.dataset.f;
+    if (f === "comp_m" || f === "larg_m") {
+      body[f] = parseFloat(inp.value) || 0;
+    } else {
+      body[f] = inp.value;
+    }
+  });
+  return body;
+}
+
 // ----------------------------------------------------------------- save / delete (delegado)
 function lerCamposArticle(tr) {
   const body = {};
@@ -327,12 +398,13 @@ document.addEventListener("click", async (e) => {
   if (isDel) {
     if (!confirm("Remover este item? Esta ação grava de imediato no Excel.")) return;
     const id = e.target.dataset.id;
-    const urlBase = tipo === "article" ? "articles" : (tipo === "box" ? "boxes" : "racks");
+    const urlBase = tipo === "article" ? "articles" : (tipo === "box" ? "boxes" : (tipo === "rack" ? "racks" : "zones"));
     const resp = await fetch(`${API}/${urlBase}/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (resp.ok) {
       if (tipo === "article") await carregarArtigos();
       if (tipo === "box") await carregarCaixas();
       if (tipo === "rack") await carregarRacks();
+      if (tipo === "zone") await carregarZonas();
     } else {
       alert("Erro ao remover.");
     }
@@ -368,6 +440,15 @@ document.addEventListener("click", async (e) => {
     if (r.ok) { await carregarRacks(); } else { alert(r.erro || "Erro ao criar."); }
     return;
   }
+  if (tipo === "zone-new") {
+    const body = lerCamposZona(tr);
+    const resp = await fetch(`${API}/zones`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const r = await resp.json();
+    if (r.ok) { await carregarZonas(); } else { alert(r.erro || "Erro ao criar."); }
+    return;
+  }
 
   // edição de linha existente
   const nome = tr.dataset.nome;
@@ -378,6 +459,9 @@ document.addEventListener("click", async (e) => {
   } else if (tipo === "rack") {
     body = lerCamposRack(tr);
     url = `${API}/racks/${encodeURIComponent(nome)}`;
+  } else if (tipo === "zone") {
+    body = lerCamposZona(tr);
+    url = `${API}/zones/${encodeURIComponent(nome)}`;
   } else {
     return;
   }
@@ -389,7 +473,7 @@ document.addEventListener("click", async (e) => {
 });
 
 // ----------------------------------------------------------------- 3D viewer
-let scene, camera, renderer, controls, raycaster, mouse;
+let scene, camera, renderer, labelRenderer, controls, raycaster, mouse, dirLight, chao;
 const CORES = {
   S: 0x4dabf7, M: 0x69db7c, L: 0xffa94d, PALLET: 0xff6b6b, LONGO: 0xda77f2,
 };
@@ -397,25 +481,50 @@ const CORES = {
 function initViewer() {
   const el = document.getElementById("viewer");
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111111);
+  scene.background = new THREE.Color(0x1a1d21);
+  scene.fog = new THREE.Fog(0x1a1d21, 40, 160);
 
   camera = new THREE.PerspectiveCamera(50, el.clientWidth / el.clientHeight, 0.1, 1000);
   camera.position.set(20, 20, 20);
 
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(el.clientWidth, el.clientHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   el.appendChild(renderer.domElement);
+
+  labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(el.clientWidth, el.clientHeight);
+  labelRenderer.domElement.style.position = "absolute";
+  labelRenderer.domElement.style.top = "0px";
+  labelRenderer.domElement.style.left = "0px";
+  labelRenderer.domElement.style.pointerEvents = "none";
+  el.appendChild(labelRenderer.domElement);
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 0, 0);
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-  dir.position.set(10, 20, 10);
-  scene.add(dir);
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+  dirLight = new THREE.DirectionalLight(0xfff4e0, 1.0);
+  dirLight.position.set(15, 30, 10);
+  dirLight.castShadow = true;
+  dirLight.shadow.mapSize.set(2048, 2048);
+  dirLight.shadow.camera.near = 1;
+  dirLight.shadow.camera.far = 150;
+  scene.add(dirLight);
+  scene.add(dirLight.target);
 
-  const grid = new THREE.GridHelper(80, 80, 0x444444, 0x2a2a2a);
+  const grid = new THREE.GridHelper(200, 200, 0x3a3f47, 0x2a2e34);
+  grid.position.y = 0.005;
   scene.add(grid);
+
+  chao = new THREE.Mesh(
+    new THREE.PlaneGeometry(200, 200),
+    new THREE.MeshStandardMaterial({ color: 0x2b2f35, roughness: 0.95 }),
+  );
+  chao.rotation.x = -Math.PI / 2;
+  chao.receiveShadow = true;
+  scene.add(chao);
 
   raycaster = new THREE.Raycaster();
   mouse = new THREE.Vector2();
@@ -425,6 +534,7 @@ function initViewer() {
     camera.aspect = el.clientWidth / el.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(el.clientWidth, el.clientHeight);
+    labelRenderer.setSize(el.clientWidth, el.clientHeight);
   });
 
   animate();
@@ -434,12 +544,84 @@ function animate() {
   requestAnimationFrame(animate);
   controls.update();
   renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
 }
 
+let zonaLabelEls = [];
+
 function limparRacks() {
+  zonaLabelEls.forEach(el => el.remove());
+  zonaLabelEls = [];
   [...scene.children].forEach(obj => {
-    if (obj.userData.isRackGroup) scene.remove(obj);
+    if (obj.userData.isRackGroup || obj.userData.isZonaGroup || obj.userData.isParedes) scene.remove(obj);
   });
+}
+
+function desenharParedes(maxX, maxY, maxZ) {
+  const altura = Math.max(maxZ * 1.15, 4);
+  const grupo = new THREE.Group();
+  grupo.userData.isParedes = true;
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x3d434c, roughness: 0.9, side: THREE.DoubleSide, transparent: true, opacity: 0.55,
+  });
+  const margem = 1.5;
+  const larguraTotal = maxX + margem * 2;
+  const profundidadeTotal = maxY + margem * 2;
+  const paredes = [
+    { larg: larguraTotal, x: maxX / 2, z: -margem, rotY: 0 },
+    { larg: larguraTotal, x: maxX / 2, z: maxY + margem, rotY: 0 },
+    { larg: profundidadeTotal, x: -margem, z: maxY / 2, rotY: Math.PI / 2 },
+    { larg: profundidadeTotal, x: maxX + margem, z: maxY / 2, rotY: Math.PI / 2 },
+  ];
+  for (const p of paredes) {
+    const geo = new THREE.PlaneGeometry(p.larg, altura);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(p.x, altura / 2, p.z);
+    mesh.rotation.y = p.rotY;
+    mesh.receiveShadow = true;
+    grupo.add(mesh);
+  }
+  scene.add(grupo);
+}
+
+function corZona(texto) {
+  let hash = 0;
+  for (let i = 0; i < texto.length; i++) hash = texto.charCodeAt(i) + ((hash << 5) - hash);
+  const hue = Math.abs(hash) % 360;
+  return new THREE.Color(`hsl(${hue}, 65%, 55%)`);
+}
+
+const ALTURA_ZONA_M = 0.3;
+
+function desenharZonas(zonasLayout) {
+  for (const z of zonasLayout) {
+    const grupo = new THREE.Group();
+    grupo.userData.isZonaGroup = true;
+
+    const geo = new THREE.BoxGeometry(z.larg_m, ALTURA_ZONA_M, z.prof_m);
+    const mat = new THREE.MeshStandardMaterial({ color: corZona(z.nome) });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(z.x + z.larg_m / 2, ALTURA_ZONA_M / 2, z.y + z.prof_m / 2);
+    mesh.userData.zona = z;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    grupo.add(mesh);
+
+    const edges = new THREE.EdgesGeometry(geo);
+    const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
+    linhas.position.copy(mesh.position);
+    grupo.add(linhas);
+
+    const div = document.createElement("div");
+    div.className = "rotulo-zona";
+    div.textContent = z.nome;
+    const rotulo = new CSS2DObject(div);
+    rotulo.position.set(z.x + z.larg_m / 2, ALTURA_ZONA_M + 0.5, z.y + z.prof_m / 2);
+    grupo.add(rotulo);
+    zonaLabelEls.push(div);
+
+    scene.add(grupo);
+  }
 }
 
 function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
@@ -492,6 +674,7 @@ function desenharLayout(layout) {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(r.x + r.larg_m / 2, baseModulo + altModulo / 2, r.y + r.prof_m / 2);
       mesh.userData.posicao = r;
+      mesh.castShadow = true;
       grupo.add(mesh);
 
       const edges = new THREE.EdgesGeometry(geo);
@@ -507,18 +690,37 @@ function desenharLayout(layout) {
 
     scene.add(grupo);
   }
+}
 
-  if (layout.length) {
-    const maxX = Math.max(...layout.map(r => r.x + r.larg_m));
-    const maxY = Math.max(...layout.map(r => r.y + r.prof_m));
-    const maxZ = Math.max(...layout.map(r => r.altura_m * (r.blocos_empilhados || 1)));
-    const escala = Math.max(maxX, maxY, maxZ);
-    controls.target.set(maxX / 2, maxZ / 3, maxY / 2);
-    camera.position.set(maxX / 2 + escala * 0.9, maxZ * 0.7 + escala * 0.3, maxY / 2 + escala * 0.9);
-    camera.near = Math.max(escala / 1000, 0.1);
-    camera.far = escala * 10;
-    camera.updateProjectionMatrix();
-  }
+function ajustarCenaECamera(layout, zonasLayout) {
+  const pontosX = [...layout.map(r => r.x + r.larg_m), ...zonasLayout.map(z => z.x + z.larg_m)];
+  const pontosY = [...layout.map(r => r.y + r.prof_m), ...zonasLayout.map(z => z.y + z.prof_m)];
+  if (!pontosX.length) return;
+
+  const maxX = Math.max(...pontosX);
+  const maxY = Math.max(...pontosY);
+  const maxZ = Math.max(1, ...layout.map(r => r.altura_m * (r.blocos_empilhados || 1)));
+
+  desenharParedes(maxX, maxY, maxZ);
+
+  const escala = Math.max(maxX, maxY, maxZ);
+  controls.target.set(maxX / 2, maxZ / 3, maxY / 2);
+  camera.position.set(maxX / 2 + escala * 0.9, maxZ * 0.7 + escala * 0.3, maxY / 2 + escala * 0.9);
+  camera.near = Math.max(escala / 1000, 0.1);
+  camera.far = escala * 10 + 200;
+  camera.updateProjectionMatrix();
+  scene.fog.near = escala * 1.5;
+  scene.fog.far = escala * 5;
+
+  dirLight.position.set(maxX / 2 + escala * 0.5, escala * 1.2, maxY / 2 + escala * 0.3);
+  dirLight.target.position.set(maxX / 2, 0, maxY / 2);
+  dirLight.target.updateMatrixWorld();
+  const s = escala * 0.8;
+  dirLight.shadow.camera.left = -s;
+  dirLight.shadow.camera.right = s;
+  dirLight.shadow.camera.top = s;
+  dirLight.shadow.camera.bottom = -s;
+  dirLight.shadow.camera.updateProjectionMatrix();
 }
 
 function onClickViewer(event) {
@@ -534,10 +736,24 @@ function onClickViewer(event) {
     mostrarPainelCaixa(hitCaixa.object.userData.caixa, hitCaixa.object.userData.nivel, hitCaixa.object.userData.posicao);
     return;
   }
+  const hitZona = intersects.find(i => i.object.userData && i.object.userData.zona);
+  if (hitZona) {
+    mostrarPainelZona(hitZona.object.userData.zona);
+    return;
+  }
   const hit = intersects.find(i => i.object.userData && i.object.userData.posicao);
   if (hit) {
     mostrarPainelRack(hit.object.userData.posicao);
   }
+}
+
+function mostrarPainelZona(zona) {
+  const painel = document.getElementById("painel-rack");
+  let html = `<h4>Zona — ${zona.nome}</h4>`;
+  html += `<p><b>Categoria:</b> ${zona.categoria}<br>`;
+  html += `<b>Área:</b> ${zona.area_m2.toFixed(2)} m²</p>`;
+  if (zona.justificacao) html += `<p style="color:#999">${zona.justificacao}</p>`;
+  painel.innerHTML = html;
 }
 
 function mostrarPainelCaixa(caixa, nivel, posicao) {
@@ -586,16 +802,21 @@ function mostrarPainelRack(posicao) {
   painel.innerHTML = html;
 }
 
-function desenharLegenda(loadTypes) {
+function desenharLegenda(loadTypes, zonaNomes) {
   const el = document.getElementById("legenda");
-  el.innerHTML = loadTypes.map(lt => `
+  let html = loadTypes.map(lt => `
     <span><span class="swatch" style="background:#${(CORES[lt] || 0x888888).toString(16).padStart(6,'0')}"></span>${lt}</span>
   `).join("");
+  html += zonaNomes.map(nome => `
+    <span><span class="swatch" style="background:#${corZona(nome).getHexString()}"></span>${nome}</span>
+  `).join("");
+  el.innerHTML = html;
 }
 
 document.getElementById("btn-gerar").addEventListener("click", async () => {
   const altura = parseFloat(document.getElementById("altura-armazem").value) || 0;
   const alturaPicking = parseFloat(document.getElementById("altura-picking").value) || 0;
+  const margemEstrutural = (parseFloat(document.getElementById("margem-estrutural").value) || 0) / 100;
   const btn = document.getElementById("btn-gerar");
   btn.textContent = "A gerar...";
   btn.disabled = true;
@@ -604,13 +825,19 @@ document.getElementById("btn-gerar").addEventListener("click", async () => {
     const resp = await fetch(`${API}/gerar`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ altura_armazem_m: altura, altura_picking_m: alturaPicking }),
+      body: JSON.stringify({
+        altura_armazem_m: altura, altura_picking_m: alturaPicking,
+        margem_estrutural_pct: margemEstrutural,
+      }),
     });
     const data = await resp.json();
     desenharLayout(data.layout);
+    desenharZonas(data.zonas_layout);
+    ajustarCenaECamera(data.layout, data.zonas_layout);
 
     const tiposPresentes = [...new Set(data.layout.flatMap(r => r.load_types))];
-    desenharLegenda(tiposPresentes);
+    const zonaNomes = data.zonas.map(z => z.nome);
+    desenharLegenda(tiposPresentes, zonaNomes);
 
     const resumoEl = document.getElementById("resumo");
     let html = `<p><b>Área total de racks: ${data.area_racks_m2} m²</b></p>`;
@@ -632,6 +859,25 @@ document.getElementById("btn-gerar").addEventListener("click", async () => {
       </tr>`;
     }
     html += `</tbody></table>`;
+
+    if (data.zonas.length) {
+      html += `<p style="margin-top:14px"><b>Zonas funcionais</b></p>`;
+      html += `<table><thead><tr><th>Nome</th><th>Categoria</th><th>Área (m²)</th><th>Justificação</th></tr></thead><tbody>`;
+      for (const z of data.zonas) {
+        html += `<tr><td>${z.nome}</td><td>${z.categoria}</td><td>${z.area_m2}</td><td>${z.justificacao || ""}</td></tr>`;
+      }
+      html += `</tbody></table>`;
+    }
+
+    html += `<p style="margin-top:14px"><b>Área bruta total estimada</b></p>`;
+    html += `<table><tbody>
+      <tr><td>Footprint de racks</td><td>${data.area_racks_m2} m²</td></tr>
+      <tr><td>Corredores</td><td>${data.area_corredores_m2} m²</td></tr>
+      <tr><td>Zonas funcionais</td><td>${data.area_zonas_m2} m²</td></tr>
+      <tr><td>Margem estrutural</td><td>${data.margem_estrutural_m2} m²</td></tr>
+      <tr><td><b>ÁREA BRUTA TOTAL ESTIMADA</b></td><td><b>${data.area_bruta_total_m2} m²</b></td></tr>
+    </tbody></table>`;
+
     resumoEl.innerHTML = html;
   } finally {
     btn.textContent = "Gerar armazém";
@@ -643,6 +889,7 @@ document.getElementById("btn-gerar").addEventListener("click", async () => {
 carregarArtigos();
 carregarCaixas();
 carregarRacks();
+carregarZonas();
 initViewer();
 </script>
 </body>

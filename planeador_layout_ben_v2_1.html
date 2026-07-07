@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planeador de Layout · Armazém BEN</title>
+<style>
+  :root{
+    --bg:#f7f6f2; --surface:#ffffff; --panel:#fbfaf6; --ink:#2c2c2a; --muted:#5f5e5a;
+    --border:#d3d1c7; --border-strong:#b4b2a9; --accent:#185fa5; --radius:8px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#1c1c1a; --surface:#2a2a28; --panel:#242422; --ink:#ececec; --muted:#a8a8a2;
+      --border:#3d3d3a; --border-strong:#55554f; --accent:#85b7eb; }
+  }
+  *{ box-sizing:border-box; }
+  body{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--ink); font-size:14px; line-height:1.5; }
+  .wrap{ max-width:1280px; margin:0 auto; padding:18px; }
+  h1{ font-size:19px; font-weight:500; margin:0 0 2px; }
+  .sub{ color:var(--muted); font-size:13px; margin:0 0 14px; }
+  h2{ font-size:14px; font-weight:500; margin:0 0 8px; }
+  .toolbar{ display:flex; flex-wrap:wrap; gap:7px; align-items:center; margin-bottom:10px; }
+  button{ font:inherit; font-size:12.5px; background:var(--surface); color:var(--ink);
+    border:0.5px solid var(--border-strong); border-radius:var(--radius);
+    padding:6px 11px; cursor:pointer; transition:background .12s; }
+  button:hover{ background:var(--bg); } button:active{ transform:scale(.98); }
+  button.primary{ background:var(--accent); color:#fff; border-color:var(--accent); }
+  input[type=number], input[type=text]{ font:inherit; font-size:12.5px; background:var(--surface);
+    color:var(--ink); border:0.5px solid var(--border-strong); border-radius:6px; padding:5px 7px; width:100%; }
+  input[type=color]{ width:34px; height:30px; padding:0; border:0.5px solid var(--border-strong);
+    border-radius:6px; background:none; cursor:pointer; }
+  .layout{ display:grid; grid-template-columns:1fr 280px; gap:14px; align-items:start; }
+  @media (max-width:960px){ .layout{ grid-template-columns:1fr; } }
+  .canvas-wrap{ background:var(--surface); border:0.5px solid var(--border);
+    border-radius:12px; padding:10px; overflow:auto; }
+  #stage{ position:relative; }
+  #nave{ position:relative; background-image:
+      linear-gradient(to right, rgba(150,150,150,.10) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(150,150,150,.10) 1px, transparent 1px);
+    border:2px solid var(--border-strong); border-radius:4px; touch-action:none; }
+  .zone{ position:absolute; border-radius:5px; border:1px solid; cursor:grab;
+    user-select:none; overflow:hidden; }
+  .zone.sel{ box-shadow:0 0 0 2px var(--accent); z-index:5; }
+  .zone .zlabel{ position:absolute; top:2px; left:4px; font-weight:500; font-size:11px;
+    line-height:1.15; pointer-events:none; }
+  .zone .zdim{ position:absolute; bottom:2px; right:4px; font-size:9.5px; opacity:.75; pointer-events:none; }
+  .zone .rh{ position:absolute; right:0; bottom:0; width:12px; height:12px; cursor:nwse-resize;
+    background:linear-gradient(135deg, transparent 50%, currentColor 50%); opacity:.5; }
+  .pal{ position:absolute; border-radius:2px; border:1px solid rgba(0,0,0,.35);
+    cursor:grab; user-select:none; z-index:8; }
+  .pal.sel{ box-shadow:0 0 0 2px var(--accent); }
+  .panel{ background:var(--panel); border:0.5px solid var(--border); border-radius:12px;
+    padding:12px; margin-bottom:12px; }
+  .row{ display:flex; justify-content:space-between; padding:2px 0; font-size:12.5px;
+    border-bottom:0.5px solid var(--border); }
+  .row:last-child{ border-bottom:none; }
+  .row.total{ font-weight:500; border-top:1px solid var(--border-strong); margin-top:3px; padding-top:5px; border-bottom:none; }
+  .fld{ display:grid; grid-template-columns:auto 1fr; gap:6px; align-items:center; margin-bottom:6px; }
+  .fld label{ font-size:12px; color:var(--muted); }
+  .two{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .hint{ color:var(--muted); font-size:11.5px; margin-top:8px; line-height:1.4; }
+  .chip{ display:inline-flex; align-items:center; gap:5px; font-size:11.5px; padding:4px 8px;
+    border:0.5px solid var(--border-strong); border-radius:20px; cursor:pointer; background:var(--surface); margin:0 4px 4px 0; }
+  .chip:hover{ background:var(--bg); }
+  .seg{ font-size:11px; color:var(--muted); margin:10px 0 4px; text-transform:uppercase; letter-spacing:.03em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Planeador de layout · Armazém BEN</h1>
+  <p class="sub">Arrasta zonas e paletes. Redimensiona pelo canto. Escala: 1 m = <span id="pxm">26</span> px.</p>
+
+  <div class="toolbar">
+    <button id="rotate">⟳ Rodar selecionada</button>
+    <button id="del">✕ Apagar selecionada</button>
+    <button id="reset">↺ Repor</button>
+    <span style="flex:1"></span>
+    <button id="expPng">⬇ Exportar PNG</button>
+    <button id="save">⬇ Guardar arranjo</button>
+    <button id="load">⬆ Carregar arranjo</button>
+    <input type="file" id="fileIn" accept=".json" style="display:none">
+  </div>
+
+  <div class="layout">
+    <div class="canvas-wrap"><div id="stage"><div id="nave"></div></div></div>
+
+    <div>
+      <div class="panel">
+        <h2>Nave (espaço total)</h2>
+        <div class="two">
+          <div class="fld"><label>Larg. m</label><input type="number" id="naveW" step="0.5" min="2"></div>
+          <div class="fld"><label>Comp. m</label><input type="number" id="naveH" step="0.5" min="2"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Zona selecionada</h2>
+        <div id="zedit"><p class="hint">Clica numa zona para editar.</p></div>
+      </div>
+
+      <div class="panel">
+        <h2>Adicionar</h2>
+        <div class="fld"><label>Nome</label><input type="text" id="newName" placeholder="Nova zona"></div>
+        <div class="two">
+          <div class="fld"><label>Larg. m</label><input type="number" id="newW" step="0.1" value="2" min="0.2"></div>
+          <div class="fld"><label>Comp. m</label><input type="number" id="newH" step="0.1" value="2" min="0.2"></div>
+        </div>
+        <button id="addZone" style="width:100%">+ Adicionar zona</button>
+
+        <div class="seg">Paletes / caixas (clica p/ adicionar)</div>
+        <div id="palTypes"></div>
+        <div class="two" style="margin-top:6px">
+          <div class="fld"><label>Larg. m</label><input type="number" id="palW" step="0.1" value="0.8" min="0.1"></div>
+          <div class="fld"><label>Comp. m</label><input type="number" id="palH" step="0.1" value="1.2" min="0.1"></div>
+        </div>
+        <div class="fld"><label>Nome</label><input type="text" id="palName" placeholder="Formato" value="Palete"></div>
+        <button id="addPalType" style="width:100%">+ Novo formato</button>
+      </div>
+
+      <div class="panel">
+        <h2>Áreas (m²)</h2>
+        <div id="areas"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script>
+const PXM=26; document.getElementById('pxm').textContent=PXM;
+const GRID=0.25;
+const snap=v=>Math.round(v/GRID)*GRID;
+
+const DEFAULT={
+  nave:{w:18,h:13},
+  zones:[
+    {id:z(),nome:'1 · Receção',w:5.6,h:3.9,x:0.3,y:0.3,fill:'#e6f1fb',stroke:'#378add'},
+    {id:z(),nome:'7 · Não conf.',w:1.8,h:2.4,x:6.2,y:0.3,fill:'#fcebeb',stroke:'#e24b4a'},
+    {id:z(),nome:'2 · Inspeção',w:4.6,h:1.8,x:0.3,y:4.5,fill:'#e1f5ee',stroke:'#1d9e75'},
+    {id:z(),nome:'3 · Buffer repack',w:5.6,h:1.2,x:5.2,y:4.5,fill:'#faeeda',stroke:'#ef9f27'},
+    {id:z(),nome:'4 · Repacking',w:3.2,h:1.2,x:5.2,y:6.1,fill:'#e1f5ee',stroke:'#1d9e75'},
+    {id:z(),nome:'5 · Espera armaz.',w:3.2,h:1.2,x:8.8,y:6.1,fill:'#eaf3de',stroke:'#639922'},
+    {id:z(),nome:'Corredor separador',w:14,h:2,x:0.3,y:8,fill:'#f1efe8',stroke:'#888780'},
+    {id:z(),nome:'8 · Espera BDL',w:2.4,h:1.2,x:0.3,y:10.4,fill:'#eaf3de',stroke:'#639922'},
+  ],
+  pals:[]
+};
+function z(){ return 'i'+Math.random().toString(36).slice(2,8); }
+
+let S = clone(DEFAULT);
+let sel=null, selType=null;
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+
+const nave=document.getElementById('nave');
+const stage=document.getElementById('stage');
+
+let palTypes=[
+  {name:'Europalete',w:0.8,h:1.2,fill:'#c9a66b'},
+  {name:'Meia-palete',w:0.6,h:0.8,fill:'#b08d57'},
+  {name:'Caixa KLT',w:0.4,h:0.6,fill:'#8fb3c9'},
+];
+
+function render(){
+  nave.style.width=(S.nave.w*PXM)+'px';
+  nave.style.height=(S.nave.h*PXM)+'px';
+  nave.style.backgroundSize=PXM+'px '+PXM+'px';
+  nave.innerHTML='';
+  S.zones.forEach(zz=>{
+    const d=document.createElement('div'); d.className='zone'+(sel===zz.id&&selType==='zone'?' sel':'');
+    d.style.left=(zz.x*PXM)+'px'; d.style.top=(zz.y*PXM)+'px';
+    d.style.width=(zz.w*PXM)+'px'; d.style.height=(zz.h*PXM)+'px';
+    d.style.background=zz.fill+'cc'; d.style.borderColor=zz.stroke; d.style.color=zz.stroke;
+    d.innerHTML='<span class="zlabel" style="color:'+shade(zz.stroke)+'">'+zz.nome+'</span>'+
+      '<span class="zdim" style="color:'+shade(zz.stroke)+'">'+zz.w.toFixed(1)+'×'+zz.h.toFixed(1)+'</span>'+
+      '<span class="rh" data-rh="1"></span>';
+    d.dataset.id=zz.id; d.dataset.kind='zone';
+    nave.appendChild(d);
+  });
+  S.pals.forEach(p=>{
+    const d=document.createElement('div'); d.className='pal'+(sel===p.id&&selType==='pal'?' sel':'');
+    d.style.left=(p.x*PXM)+'px'; d.style.top=(p.y*PXM)+'px';
+    d.style.width=(p.w*PXM)+'px'; d.style.height=(p.h*PXM)+'px';
+    d.style.background=p.fill;
+    d.dataset.id=p.id; d.dataset.kind='pal';
+    nave.appendChild(d);
+  });
+  renderAreas(); renderZedit(); renderPalTypes();
+}
+function shade(hex){ return hex; }
+
+function renderAreas(){
+  let tot=0, cor=0, html='';
+  S.zones.forEach(zz=>{ const a=zz.w*zz.h; if(/corredor/i.test(zz.nome))cor+=a; else tot+=a;
+    html+='<div class="row"><span>'+zz.nome+'</span><span>'+a.toFixed(2)+'</span></div>'; });
+  html+='<div class="row total"><span>Zonas</span><span>'+tot.toFixed(2)+'</span></div>';
+  if(cor>0) html+='<div class="row total"><span>+ corredor</span><span>'+(tot+cor).toFixed(2)+'</span></div>';
+  html+='<div class="row total"><span>Nave total</span><span>'+(S.nave.w*S.nave.h).toFixed(1)+'</span></div>';
+  document.getElementById('areas').innerHTML=html;
+}
+
+function renderZedit(){
+  const el=document.getElementById('zedit');
+  if(selType!=='zone'||!sel){ el.innerHTML='<p class="hint">Clica numa zona para editar.</p>'; return; }
+  const zz=S.zones.find(x=>x.id===sel); if(!zz){el.innerHTML='';return;}
+  el.innerHTML=
+    '<div class="fld"><label>Nome</label><input type="text" id="ezName" value="'+zz.nome.replace(/"/g,'&quot;')+'"></div>'+
+    '<div class="two"><div class="fld"><label>Larg.</label><input type="number" id="ezW" step="0.1" value="'+zz.w+'"></div>'+
+    '<div class="fld"><label>Comp.</label><input type="number" id="ezH" step="0.1" value="'+zz.h+'"></div></div>'+
+    '<div class="fld"><label>Cor</label><input type="color" id="ezC" value="'+zz.stroke+'"></div>';
+  document.getElementById('ezName').oninput=e=>{zz.nome=e.target.value; renderAreas(); const q=nave.querySelector('[data-id="'+zz.id+'"] .zlabel'); if(q)q.textContent=zz.nome;};
+  document.getElementById('ezW').oninput=e=>{zz.w=Math.max(0.2,+e.target.value||0.2); render();};
+  document.getElementById('ezH').oninput=e=>{zz.h=Math.max(0.2,+e.target.value||0.2); render();};
+  document.getElementById('ezC').oninput=e=>{zz.stroke=e.target.value; zz.fill=e.target.value+'22'; render();};
+}
+
+function renderPalTypes(){
+  const el=document.getElementById('palTypes');
+  el.innerHTML=palTypes.map((t,i)=>'<span class="chip" data-pt="'+i+'"><span style="width:12px;height:12px;border-radius:2px;background:'+t.fill+';display:inline-block"></span>'+t.name+' '+t.w+'×'+t.h+'</span>').join('');
+  el.querySelectorAll('[data-pt]').forEach(c=>c.onclick=()=>{
+    const t=palTypes[+c.dataset.pt];
+    S.pals.push({id:z(),name:t.name,w:t.w,h:t.h,x:0.5,y:0.5,fill:t.fill});
+    render();
+  });
+}
+
+// interações: arrastar + redimensionar
+let drag=null;
+nave.addEventListener('pointerdown',e=>{
+  const rh=e.target.dataset.rh;
+  const el=e.target.closest('.zone,.pal'); if(!el) return;
+  const kind=el.dataset.kind, id=el.dataset.id;
+  sel=id; selType=kind;
+  const arr = kind==='zone'?S.zones:S.pals;
+  const obj = arr.find(x=>x.id===id);
+  const rect=nave.getBoundingClientRect();
+  if(rh){ drag={mode:'resize',obj}; }
+  else { drag={mode:'move',obj,offx:e.clientX-rect.left-obj.x*PXM,offy:e.clientY-rect.top-obj.y*PXM}; }
+  el.setPointerCapture(e.pointerId);
+  render();
+});
+nave.addEventListener('pointermove',e=>{
+  if(!drag) return;
+  const rect=nave.getBoundingClientRect();
+  if(drag.mode==='move'){
+    let nx=snap((e.clientX-rect.left-drag.offx)/PXM);
+    let ny=snap((e.clientY-rect.top-drag.offy)/PXM);
+    drag.obj.x=Math.max(0,nx); drag.obj.y=Math.max(0,ny);
+  } else {
+    let nw=snap((e.clientX-rect.left)/PXM-drag.obj.x);
+    let nh=snap((e.clientY-rect.top)/PXM-drag.obj.y);
+    drag.obj.w=Math.max(0.2,nw); drag.obj.h=Math.max(0.2,nh);
+  }
+  render();
+});
+nave.addEventListener('pointerup',()=>{drag=null;});
+nave.addEventListener('pointercancel',()=>{drag=null;});
+
+// nave dims
+const nW=document.getElementById('naveW'), nH=document.getElementById('naveH');
+function syncNave(){ nW.value=S.nave.w; nH.value=S.nave.h; }
+nW.oninput=e=>{S.nave.w=Math.max(2,+e.target.value||2); render();};
+nH.oninput=e=>{S.nave.h=Math.max(2,+e.target.value||2); render();};
+
+// botões
+document.getElementById('rotate').onclick=()=>{
+  const arr=selType==='zone'?S.zones:S.pals; const o=arr&&arr.find(x=>x.id===sel);
+  if(!o) return; const t=o.w;o.w=o.h;o.h=t; render();
+};
+document.getElementById('del').onclick=()=>{
+  if(!sel) return;
+  if(selType==='zone') S.zones=S.zones.filter(x=>x.id!==sel);
+  else S.pals=S.pals.filter(x=>x.id!==sel);
+  sel=null; render();
+};
+document.getElementById('reset').onclick=()=>{ S=clone(DEFAULT); sel=null; syncNave(); render(); };
+document.getElementById('addZone').onclick=()=>{
+  const nm=document.getElementById('newName').value||'Nova zona';
+  const w=Math.max(0.2,+document.getElementById('newW').value||2);
+  const h=Math.max(0.2,+document.getElementById('newH').value||2);
+  const cols=['#534ab7','#993c1d','#993556','#185fa5','#3b6d11','#854f0b'];
+  const c=cols[S.zones.length%cols.length];
+  S.zones.push({id:z(),nome:nm,w,h,x:0.3,y:0.3,fill:c+'22',stroke:c}); render();
+};
+document.getElementById('addPalType').onclick=()=>{
+  const nm=document.getElementById('palName').value||'Formato';
+  const w=Math.max(0.1,+document.getElementById('palW').value||0.8);
+  const h=Math.max(0.1,+document.getElementById('palH').value||1.2);
+  palTypes.push({name:nm,w,h,fill:'#9c8f7a'}); renderPalTypes();
+};
+
+// exportar PNG
+document.getElementById('expPng').onclick=()=>{
+  const prevSel=sel; sel=null; render();
+  html2canvas(nave,{backgroundColor:getComputedStyle(document.body).backgroundColor,scale:2}).then(cv=>{
+    const a=document.createElement('a'); a.download='layout_ben.png'; a.href=cv.toDataURL('image/png'); a.click();
+    sel=prevSel; render();
+  });
+};
+// guardar / carregar
+document.getElementById('save').onclick=()=>{
+  const data={S,palTypes};
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.download='arranjo_ben.json'; a.href=URL.createObjectURL(blob); a.click();
+};
+document.getElementById('load').onclick=()=>document.getElementById('fileIn').click();
+document.getElementById('fileIn').onchange=e=>{
+  const f=e.target.files[0]; if(!f) return;
+  const r=new FileReader();
+  r.onload=()=>{ try{ const d=JSON.parse(r.result); if(d.S){S=d.S;} if(d.palTypes){palTypes=d.palTypes;} sel=null; syncNave(); render(); }catch(err){ alert('Ficheiro inválido.'); } };
+  r.readAsText(f);
+};
+
+syncNave(); render();
+</script>
+</body>
+</html>
