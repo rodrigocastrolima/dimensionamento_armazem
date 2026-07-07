@@ -36,6 +36,7 @@ def get_articles():
             "sku": a.sku, "descricao": a.descricao,
             "comp_m": a.comp_m, "larg_m": a.larg_m, "alt_m": a.alt_m,
             "peso_kg": a.peso_kg, "stock_max_un": a.stock_max_un,
+            "pecas_por_carro": a.pecas_por_carro,
             "orientacao": a.orientacao, "empilhamento": a.empilhamento.value,
             "fragilidade": a.fragilidade, "geometria": a.geometria,
             "classe": a.classe, "subtipo_longo": a.subtipo_longo,
@@ -52,6 +53,7 @@ class ArticleUpdate(BaseModel):
     alt_m: float
     peso_kg: float
     stock_max_un: int
+    pecas_por_carro: int
     orientacao: str = "Livre"
     empilhamento: str = "EMPILHAVEL"
     fragilidade: str = "Normal"
@@ -62,8 +64,9 @@ class ArticleUpdate(BaseModel):
 
 def _article_row_values(body: "ArticleUpdate") -> list:
     return [body.sku, body.descricao, body.comp_m, body.larg_m, body.alt_m,
-            body.peso_kg, body.stock_max_un, body.orientacao, body.empilhamento,
-            body.fragilidade, body.geometria, body.classe, body.subtipo_longo]
+            body.peso_kg, body.stock_max_un, body.pecas_por_carro, body.orientacao,
+            body.empilhamento, body.fragilidade, body.geometria, body.classe,
+            body.subtipo_longo]
 
 
 @app.post("/api/articles")
@@ -353,6 +356,7 @@ def _serializar_layout(warehouse_layout, rack_by_name):
                                     "alt_m": c.alt_m,
                                     "pecas_nesta_caixa": c.pecas_nesta_caixa,
                                     "eh_picking": c.eh_picking,
+                                    "num_boxes_in_stack": c.num_boxes_in_stack,
                                 }
                                 for c in nivel.caixas
                             ],

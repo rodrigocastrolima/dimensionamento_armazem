@@ -70,7 +70,7 @@
       <thead>
         <tr>
           <th>SKU</th><th>Descrição</th><th>Comp (m)</th><th>Larg (m)</th><th>Alt (m)</th>
-          <th>Peso (kg)</th><th>Stock máx</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th><th></th>
+          <th>Peso (kg)</th><th>Stock máx</th><th>Peças/carro</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th><th></th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -185,7 +185,7 @@ function linhaArtigo(a) {
     <tr data-sku="${a.sku}">
       <td>${a.sku}</td><td>${a.descricao}</td>
       <td>${a.comp_m.toFixed(3)}</td><td>${a.larg_m.toFixed(3)}</td><td>${a.alt_m.toFixed(3)}</td>
-      <td>${a.peso_kg.toFixed(2)}</td><td>${a.stock_max_un}</td>
+      <td>${a.peso_kg.toFixed(2)}</td><td>${a.stock_max_un}</td><td>${a.pecas_por_carro}</td>
       <td>${a.empilhamento}</td><td>${a.geometria}</td><td>${a.classe}</td>
       <td><button class="del" data-tipo="article" data-id="${a.sku}">Remover</button></td>
     </tr>`;
@@ -214,6 +214,7 @@ document.getElementById("btn-add-artigo").addEventListener("click", () => {
     <td><input data-f="alt_m" placeholder="0.000"></td>
     <td><input data-f="peso_kg" placeholder="0.0"></td>
     <td><input data-f="stock_max_un" placeholder="0"></td>
+    <td><input data-f="pecas_por_carro" placeholder="0"></td>
     <td><input data-f="empilhamento" value="EMPILHAVEL"></td>
     <td><input data-f="geometria" value="Regular"></td>
     <td><input data-f="classe" value="RIGIDO"></td>
@@ -353,7 +354,7 @@ function lerCamposArticle(tr) {
     const f = inp.dataset.f;
     if (f === "comp_m" || f === "larg_m" || f === "alt_m" || f === "peso_kg") {
       body[f] = parseFloat(inp.value) || 0;
-    } else if (f === "stock_max_un") {
+    } else if (f === "stock_max_un" || f === "pecas_por_carro") {
       body[f] = parseInt(inp.value, 10) || 0;
     } else {
       body[f] = inp.value;
@@ -627,6 +628,7 @@ function desenharZonas(zonasLayout) {
 function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
   // nivel.caixas ja vem com x_m/y_m reais do packer 2D (rectpack) -- sem
   // recalculo de grelha no cliente, so' desenha onde o backend colocou.
+  // Cada caixa pode ser um stack de multiplas caixas (num_boxes_in_stack > 1).
   for (const c of nivel.caixas) {
     const cx = r.x + c.x_m + c.comp_m / 2;
     const cz = r.y + c.y_m + c.larg_m / 2;
@@ -635,10 +637,14 @@ function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
     const geo = new THREE.BoxGeometry(c.comp_m * 0.92, c.alt_m * 0.92, c.larg_m * 0.92);
     const cor = CORES[c.load_type] || 0x888888;
     const ehReserva = nivel.eh_picking === false && c.eh_picking === false;
+    const isStack = (c.num_boxes_in_stack || 1) > 1;
+
     const mat = new THREE.MeshStandardMaterial({
       color: cor,
       opacity: ehReserva ? 0.55 : 1,
       transparent: ehReserva,
+      metalness: isStack ? 0.6 : 0.2,
+      roughness: isStack ? 0.3 : 0.7,
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(cx, cy, cz);
@@ -648,10 +654,32 @@ function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
     grupo.add(mesh);
 
     const edges = new THREE.EdgesGeometry(geo);
-    const corBorda = c.eh_picking ? 0x00aa00 : 0x000000;
-    const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: corBorda, transparent: true, opacity: 0.4 }));
+    const corBorda = c.eh_picking ? 0x00aa00 : (isStack ? 0xffaa00 : 0x000000);
+    const larguraBorda = isStack ? 2 : 1;
+    const linhas = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
+      color: corBorda,
+      transparent: true,
+      opacity: isStack ? 0.8 : 0.4,
+      linewidth: larguraBorda,
+    }));
     linhas.position.copy(mesh.position);
     grupo.add(linhas);
+
+    // Label para stacks mostrando quantas caixas
+    if (isStack) {
+      const div = document.createElement("div");
+      div.className = "rotulo-zona";
+      div.style.background = "rgba(255, 170, 0, 0.8)";
+      div.style.padding = "2px 4px";
+      div.style.borderRadius = "2px";
+      div.textContent = `${c.num_boxes_in_stack}x`;
+      div.style.fontSize = "10px";
+      div.style.fontWeight = "bold";
+      const rotulo = new CSS2DObject(div);
+      rotulo.position.set(cx, cy + c.alt_m / 2 + 0.3, cz);
+      grupo.add(rotulo);
+      zonaLabelEls.push(div);
+    }
   }
 }
 
