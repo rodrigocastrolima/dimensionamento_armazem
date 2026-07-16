@@ -8,6 +8,7 @@ from enum import Enum
 
 
 class LoadType(str, Enum):
+    XS = "XS"             # caixa de picking pequena (bin), abaixo do S
     S = "S"
     M = "M"
     L = "L"

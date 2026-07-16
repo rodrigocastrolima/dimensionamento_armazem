@@ -19,7 +19,7 @@ from .models import Article, BoxType, LoadType, Empilhamento, BoxAssignment
 from .config import Config
 
 # Caixas normais, por ordem crescente de tamanho (usada para desempate)
-_CAIXAS = [LoadType.S, LoadType.M, LoadType.L]
+_CAIXAS = [LoadType.XS, LoadType.S, LoadType.M, LoadType.L]
 
 
 def pieces_in_stack(altura_disponivel: float, altura_artigo: float,

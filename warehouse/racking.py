@@ -218,7 +218,13 @@ def _abrir_bloco(rack: RackType, bloco_idx: int, altura_picking_m: float) -> Blo
     niveis = []
     for n in range(rack.niveis):
         base_nivel = bloco_idx * (rack.alt_nivel_m * rack.niveis) + n * rack.alt_nivel_m
-        eh_picking = altura_picking_m > 0 and base_nivel < altura_picking_m
+        # altura_picking_m é a altura MÁXIMA até onde o operador faz picking, por
+        # isso o nível inteiro tem de estar ao alcance: conta o LIMITE SUPERIOR
+        # do nível (base + altura do nível), não a base. Ex.: rack de palete com
+        # níveis de 1.8 m e picking a 2 m -> só o nível 0 (topo 1.8 <= 2) é de
+        # picking; o nível 1 (topo 3.6) não, apesar de a base (1.8) ser < 2.
+        topo_nivel = base_nivel + rack.alt_nivel_m
+        eh_picking = altura_picking_m > 0 and topo_nivel <= altura_picking_m + 1e-9
         niveis.append(NivelRack(nivel_idx=n, eh_picking=eh_picking))
     return BlocoRack(bloco_idx=bloco_idx, niveis=niveis)
 
@@ -261,24 +267,31 @@ def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemPara
 
     if pos.num_blocos < max_blocos:
         novo_bloco = _abrir_bloco(rack, pos.num_blocos, altura_picking_m)
-        pos.blocos.append(novo_bloco)
+        # O módulo novo só é agarrado à posição se ALGUMA caixa lá entrar --
+        # senão ficava um módulo-fantasma vazio a "encher a altura". Isto
+        # acontecia sobretudo com caixas de picking: um módulo empilhado
+        # (bloco_idx >= 1) não tem níveis de picking, logo a caixa nunca lá
+        # cabia, mas o append deixava na mesma o módulo vazio na posição.
         for nivel in novo_bloco.niveis:
             if nivel.eh_picking != preferir_picking:
                 continue
             xy = _cabe_no_nivel(nivel, rack, item)
             if xy is not None:
                 _colocar(nivel, *xy, item)
+                pos.blocos.append(novo_bloco)
                 return True
-        if not permitir_fallback:
-            return False
-        # bloco novo não deu encaixe na zona preferida -- tentar a outra
-        for nivel in novo_bloco.niveis:
-            if nivel.eh_picking == preferir_picking:
-                continue
-            xy = _cabe_no_nivel(nivel, rack, item)
-            if xy is not None:
-                _colocar(nivel, *xy, item)
-                return True
+        # bloco novo não deu encaixe na zona preferida -- tentar a outra,
+        # mas só para caixas de overflow (reserva), nunca as de picking
+        if permitir_fallback:
+            for nivel in novo_bloco.niveis:
+                if nivel.eh_picking == preferir_picking:
+                    continue
+                xy = _cabe_no_nivel(nivel, rack, item)
+                if xy is not None:
+                    _colocar(nivel, *xy, item)
+                    pos.blocos.append(novo_bloco)
+                    return True
+        # nada entrou no módulo novo -> descartá-lo (não fica vazio na posição)
 
     if not permitir_fallback:
         return False

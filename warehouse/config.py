@@ -55,9 +55,12 @@ class Config:
     # do Excel já são o total).
     altura_armazem_m: float = 0.0
 
-    # Modo de armazém picking: altura (m) até onde um nível conta como zona
-    # de picking acessível ao operador (níveis cuja BASE fica abaixo deste
-    # valor). Cada SKU distinto tem garantida >=1 caixa nessa zona; o resto
+    # Modo de armazém picking: altura MÁXIMA (m) de alcance do operador. Um
+    # nível conta como zona de picking se o seu TOPO (base + altura do nível)
+    # ficar dentro deste valor -- o nível inteiro tem de estar ao alcance, por
+    # isso conta o limite superior, não a base (ex.: nível de 1.8 m com picking
+    # a 2 m é picking; o nível seguinte, topo a 3.6 m, já não).
+    # Cada SKU distinto tem garantida >=1 caixa nessa zona; o resto
     # do stock vai para reserva acima. Se a capacidade de picking não chegar
     # para todos os SKUs, abrem-se mais posições de chão até caber.
     # 0 = modo picking desativado.

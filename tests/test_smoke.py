@@ -1,5 +1,5 @@
 """Testes mínimos: a aritmética dos passos implementados (área) e os imports."""
-from warehouse import area
+from warehouse import area, racking
 from warehouse.models import (RackType, LoadType, PosicaoChao, BlocoRack, NivelRack,
                               Zona, WarehouseDimensioning, WarehouseLayout)
 
@@ -42,7 +42,45 @@ def test_resumo_area_total():
     assert abs(resumo.area_bruta_total_m2 - 220.0) < 1e-9
 
 
+def test_picking_nivel_pelo_topo():
+    """Bug do nível de picking: um nível só é de picking se o TOPO (base +
+    altura do nível) couber na altura de picking (alcance máximo), não a base."""
+    pp = RackType("PP", larg_m=2.7, prof_m=1.1, alt_nivel_m=1.8, niveis=4)
+    bloco = racking._abrir_bloco(pp, 0, altura_picking_m=2.0)
+    # topo n0 = 1.8 <= 2 -> picking; topo n1 = 3.6 > 2 -> reserva
+    assert [n.eh_picking for n in bloco.niveis] == [True, False, False, False]
+
+    pl = RackType("PL", larg_m=1.0, prof_m=0.5, alt_nivel_m=0.7, niveis=3)
+    bl = racking._abrir_bloco(pl, 0, altura_picking_m=2.0)
+    # topo n0=0.7, n1=1.4 <= 2 -> picking; n2=2.1 > 2 -> reserva
+    assert [n.eh_picking for n in bl.niveis] == [True, True, False]
+
+
+def test_sem_modulo_fantasma_picking():
+    """Bug da altura: uma caixa de picking que não cabe não deve deixar um
+    módulo empilhado vazio agarrado à posição (módulos empilhados não têm
+    níveis de picking, logo a caixa nunca lá entra)."""
+    from warehouse.racking import _ItemParaColocar, _abrir_bloco, _tentar_colocar_em_posicao
+    r = RackType("PL", larg_m=1.0, prof_m=1.0, alt_nivel_m=0.7, niveis=1)
+    pos = PosicaoChao(rack_nome="PL", indice=0)
+    pos.blocos.append(_abrir_bloco(r, 0, altura_picking_m=0.8))  # nível 0: topo 0.7 <= 0.8 -> picking
+
+    # 1.ª caixa de picking ocupa o footprint todo do único nível de picking
+    item1 = _ItemParaColocar("A", "", LoadType.M, 1.0, 1.0, 0.5, 1, True)
+    assert _tentar_colocar_em_posicao(pos, r, item1, 0.8, max_blocos=3,
+                                      preferir_picking=True, permitir_fallback=False)
+    assert pos.num_blocos == 1
+
+    # 2.ª caixa de picking não cabe (nível cheio); o módulo empilhado que se
+    # abriria é reserva -> não deve ser criado nenhum módulo-fantasma
+    item2 = _ItemParaColocar("B", "", LoadType.M, 1.0, 1.0, 0.5, 1, True)
+    assert not _tentar_colocar_em_posicao(pos, r, item2, 0.8, max_blocos=3,
+                                          preferir_picking=True, permitir_fallback=False)
+    assert pos.num_blocos == 1
+
+
 if __name__ == "__main__":
     test_longo_existe(); test_footprint(); test_floor_area()
     test_zona_area(); test_resumo_area_total()
+    test_picking_nivel_pelo_topo(); test_sem_modulo_fantasma_picking()
     print("smoke OK")

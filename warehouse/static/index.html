@@ -144,7 +144,18 @@
     <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid #555; border-radius:8px; overflow:auto; position:relative; height:calc(100vh - 210px);">
       <svg id="canvas" style="background:#fff; cursor:default;"></svg>
     </div>
-    <div style="width:260px;">
+    <div style="width:260px; display:flex; flex-direction:column; gap:12px;">
+      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
+        <h3 style="margin:0 0 8px 0; font-size:13px;">Cabe no hangar?</h3>
+        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:8px;">
+          <input id="hangar-comp" type="number" step="0.01" min="0" value="79.5" style="width:62px">
+          <span>×</span>
+          <input id="hangar-larg" type="number" step="0.01" min="0" value="15.81" style="width:62px">
+          <span>m</span>
+        </div>
+        <div id="hangar-verdict" style="text-align:center; font-weight:bold; font-size:26px; letter-spacing:1px; border-radius:6px; padding:10px 0; background:#333; color:#999;">—</div>
+        <div id="hangar-detalhe" style="font-size:11px; color:#aaa; margin-top:8px; line-height:1.55;"></div>
+      </div>
       <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
         <h3 style="margin:0 0 8px 0; font-size:13px;">Informações</h3>
         <div id="canvas-info" style="font-size:12px;">
@@ -157,14 +168,29 @@
 
 <section id="armazem" class="tab">
   <div class="toolbar">
-    <button id="btn-add-pessoa">+ Pessoa</button>
-    <button id="btn-add-mesa">+ Mesa</button>
-    <button id="btn-add-palete">+ Palete</button>
-    <button id="btn-add-prateleira">+ Prateleira</button>
-    <button id="btn-add-armario">+ Armário</button>
+    <label style="font-size:13px;">Adicionar elemento:
+      <select id="prop-tipo" style="padding:4px; font-size:13px;">
+        <optgroup label="Linha de montagem">
+          <option value="veiculo">Veículo sobre carrier (2,5×1,5)</option>
+          <option value="carro">Carro solto (2,5×1,5)</option>
+          <option value="carrier">Carrier vazio (2,5×1,5)</option>
+          <option value="estante-dinamica">Estante dinâmica / flow-rack (1,35×0,8)</option>
+          <option value="carro-kitting">Carro de kitting (1,2×0,8)</option>
+          <option value="jig">Jig / bancada sub-assembly (2,0×1,0)</option>
+        </optgroup>
+        <optgroup label="Genéricos">
+          <option value="mesa">Bancada / mesa (1,8×0,8)</option>
+          <option value="palete">Europalete (1,2×0,8)</option>
+          <option value="prateleira">Estante (1,8×0,6)</option>
+          <option value="armario">Armário (0,8×0,4)</option>
+          <option value="pessoa">Pessoa</option>
+        </optgroup>
+      </select>
+    </label>
+    <button class="action" id="btn-add-prop">+ Adicionar</button>
     <button id="btn-rodar-prop">⟳ Rodar selecionado</button>
     <button id="btn-del-prop">✕ Remover selecionado</button>
-    <span class="dica" style="margin:0">Arrasta pessoas/mesas com o rato (botão esquerdo); clica para selecionar.</span>
+    <span class="dica" style="margin:0">Adiciona os que quiseres (repetíveis) e arrasta-os com o rato; clica para selecionar.</span>
   </div>
   <div class="dica">Resultado do «Renderizar layout 3D» (separador Arranjar Layout).
     Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
@@ -274,8 +300,11 @@ async function carregarZonas() {
 
 // ----------------------------------------------------------------- 3D viewer
 let scene, camera, renderer, labelRenderer, controls, raycaster, mouse, dirLight, chao;
+let _rotRacks = 0;   // rotação (graus) do bloco de racks no canvas -> orienta os bins
 const CORES = {
-  S: 0x4dabf7, M: 0x69db7c, L: 0xffa94d, MEIA: 0xf7c948, PALLET: 0xff6b6b, LONGO: 0xda77f2,
+  // caixas de picking (bins de bico aberto): tons de azul por tamanho
+  XS: 0x8ec4f7, S: 0x4dabf7, M: 0x2f83cc, L: 0x1c5a92,
+  MEIA: 0xf7c948, PALLET: 0xff6b6b, LONGO: 0xda77f2,
 };
 
 function initViewer() {
@@ -393,11 +422,23 @@ function initViewer() {
     selecionarProp(p);
   }
 
-  document.getElementById("btn-add-pessoa").addEventListener("click", () => adicionarProp(criarPessoa));
-  document.getElementById("btn-add-mesa").addEventListener("click", () => adicionarProp(criarMesa));
-  document.getElementById("btn-add-palete").addEventListener("click", () => adicionarProp(criarPaleteProp));
-  document.getElementById("btn-add-prateleira").addEventListener("click", () => adicionarProp(criarPrateleiraProp));
-  document.getElementById("btn-add-armario").addEventListener("click", () => adicionarProp(criarArmario));
+  const PROP_FACTORIES = {
+    veiculo: criarVeiculo,
+    carro: criarCarro,
+    carrier: criarCarrier,
+    "estante-dinamica": criarEstanteDinamica,
+    "carro-kitting": criarCarroKitting,
+    jig: criarJig,
+    mesa: criarMesa,
+    palete: criarPaleteProp,
+    prateleira: criarPrateleiraProp,
+    armario: criarArmario,
+    pessoa: criarPessoa,
+  };
+  document.getElementById("btn-add-prop").addEventListener("click", () => {
+    const f = PROP_FACTORIES[document.getElementById("prop-tipo").value];
+    if (f) adicionarProp(f);
+  });
   document.getElementById("btn-rodar-prop").addEventListener("click", () => {
     if (propSel) propSel.rotation.y += Math.PI / 4;
   });
@@ -423,6 +464,8 @@ function initViewer() {
       selecionarProp(hit);
       dragProp = hit;
       controls.enabled = false;   // enquanto arrasta, não orbita
+    } else if (propSel) {
+      selecionarProp(null);       // clique fora de um prop: desseleciona
     }
   });
   renderer.domElement.addEventListener("pointermove", (event) => {
@@ -852,6 +895,223 @@ function criarArmario() {
   return g;
 }
 
+// ------------------------------- elementos da linha de montagem (props móveis)
+const MAT_CARRIER = new THREE.MeshStandardMaterial({ color: 0x3b4149, roughness: 0.5, metalness: 0.6 });
+const MAT_RODA = new THREE.MeshStandardMaterial({ color: 0x161719, roughness: 0.85 });
+
+function criarCarrier() {
+  // carrier / plataforma de montagem 2.5 x 1.5 m: estrado baixo sobre rodas
+  const g = new THREE.Group();
+  const estrado = new THREE.Mesh(geoCaixa(2.5, 0.12, 1.5), MAT_CARRIER);
+  estrado.position.y = 0.34;
+  g.add(estrado);
+  for (const [px, pz] of [[-1.05, -0.6], [1.05, -0.6], [-1.05, 0.6], [1.05, 0.6]]) {
+    const roda = new THREE.Mesh(geoCaixa(0.14, 0.26, 0.14), MAT_RODA);
+    roda.position.set(px, 0.13, pz);
+    g.add(roda);
+  }
+  for (const pz of [-0.32, 0.32]) {               // batentes onde assenta o veículo
+    const b = new THREE.Mesh(geoCaixa(2.3, 0.08, 0.1), MAT_VIGA);
+    b.position.set(0, 0.44, pz);
+    g.add(b);
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function _extrudeCentrado(shape, depth, bevelThickness, bevelSize) {
+  // extrusão com bordos boleados, centrada em z (largura final = depth + 2*bevelThickness)
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth, bevelEnabled: true, bevelThickness, bevelSize,
+    bevelSegments: 4, curveSegments: 24, steps: 1,
+  });
+  geo.computeBoundingBox();
+  geo.translate(0, 0, -(geo.boundingBox.min.z + geo.boundingBox.max.z) / 2);
+  return geo;
+}
+
+function criarCarro() {
+  // microcarro 2.5 x 1.5 m: carroçaria prateada extrudida do perfil lateral
+  // (nariz e traseira arredondados, arcos de roda), cabine de vidro preta
+  // envolvente, rodas com tampões aero, faróis e painéis laterais escuros.
+  const g = new THREE.Group();
+  const matBody = new THREE.MeshStandardMaterial({ color: 0xd6dbe0, roughness: 0.4, metalness: 0.25 });
+  const matGlass = new THREE.MeshStandardMaterial({ color: 0x15181d, roughness: 0.25, metalness: 0.3 });
+  const matTrim = new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.9 });
+  const matTire = new THREE.MeshStandardMaterial({ color: 0x141517, roughness: 0.95 });
+
+  // perfil lateral (x = comprimento, y = altura), com arcos de roda côncavos
+  const perfil = new THREE.Shape();
+  perfil.moveTo(-1.17, 0.22);
+  perfil.lineTo(-1.13, 0.20);
+  perfil.absarc(-0.76, 0.20, 0.37, Math.PI, 0, true);   // arco roda frente
+  perfil.lineTo(0.39, 0.20);
+  perfil.absarc(0.76, 0.20, 0.37, Math.PI, 0, true);    // arco roda trás
+  perfil.lineTo(1.17, 0.22);
+  perfil.quadraticCurveTo(1.23, 0.32, 1.23, 0.52);      // traseira bombada
+  perfil.quadraticCurveTo(1.23, 0.82, 1.10, 0.97);
+  perfil.quadraticCurveTo(0.92, 1.30, 0.50, 1.38);      // pilar traseiro
+  perfil.quadraticCurveTo(0.05, 1.42, -0.35, 1.38);     // tejadilho
+  perfil.quadraticCurveTo(-0.80, 1.26, -0.98, 0.98);    // para-brisas
+  perfil.quadraticCurveTo(-1.20, 0.72, -1.23, 0.50);    // capot/nariz
+  perfil.quadraticCurveTo(-1.23, 0.30, -1.17, 0.22);
+  g.add(new THREE.Mesh(_extrudeCentrado(perfil, 1.20, 0.10, 0.06), matBody));
+
+  // cabine envolvente (vidros + tejadilho escuro), ligeiramente saliente
+  const janela = new THREE.Shape();
+  janela.moveTo(-1.00, 0.98);
+  janela.lineTo(1.04, 0.96);                             // linha de cintura
+  janela.quadraticCurveTo(1.00, 1.26, 0.58, 1.40);       // vidro traseiro
+  janela.quadraticCurveTo(0.08, 1.46, -0.36, 1.40);      // tejadilho
+  janela.quadraticCurveTo(-0.82, 1.28, -1.00, 0.98);     // para-brisas
+  g.add(new THREE.Mesh(_extrudeCentrado(janela, 1.22, 0.10, 0.065), matGlass));
+
+  // rodas nos cantos, com tampão aero e cubo escuro
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.29, 0.29, 0.18, 24), matTire);
+    tire.rotation.x = Math.PI / 2;
+    tire.position.set(sx * 0.76, 0.30, sz * 0.55);
+    g.add(tire);
+    const cover = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.02, 24), matBody);
+    cover.rotation.x = Math.PI / 2;
+    cover.position.set(sx * 0.76, 0.30, sz * 0.645);
+    g.add(cover);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.02, 6), matTrim);
+    hub.rotation.x = Math.PI / 2;
+    hub.position.set(sx * 0.76, 0.30, sz * 0.652);
+    g.add(hub);
+  }
+
+  // faróis (bezel escuro + lente emissiva) e farolins traseiros
+  const matLampF = new THREE.MeshStandardMaterial({
+    color: 0xffffff, emissive: 0xfff7d9, emissiveIntensity: 0.9 });
+  const matLampT = new THREE.MeshStandardMaterial({
+    color: 0x30090b, emissive: 0x64111a, emissiveIntensity: 0.6 });
+  for (const sz of [-1, 1]) {
+    const bezF = new THREE.Mesh(geoCaixa(0.06, 0.16, 0.30), matTrim);
+    bezF.position.set(-1.26, 0.62, sz * 0.38);
+    g.add(bezF);
+    const lampF = new THREE.Mesh(geoCaixa(0.03, 0.10, 0.22), matLampF);
+    lampF.position.set(-1.285, 0.62, sz * 0.38);
+    g.add(lampF);
+    const bezT = new THREE.Mesh(geoCaixa(0.06, 0.14, 0.28), matTrim);
+    bezT.position.set(1.26, 0.68, sz * 0.38);
+    g.add(bezT);
+    const lampT = new THREE.Mesh(geoCaixa(0.03, 0.08, 0.20), matLampT);
+    lampT.position.set(1.285, 0.68, sz * 0.38);
+    g.add(lampT);
+  }
+
+  // aprons inferiores escuros (frente/trás) + painel lateral texturado escuro
+  const apF = new THREE.Mesh(geoCaixa(0.06, 0.16, 0.88), matTrim);
+  apF.position.set(-1.255, 0.30, 0);
+  g.add(apF);
+  const apT = new THREE.Mesh(geoCaixa(0.06, 0.16, 0.88), matTrim);
+  apT.position.set(1.25, 0.30, 0);
+  g.add(apT);
+  for (const sz of [-1, 1]) {
+    const painel = new THREE.Mesh(geoCaixa(0.72, 0.5, 0.015), matTrim);
+    painel.position.set(0, 0.62, sz * 0.70);
+    g.add(painel);
+    const stalk = new THREE.Mesh(geoCaixa(0.02, 0.02, 0.10), matTrim);
+    stalk.position.set(-0.58, 1.05, sz * 0.73);
+    g.add(stalk);
+    const espelho = new THREE.Mesh(geoCaixa(0.09, 0.11, 0.04), matTrim);
+    espelho.position.set(-0.58, 1.09, sz * 0.79);
+    g.add(espelho);
+  }
+
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarVeiculo() {
+  // veículo (carro realista) assente no carrier: rodas pousadas no estrado
+  const g = new THREE.Group();
+  g.add(criarCarrier());
+  const carro = criarCarro();
+  carro.position.y = 0.39;   // topo do estrado (0.40) - folga do pneu
+  g.add(carro);
+  return g;
+}
+
+function criarEstanteDinamica() {
+  // estante dinâmica / flow-rack de bordo de linha: 1.35 x 0.8 m, 1.8 m, 4 níveis inclinados
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x6b7580, roughness: 0.5, metalness: 0.5 });
+  const W = 1.35, D = 0.8, H = 1.8;
+  for (const [px, pz] of [[-W/2+0.05, -D/2+0.05], [W/2-0.05, -D/2+0.05], [-W/2+0.05, D/2-0.05], [W/2-0.05, D/2-0.05]]) {
+    const poste = new THREE.Mesh(geoCaixa(0.05, H, 0.05), metal);
+    poste.position.set(px, H / 2, pz);
+    g.add(poste);
+  }
+  const binMat = new THREE.MeshStandardMaterial({ color: 0xc8823a, roughness: 0.75 });
+  for (let nvl = 0; nvl < 4; nvl++) {
+    const y = 0.3 + nvl * 0.44;
+    const tab = new THREE.Mesh(geoCaixa(W - 0.1, 0.03, D - 0.1), MAT_PRATELEIRA);
+    tab.position.set(0, y, 0);
+    tab.rotation.x = -0.14;                        // ligeira inclinação (flow)
+    g.add(tab);
+    for (const px of [-0.38, 0, 0.38]) {           // bins de peça pequena na frente
+      const bin = new THREE.Mesh(geoCaixa(0.3, 0.12, 0.26), binMat);
+      bin.position.set(px, y + 0.11, 0.12);
+      g.add(bin);
+    }
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarCarroKitting() {
+  // carro de kitting 1.2 x 0.8 m: 2 tabuleiros + bins, sobre rodas
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x4f5b68, roughness: 0.5, metalness: 0.5 });
+  const W = 1.2, D = 0.8;
+  for (const [px, pz] of [[-W/2+0.05, -D/2+0.05], [W/2-0.05, -D/2+0.05], [-W/2+0.05, D/2-0.05], [W/2-0.05, D/2-0.05]]) {
+    const poste = new THREE.Mesh(geoCaixa(0.04, 1.0, 0.04), metal);
+    poste.position.set(px, 0.6, pz);
+    g.add(poste);
+  }
+  for (const y of [0.5, 1.0]) {
+    const t = new THREE.Mesh(geoCaixa(W - 0.06, 0.03, D - 0.06), MAT_PRATELEIRA);
+    t.position.set(0, y, 0);
+    g.add(t);
+  }
+  const binMat = new THREE.MeshStandardMaterial({ color: 0x2f7d4f, roughness: 0.75 });
+  for (const px of [-0.28, 0.16]) {
+    const bin = new THREE.Mesh(geoCaixa(0.34, 0.18, 0.55), binMat);
+    bin.position.set(px, 1.0 + 0.11, 0);
+    g.add(bin);
+  }
+  for (const [px, pz] of [[-W/2+0.1, -D/2+0.1], [W/2-0.1, -D/2+0.1], [-W/2+0.1, D/2-0.1], [W/2-0.1, D/2-0.1]]) {
+    const roda = new THREE.Mesh(geoCaixa(0.1, 0.1, 0.07), MAT_RODA);
+    roda.position.set(px, 0.05, pz);
+    g.add(roda);
+  }
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
+function criarJig() {
+  // jig / bancada de sub-assembly 2.0 x 1.0 m, com fixture no topo
+  const g = new THREE.Group();
+  const metal = new THREE.MeshStandardMaterial({ color: 0x454b52, roughness: 0.5, metalness: 0.55 });
+  const tampo = new THREE.Mesh(geoCaixa(2.0, 0.08, 1.0), MAT_PRATELEIRA);
+  tampo.position.y = 0.85;
+  g.add(tampo);
+  for (const [px, pz] of [[-0.92, -0.42], [0.92, -0.42], [-0.92, 0.42], [0.92, 0.42]]) {
+    const perna = new THREE.Mesh(geoCaixa(0.08, 0.85, 0.08), metal);
+    perna.position.set(px, 0.425, pz);
+    g.add(perna);
+  }
+  const fixt = new THREE.Mesh(geoCaixa(0.95, 0.5, 0.6),
+    new THREE.MeshStandardMaterial({ color: 0xd0731e, roughness: 0.5, metalness: 0.45 }));
+  fixt.position.set(0, 0.89 + 0.25, 0);
+  g.add(fixt);
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
 function desenharZonas(zonasLayout) {
   // zonas como marcação pintada no pavimento: preenchimento translúcido,
   // contorno sólido e nome estampado (stencil), como tinta industrial.
@@ -898,6 +1158,67 @@ function _marcarCaixa(mesh, r, c, nivel, grupo) {
   grupo.add(mesh);
 }
 
+// ---- SUC / bin de picking azul de bico aberto (S/M/L/XS) ----
+const _binMatCache = new Map();
+const _binSideCache = new Map();
+
+function _binMat(corHex) {
+  if (!_binMatCache.has(corHex))
+    _binMatCache.set(corHex, new THREE.MeshStandardMaterial({
+      color: corHex, roughness: 0.5, metalness: 0.05, side: THREE.DoubleSide }));
+  return _binMatCache.get(corHex);
+}
+
+function _binSideGeo(H, D, lip, t) {
+  const k = `${H.toFixed(3)}|${D.toFixed(3)}`;
+  if (!_binSideCache.has(k)) {
+    const s = new THREE.Shape();
+    s.moveTo(-D / 2, 0);       // frente-baixo
+    s.lineTo(D / 2, 0);        // trás-baixo
+    s.lineTo(D / 2, H);        // trás-cima
+    s.lineTo(0, H);            // cumeeira a meio (topo aberto à frente)
+    s.lineTo(-D / 2, lip);     // desce até ao bico da frente
+    s.closePath();
+    _binSideCache.set(k, new THREE.ExtrudeGeometry(s, { depth: t, bevelEnabled: false, curveSegments: 1 }));
+  }
+  return _binSideCache.get(k);
+}
+
+function criarBinPicking(W, H, D, corHex) {
+  // bin plástico de bico aberto: fundo + costas inteiras + laterais com corte
+  // diagonal + frente baixa (lip); topo-frente aberto para picar à mão.
+  const g = new THREE.Group();
+  const t = Math.min(0.025, W * 0.14, D * 0.14);
+  const lip = Math.max(H * 0.4, 0.03);
+  const mat = _binMat(corHex);
+
+  const fundo = new THREE.Mesh(geoCaixa(W, t, D), mat);
+  fundo.position.y = t / 2;
+  g.add(fundo);
+  const costas = new THREE.Mesh(geoCaixa(W, H, t), mat);
+  costas.position.set(0, H / 2, D / 2 - t / 2);
+  g.add(costas);
+  const frente = new THREE.Mesh(geoCaixa(W, lip, t), mat);
+  frente.position.set(0, lip / 2, -D / 2 + t / 2);
+  g.add(frente);
+
+  const sideGeo = _binSideGeo(H, D, lip, t);         // extrudido em XY, roda p/ ficar de lado
+  const dir = new THREE.Mesh(sideGeo, mat);
+  dir.rotation.y = -Math.PI / 2; dir.position.x = W / 2;
+  g.add(dir);
+  const esq = new THREE.Mesh(sideGeo, mat);
+  esq.rotation.y = -Math.PI / 2; esq.position.x = -W / 2 + t;
+  g.add(esq);
+
+  const label = new THREE.Mesh(geoCaixa(W * 0.5, lip * 0.5, 0.004),
+    new THREE.MeshStandardMaterial({ color: 0xeef1f4, roughness: 0.85 }));
+  label.position.set(0, lip * 0.58, -D / 2 - 0.003);
+  g.add(label);
+
+  g.traverse(o => { if (o.isMesh) o.castShadow = true; });
+  return g;
+}
+
 function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
   // nivel.caixas ja vem com x_m/y_m reais do packer 2D (rectpack).
   // Stacks (num_boxes_in_stack > 1) sao desenhados como caixas fisicas
@@ -936,12 +1257,31 @@ function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
       continue;
     }
 
+    // Orientação do bico aberto: segue a rotação do bloco de racks no canvas.
+    // O backend já rodou a footprint (troca comp<->larg em 90/270 e roda as
+    // posições), por isso aqui só se orienta a ABERTURA para o corredor certo,
+    // construindo o bin com os lados na ordem que mantém a footprint no mundo.
+    //   rot 0/180  -> abertura no eixo Z (profundidade = larg)
+    //   rot 90/270 -> abertura no eixo X (profundidade = comp, lados trocados)
+    // A fiada "tras" abre para o corredor oposto (+180°, costas contra costas).
+    const rotB = ((_rotRacks % 360) + 360) % 360;
+    const eixoX = (rotB === 90 || rotB === 270);
+    const flip = (r.lado === "tras") ? Math.PI : 0;
+    let binW, binD, rotBase;
+    if (!eixoX) {
+      binW = c.comp_m * 0.94; binD = c.larg_m * 0.94;
+      rotBase = (rotB === 180) ? Math.PI : 0;
+    } else {
+      binW = c.larg_m * 0.94; binD = c.comp_m * 0.94;
+      rotBase = (rotB === 90) ? -Math.PI / 2 : Math.PI / 2;
+    }
+
     for (let s = 0; s < n; s++) {
-      const caixa = new THREE.Mesh(
-        geoCaixa(c.comp_m * 0.94, altUnit * 0.92, c.larg_m * 0.94),
-        materiaisCaixa(tint, corTipo));
-      caixa.position.set(cx, baseY + folga + s * altUnit + (altUnit * 0.92) / 2, cz);
-      _marcarCaixa(caixa, r, c, nivel, grupo);
+      const bin = criarBinPicking(binW, altUnit * 0.92, binD, corTipo);
+      bin.position.set(cx, baseY + folga + s * altUnit, cz);
+      bin.rotation.y = rotBase + flip;
+      bin.traverse(o => { if (o.isMesh) { o.userData.posicao = r; o.userData.caixa = c; o.userData.nivel = nivel; } });
+      grupo.add(bin);
     }
   }
 }
@@ -1202,23 +1542,78 @@ function inicializarCanvas() {
       const tot = lastGerarData.totais_por_carga;
       const soma = Object.values(tot).reduce((a, s) => a + s, 0);
       html += `<br><br><b>Caixas (unidades de carga)</b><br>`;
-      for (const tipo of ["S", "M", "L", "MEIA", "PALLET", "LONGO"]) {
+      for (const tipo of ["XS", "S", "M", "L", "MEIA", "PALLET", "LONGO"]) {
         if (tot[tipo]) html += `${tipo}: ${tot[tipo]}<br>`;
       }
       html += `<b>Total: ${soma}</b>`;
     }
     el.innerHTML = html;
+    atualizarHangar(env);
+  }
+
+  // Indicador dinâmico: valida se a envolvente do arranjo CABE nas 2 dimensões
+  // do hangar (parametrizável), testando as duas orientações -- um retângulo
+  // a×b cabe num c×d sse min(a,b)<=min(c,d) e max(a,b)<=max(c,d). Mostra
+  // SIM/NÃO (verde/vermelho) e a folga/excesso em cada lado. Atualiza sempre
+  // que o arranjo muda (via atualizarInfo) ou os campos do hangar mudam.
+  function atualizarHangar(env) {
+    const comp = parseFloat(document.getElementById("hangar-comp").value) || 0;
+    const larg = parseFloat(document.getElementById("hangar-larg").value) || 0;
+    const areaHangar = comp * larg;
+    const vEl = document.getElementById("hangar-verdict");
+    const dEl = document.getElementById("hangar-detalhe");
+    if (!env) {
+      vEl.textContent = "—";
+      vEl.style.background = "#333"; vEl.style.color = "#999";
+      dEl.innerHTML = `Hangar: <b>${comp}×${larg} m</b> (${areaHangar.toFixed(1)} m²)<br>` +
+                      `<span style="color:#777">Gera e arranja os blocos para validar.</span>`;
+      return;
+    }
+    // fit invariante à orientação: compara lado maior com lado maior, menor com menor
+    const aLong = Math.max(env.w, env.h), aShort = Math.min(env.w, env.h);
+    const hLong = Math.max(comp, larg), hShort = Math.min(comp, larg);
+    const folgaLong = hLong - aLong, folgaShort = hShort - aShort;
+    const cabe = folgaLong >= -1e-6 && folgaShort >= -1e-6;
+    vEl.textContent = cabe ? "SIM" : "NÃO";
+    vEl.style.background = cabe ? "#14532d" : "#7f1d1d";
+    vEl.style.color = cabe ? "#4ade80" : "#f87171";
+    const linha = (rotulo, a, h, folga) => {
+      const ok = folga >= -1e-6;
+      return `${rotulo}: ${a.toFixed(1)} / ${h.toFixed(1)} m — ` +
+        `<span style="color:${ok ? '#4ade80' : '#f87171'}">` +
+        `${ok ? 'folga' : 'excesso'} ${Math.abs(folga).toFixed(1)} m</span>`;
+    };
+    dEl.innerHTML =
+      `Arranjo: <b>${env.w.toFixed(1)}×${env.h.toFixed(1)} m</b> = ${env.area.toFixed(1)} m²<br>` +
+      `Hangar: <b>${comp}×${larg} m</b> = ${areaHangar.toFixed(1)} m²<br>` +
+      linha("Lado maior", aLong, hLong, folgaLong) + `<br>` +
+      linha("Lado menor", aShort, hShort, folgaShort);
   }
 
   svg.addEventListener("mousemove", (e) => {
     if (!dragging) return;
     const r = svg.getBoundingClientRect();
-    dragging.block.x = snap(Math.max(0, dragging.origX + (e.clientX - r.left - dragging.startX) / PXM));
-    dragging.block.y = snap(Math.max(0, dragging.origY + (e.clientY - r.top - dragging.startY) / PXM));
+    const b = dragging.block;
+    b.x = snap(dragging.origX + (e.clientX - r.left - dragging.startX) / PXM);
+    b.y = snap(dragging.origY + (e.clientY - r.top - dragging.startY) / PXM);
+    // Impede que a envolvente (já rodada) saia pela esquerda/topo. Clampar
+    // b.x/b.y direto não chega para blocos rodados: com rotação, o canto visual
+    // mínimo está deslocado de (b.x, b.y), e o bloco encravava longe da margem.
+    const cantos = cantosRodados(b);
+    const minX = Math.min(...cantos.map(c => c[0]));
+    const minY = Math.min(...cantos.map(c => c[1]));
+    if (minX < 0) b.x -= minX;
+    if (minY < 0) b.y -= minY;
     desenharBlocks();
   });
   svg.addEventListener("mouseup", () => { dragging = null; });
   svg.addEventListener("mouseleave", () => { dragging = null; });
+
+  // re-valida o hangar em tempo real ao editar as suas dimensões
+  ["hangar-comp", "hangar-larg"].forEach(id => {
+    const inp = document.getElementById(id);
+    if (inp) inp.addEventListener("input", atualizarInfo);
+  });
 
   // 1 · Gerar racks: corre o pipeline, carrega os blocos e mostra SÓ a área do bloco de racks (sem 3D)
   document.getElementById("btn-gerar-racks").addEventListener("click", async () => {
@@ -1294,6 +1689,8 @@ function inicializarCanvas() {
       document.getElementById("armazem").classList.add("active");
       if (window.redimensionarViewer) window.redimensionarViewer();
 
+      const _rk = canvasBlocks.find(b => b.type === "racking");
+      _rotRacks = _rk ? ((((+_rk.rot || 0) % 360) + 360) % 360) : 0;
       limparRacks();
       desenharLayout(data.layout);
       desenharZonas(data.zonas_layout);

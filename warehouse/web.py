@@ -403,6 +403,19 @@ def render_layout(body: ArrangeRequest):
     largura = max_x - min_x
     profundidade = max_y - min_y
 
+    # Normaliza para a origem: o canto mínimo do arranjo passa a (0, 0). Sem
+    # isto, se o utilizador deixar o bloco/zonas afastados do canto do canvas,
+    # o 3D desenha chão e paredes vazias à esquerda/à frente do conteúdo (a
+    # margem branca do canvas). A área total já é a envolvente (max - min), por
+    # isso a margem não conta para a área -- só aparecia no 3D. Deslocar as
+    # posições -min alinha o 3D com a área reportada.
+    for item in layout_json:
+        item["x"] = round(item["x"] - min_x, 4)
+        item["y"] = round(item["y"] - min_y, 4)
+    for z in zonas_layout:
+        z["x"] = round(z["x"] - min_x, 4)
+        z["y"] = round(z["y"] - min_y, 4)
+
     return {
         "layout": layout_json,
         "zonas_layout": zonas_layout,

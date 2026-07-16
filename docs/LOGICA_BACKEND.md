@@ -160,7 +160,11 @@ item único com altura combinada; ocupa **uma** posição 2D no nível.
 
 ### 4.4 Picking (`altura_picking_m`, `pecas_por_carro`)
 Com o modo picking ativo (`altura_picking_m > 0`):
-- Um nível é **de picking** se a sua base fica abaixo de `altura_picking_m`.
+- `altura_picking_m` é a altura **máxima de alcance** do operador. Um nível é
+  **de picking** se o seu **topo** (base + altura do nível) fica dentro de
+  `altura_picking_m` — o nível inteiro tem de estar ao alcance, por isso conta
+  o limite superior, não a base (ex.: nível de 1.8 m num porta-paletes com
+  picking a 2 m é picking; o 2.º nível, topo a 3.6 m, já não).
 - Por SKU, as primeiras `ceil(pecas_por_carro / pecas_por_unidade)` caixas são
   marcadas "precisam de picking" — têm de ficar em níveis de picking, **sem
   fallback** (antes de desistir, o algoritmo esgota todas as posições e abre
