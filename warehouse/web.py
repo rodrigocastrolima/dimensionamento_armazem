@@ -209,6 +209,25 @@ def gerar(body: GerarRequest):
     racking_w = warehouse_layout.largura_total_m
     racking_h = warehouse_layout.profundidade_total_m
 
+    # Posições iniciais das zonas no canvas: grelha compacta (shelf-packing,
+    # várias linhas) à direita do bloco de racks, em vez de uma única coluna
+    # vertical -- com dezenas de zonas, uma coluna ultrapassa facilmente a
+    # altura visível do canvas e deixa a maioria impossível de ver/arrastar,
+    # ficando por defeito num arranjo muito mais comprido que o necessário.
+    _ZONA_GAP = 0.5
+    _row_max_w = max(racking_w, 15.0)
+    zona_x, zona_y = [], []
+    cx = cy = row_h = 0.0
+    for z in zonas:
+        if cx > 0 and cx + z.comp_m > _row_max_w:
+            cx = 0.0
+            cy += row_h + _ZONA_GAP
+            row_h = 0.0
+        zona_x.append(round(racking_w + 2.0 + cx, 2))
+        zona_y.append(round(0.5 + cy, 2))
+        cx += z.comp_m + _ZONA_GAP
+        row_h = max(row_h, z.larg_m)
+
     return {
         "area_racks_m2": round(dim.area_racks_m2, 2),
         "area_layout_m2": warehouse_layout.area_total_m2,
@@ -278,8 +297,8 @@ def gerar(body: GerarRequest):
                 "categoria": z.categoria,
                 "w": round(z.comp_m, 2),
                 "h": round(z.larg_m, 2),
-                "x": 2.0,
-                "y": 2.0 + i * 3.5,
+                "x": zona_x[i],
+                "y": zona_y[i],
             }
             for i, z in enumerate(zonas)
         ],

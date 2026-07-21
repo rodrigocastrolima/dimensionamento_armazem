@@ -38,6 +38,7 @@ def load_articles(path: Path) -> list[Article]:
     rows = list(ws.iter_rows(values_only=True))
 
     articles = []
+    skus_sem_geometria = []
     for r in rows[1:]:
         # Column positions (0-indexed): fixed order regardless of encoding issues
         # 0: SKU, 1: Descrição, 2: Comprimento_m, 3: Largura_m, 4: Altura_m,
@@ -52,6 +53,16 @@ def load_articles(path: Path) -> list[Article]:
         comp = float(r[2]) if r[2] else 0.0
         larg = float(r[3]) if r[3] else 0.0
         alt = float(r[4]) if r[4] else 0.0
+
+        # Heurística temporária: peças sem geometria na folha (0x0x0) fazem o
+        # boxing cair no fallback de 1 peça/palete (nenhuma caixa normal
+        # "cabe" com dimensão 0), o que explode o nº de unidades e trava o
+        # packer 2D em allocate_to_racks. Assume-se um item pequeno genérico
+        # só para destravar o cálculo -- resultado pouco fiável para estas
+        # peças, a corrigir com a geometria real na folha.
+        if comp <= 0 or larg <= 0 or alt <= 0:
+            comp, larg, alt = 0.05, 0.05, 0.01
+            skus_sem_geometria.append(sku)
 
         peso_val = r[5]
         peso_kg = float(peso_val) if peso_val is not None and str(peso_val) != "#N/A" else 0.0
@@ -88,6 +99,12 @@ def load_articles(path: Path) -> list[Article]:
             classe=classe,
             subtipo_longo=subtipo_longo,
         ))
+
+    if skus_sem_geometria:
+        print(f"AVISO: {len(skus_sem_geometria)} SKU(s) sem geometria (0x0x0) na folha -- "
+              f"a usar dimensão mínima genérica (0.05 x 0.05 x 0.01 m), resultado pouco "
+              f"fiável para estas peças: {', '.join(skus_sem_geometria)}")
+
     return articles
 
 
