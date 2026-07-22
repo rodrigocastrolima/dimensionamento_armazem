@@ -97,12 +97,16 @@ são material 1D de braços) → `LoadType.LONGO`, com `pecas_por_unidade = 1` e
 ### 3.2 Peças por unidade de carga — `pieces_per_box()`
 Modelo de envelope 3D com três cortes:
 
-1. **Plano horizontal** (comp × larg da peça vs. interior da caixa):
-   `floor(dim_caixa / dim_peça)` por eixo, testando as **2 orientações** da
-   peça no plano; fica a melhor. Se a peça é `classe = RIGIDO`, o resultado é
-   multiplicado por `fill_factor_rigido = 0.7` (folgas de manuseio/forma
-   irregular — o floor() assume encaixe perfeito, que não é realista) e
-   arredondado para baixo (mínimo 1).
+1. **Orientação da peça** (coluna `Orientação_permitida`): se permite deitar
+   (tudo menos «Base fixa»/«Não deitar»), testam-se as **3 escolhas de cota
+   vertical** e fica a que mais peças rende — não se força o Z medido como
+   altura. «Base fixa»/«Não deitar» mantêm o Z medido de pé. Para cada escolha
+   de altura, o **plano horizontal** (as outras 2 cotas vs. interior da caixa)
+   usa `floor(dim_caixa / dim_peça)` por eixo, testando as 2 orientações no
+   plano; fica a melhor. O resultado é multiplicado por `fill_factor_plano =
+   0.7` (folgas de manuseio/encaixe imperfeito — o floor() assume encaixe
+   perfeito, que não é realista), arredondado para baixo (mínimo 1). Aplica-se
+   a **todas as classes** (RIGIDO e FLEXIVEL/CONTENTOR).
 2. **Eixo vertical** — `pieces_in_stack()` conforme a coluna Empilhável:
    - `NAO_EMPILHAVEL` → 1 peça de altura, sempre.
    - `EMPILHAVEL` → `floor(altura_int / altura_peça)` (altura cheia somada).
@@ -270,7 +274,7 @@ Excel.
 |---|---|---|
 | `box_strategy` | FEWEST_BOXES | única estratégia implementada |
 | `fator_empilhamento` | 0.3 | altura extra por peça ANINHAVEL |
-| `fill_factor_rigido` | 0.7 | fator de enchimento no plano p/ RIGIDO |
+| `fill_factor_plano` | 0.7 | fator de enchimento no plano (todas as classes) |
 | `long_geometrias` | ("Comprida",) | encaminhamento para LONGO |
 | `long_subtipos_excluidos` | PAINEL_GRANDE, VOLUMOSO_OVERSIZE | não vão a cantilever |
 | `altura_armazem_m` | 0 | pé-direito p/ empilhar módulos (0 = desligado) |

@@ -47,38 +47,68 @@ def pieces_in_stack(altura_disponivel: float, altura_artigo: float,
     return max(n, 1)
 
 
-def pieces_per_box(article: Article, box: BoxType,
-                   fator_empilhamento: float = 0.3,
-                   fill_factor_rigido: float = 1.0) -> int:
-    """Quantas unidades do artigo cabem numa unidade de carga (envelope 3D).
+# Orientações (coluna Orientação_permitida) que TRAVAM o eixo vertical do
+# artigo: a peça não pode ser deitada, logo a altura é sempre a cota Z medida.
+# Qualquer outro valor (incl. "Livre", o default) permite reorientar a peça e
+# escolher a cota vertical que mais rende.
+_ORIENT_TRAVADA = {"não deitar", "nao deitar", "base fixa", "base-fixa"}
 
-    Plano horizontal (comprimento x largura do artigo): fit geométrico simples,
-    floor(dimensão_caixa / dimensão_artigo) por eixo, testando as 2 orientações
-    do artigo nesse plano. Para artigos RIGIDO, o nº teórico de peças no plano
-    é reduzido por fill_factor_rigido (folgas de manuseio/forma irregular —
-    o floor() geométrico assume encaixe perfeito, que não é realista).
-    Eixo vertical (altura): regra de empilhamento linear via pieces_in_stack.
-    Corta pelo peso máximo da caixa.
-    """
-    comp, larg, alt = article.comp_m, article.larg_m, article.alt_m
+
+def pode_deitar(orientacao: str) -> bool:
+    """True se a peça pode ser reorientada (qualquer das 3 cotas como altura)."""
+    return (orientacao or "").strip().lower() not in _ORIENT_TRAVADA
+
+
+def _pecas_no_envelope(article: Article, box: BoxType, vert: float,
+                       plano: tuple[float, float], fator_empilhamento: float,
+                       fill_factor: float) -> int:
+    """Peças no envelope 3D com `vert` como cota vertical e `plano` as duas cotas
+    horizontais: empilhamento na vertical (pieces_in_stack) x envelope 2D no
+    plano (2 orientações, floor por eixo). fill_factor desconta o floor()
+    geométrico (folgas de manuseio/forma, encaixe imperfeito) — mín. 1 peça."""
     Dc, Dl, Da = box.int_comp_m, box.int_larg_m, box.int_alt_m
-
-    n_altura = pieces_in_stack(Da, alt, article.empilhamento, fator_empilhamento)
+    n_altura = pieces_in_stack(Da, vert, article.empilhamento, fator_empilhamento)
     if n_altura == 0:
         return 0
-
-    op1 = math.floor(Dc / comp) * math.floor(Dl / larg) if comp <= Dc and larg <= Dl else 0
-    op2 = math.floor(Dc / larg) * math.floor(Dl / comp) if larg <= Dc and comp <= Dl else 0
+    a, b = plano
+    op1 = math.floor(Dc / a) * math.floor(Dl / b) if a <= Dc and b <= Dl else 0
+    op2 = math.floor(Dc / b) * math.floor(Dl / a) if b <= Dc and a <= Dl else 0
     por_plano_teorico = max(op1, op2)
     if por_plano_teorico == 0:
         return 0
+    por_plano = max(math.floor(por_plano_teorico * fill_factor), 1)
+    return por_plano * n_altura
 
-    if article.classe == "RIGIDO":
-        por_plano = max(math.floor(por_plano_teorico * fill_factor_rigido), 1)
+
+def pieces_per_box(article: Article, box: BoxType,
+                   fator_empilhamento: float = 0.3,
+                   fill_factor: float = 1.0) -> int:
+    """Quantas unidades do artigo cabem numa unidade de carga (envelope 3D).
+
+    Orientação do artigo (coluna Orientação_permitida): se permite deitar (tudo
+    menos «Base fixa»/«Não deitar»), testam-se as 3 escolhas de cota vertical e
+    fica a que mais peças rende — não se força o Z medido como altura. Caso
+    contrário a altura é sempre o Z medido (peça de pé). Em cada escolha:
+    empilhamento vertical (pieces_in_stack) x envelope 2D no plano (2 orientações).
+    fill_factor desconta o encaixe geométrico perfeito (folgas de manuseio/forma,
+    encaixe-de-gume ao deitar peças finas), aplicado a TODAS as classes.
+    Corta pelo peso máximo da caixa.
+    """
+    dims = (article.comp_m, article.larg_m, article.alt_m)
+    if pode_deitar(article.orientacao):
+        por_geometria = max(
+            _pecas_no_envelope(article, box, dims[iv],
+                               tuple(dims[j] for j in range(3) if j != iv),
+                               fator_empilhamento, fill_factor)
+            for iv in range(3)
+        )
     else:
-        por_plano = por_plano_teorico
+        por_geometria = _pecas_no_envelope(
+            article, box, article.alt_m, (article.comp_m, article.larg_m),
+            fator_empilhamento, fill_factor)
 
-    por_geometria = por_plano * n_altura
+    if por_geometria == 0:
+        return 0
 
     if article.peso_kg > 0:
         por_peso = math.floor(box.peso_max_kg / article.peso_kg)
@@ -116,7 +146,7 @@ def choose_load(article: Article, catalogo: list[BoxType],
         box = catalogo_idx.get(load_type)
         if box is None:
             continue
-        ppu = pieces_per_box(article, box, cfg.fator_empilhamento, cfg.fill_factor_rigido)
+        ppu = pieces_per_box(article, box, cfg.fator_empilhamento, cfg.fill_factor_plano)
         if ppu <= 0:
             continue
         num_unidades = math.ceil(article.stock_max_un / ppu)

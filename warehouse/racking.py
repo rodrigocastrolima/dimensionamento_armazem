@@ -184,13 +184,18 @@ class _ItemParaColocar:
     num_boxes_in_stack: int = 1  # quantas caixas físicas estão empilhadas neste item
 
 
-def _cabe_no_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -> tuple[float, float] | None:
-    """Testa (via rectpack, batch com as caixas já lá + a nova) se item cabe
-    no nível. Devolve (x_m, y_m) da nova caixa se couber, None caso contrário.
+def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -> dict | None:
+    """Testa (via rectpack, batch com as caixas já lá + a nova) se item cabe no
+    nível. Devolve a solução completa {rid -> rect colocado} se couber tudo
+    (rid = índice int da caixa existente, ou "novo"); None caso contrário.
 
-    rectpack não é incremental: para garantir que as caixas já confirmadas
-    continuam todas colocadas, corre-se o packer com TODAS (existentes + nova)
-    e só se aceita se ele conseguir colocar o lote inteiro.
+    rectpack não é incremental: corre-se o packer com TODAS as caixas
+    (existentes + nova) e só se aceita se ele colocar o lote inteiro. Como o
+    packer pode REORDENAR e RODAR as caixas (rotation=True), devolve-se a
+    solução inteira -- o chamador regrava a footprint de cada caixa (posição E
+    dimensão colocadas), para o desenho 3D ficar fiel ao packing real. Sem isto,
+    uma caixa rodada pelo packer era gravada na orientação original e desenhada
+    a sair da rack / a sobrepor-se às vizinhas.
     """
     if item.alt_m > rack.alt_nivel_m + 1e-9:
         return None
@@ -198,7 +203,7 @@ def _cabe_no_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -> 
     packer = newPacker(mode=PackingMode.Offline, rotation=True)
     packer.add_bin(rack.larg_m, rack.prof_m)
     for i, c in enumerate(nivel.caixas):
-        packer.add_rect(c.comp_m, c.larg_m, rid=("existente", i))
+        packer.add_rect(c.comp_m, c.larg_m, rid=i)
     packer.add_rect(item.comp_m, item.larg_m, rid="novo")
     packer.pack()
 
@@ -210,8 +215,7 @@ def _cabe_no_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -> 
     if len(colocados) != len(nivel.caixas) + 1 or "novo" not in colocados:
         return None
 
-    novo = colocados["novo"]
-    return (novo.x, novo.y)
+    return colocados
 
 
 def _abrir_bloco(rack: RackType, bloco_idx: int, altura_picking_m: float) -> BlocoRack:
@@ -229,14 +233,26 @@ def _abrir_bloco(rack: RackType, bloco_idx: int, altura_picking_m: float) -> Blo
     return BlocoRack(bloco_idx=bloco_idx, niveis=niveis)
 
 
-def _colocar(nivel: NivelRack, x: float, y: float, item: _ItemParaColocar) -> None:
-    nivel.caixas.append(CaixaColocada(
+def _commit_nivel(nivel: NivelRack, item: _ItemParaColocar, solucao: dict) -> None:
+    """Aplica a solução do rectpack ao nível: cada caixa (existentes + novo) fica
+    com a footprint EXACTA como foi colocada -- comp_m/larg_m = largura/altura do
+    retângulo colocado, já com a rotação do packer aplicada. As existentes são
+    atualizadas in-place (mesma metadata, nova posição/orientação)."""
+    novas: list[CaixaColocada] = []
+    for i, c in enumerate(nivel.caixas):
+        r = solucao[i]
+        c.x_m, c.y_m = round(r.x, 4), round(r.y, 4)
+        c.comp_m, c.larg_m = round(r.width, 4), round(r.height, 4)
+        novas.append(c)
+    r = solucao["novo"]
+    novas.append(CaixaColocada(
         sku=item.sku, descricao=item.descricao, load_type=item.load_type,
-        x_m=round(x, 4), y_m=round(y, 4),
-        comp_m=item.comp_m, larg_m=item.larg_m, alt_m=item.alt_m,
+        x_m=round(r.x, 4), y_m=round(r.y, 4),
+        comp_m=round(r.width, 4), larg_m=round(r.height, 4), alt_m=item.alt_m,
         pecas_nesta_caixa=item.pecas_nesta_caixa, eh_picking=nivel.eh_picking,
         num_boxes_in_stack=item.num_boxes_in_stack,
     ))
+    nivel.caixas = novas
 
 
 def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemParaColocar,
@@ -260,9 +276,9 @@ def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemPara
             (niveis_alvo if nivel.eh_picking == preferir_picking else niveis_outros).append(nivel)
 
     for nivel in niveis_alvo:
-        xy = _cabe_no_nivel(nivel, rack, item)
-        if xy is not None:
-            _colocar(nivel, *xy, item)
+        sol = _empacotar_nivel(nivel, rack, item)
+        if sol is not None:
+            _commit_nivel(nivel, item, sol)
             return True
 
     if pos.num_blocos < max_blocos:
@@ -275,9 +291,9 @@ def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemPara
         for nivel in novo_bloco.niveis:
             if nivel.eh_picking != preferir_picking:
                 continue
-            xy = _cabe_no_nivel(nivel, rack, item)
-            if xy is not None:
-                _colocar(nivel, *xy, item)
+            sol = _empacotar_nivel(nivel, rack, item)
+            if sol is not None:
+                _commit_nivel(nivel, item, sol)
                 pos.blocos.append(novo_bloco)
                 return True
         # bloco novo não deu encaixe na zona preferida -- tentar a outra,
@@ -286,9 +302,9 @@ def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemPara
             for nivel in novo_bloco.niveis:
                 if nivel.eh_picking == preferir_picking:
                     continue
-                xy = _cabe_no_nivel(nivel, rack, item)
-                if xy is not None:
-                    _colocar(nivel, *xy, item)
+                sol = _empacotar_nivel(nivel, rack, item)
+                if sol is not None:
+                    _commit_nivel(nivel, item, sol)
                     pos.blocos.append(novo_bloco)
                     return True
         # nada entrou no módulo novo -> descartá-lo (não fica vazio na posição)
@@ -297,9 +313,9 @@ def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemPara
         return False
 
     for nivel in niveis_outros:
-        xy = _cabe_no_nivel(nivel, rack, item)
-        if xy is not None:
-            _colocar(nivel, *xy, item)
+        sol = _empacotar_nivel(nivel, rack, item)
+        if sol is not None:
+            _commit_nivel(nivel, item, sol)
             return True
 
     return False

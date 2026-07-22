@@ -52,6 +52,13 @@ vêm com níveis e altura por nível definidos). Não reintroduzir.
 - PALLET é entrada do catálogo «Caixas» (não dataclass separado).
 - `alt_nivel_m` = altura por nível.
 - Convenção de unidades: metros / m³.
+- **Orientação do artigo** passou a ser usada no boxing (`pieces_per_box`):
+  «Livre» (default, ~96% dos SKUs) permite qualquer das 3 cotas como altura
+  (`boxing.pode_deitar`); «Base fixa»/«Não deitar» travam o Z medido de pé.
+  Reduz paletes (~−31% só por densidade). O fator de enchimento do plano
+  (`fill_factor_plano`, ex-`fill_factor_rigido`) aplica-se agora a TODAS as
+  classes (era só RIGIDO) — cobre o encaixe-de-gume irreal de peças finas
+  deitadas.
 - **Zona** (área fora dos racks: receção, expedição, equipamento, staging, ...)
   é input direto (`Comp_m × Larg_m`, folha «Zonas», sem SKU/stock associado) —
   não replica as fórmulas de fluxo de receção de uma folha de referência
