@@ -3,3 +3,8 @@ __pycache__/
 .venv/
 dados/resultados.xlsx
 ~$*
+
+# Build Unity de origem do modelo extraído (511 MB) — não versionar
+PC.zip
+# Modelos 3D pesados extraídos/abandonados
+warehouse/static/models/
