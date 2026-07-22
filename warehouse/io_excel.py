@@ -374,7 +374,7 @@ def write_results(path: Path,
 
     # ------------------------------------------------------------------ Detalhe
     ws_det = wb.create_sheet("Detalhe")
-    hdr_row(ws_det, ["Rack nº", "Tipologia", "SKU", "Descrição", "Tipo de carga", "Nº de unidades"])
+    hdr_row(ws_det, ["Rack nº", "Tipologia", "SKU", "Descrição", "Tipo de carga", "Peças nesta caixa/palete"])
     ws_det.freeze_panes = "A2"
 
     fill_alt = PatternFill("solid", fgColor="DCE6F1")
@@ -388,7 +388,7 @@ def write_results(path: Path,
             ultimo_rack = rack_numero
         row = [rack_numero, s.rack_tipologia, s.sku, s.descricao,
                s.load_type.value if hasattr(s.load_type, "value") else s.load_type,
-               s.num_unidades]
+               s.pecas_nesta_caixa]
         ws_det.append(row)
         if usar_fill:
             for col in range(1, 7):

@@ -14,7 +14,7 @@ from .config import Config
 
 def _flatten_para_excel(posicoes) -> list:
     """Achata PosicaoChao -> linhas simples (rack_numero, rack_tipologia, sku,
-    descricao, load_type, num_unidades) para a sheet 'Detalhe' do Excel.
+    descricao, load_type, pecas_nesta_caixa) para a sheet 'Detalhe' do Excel.
     rack_numero é sintético: 1 por módulo físico, sequencial por tipologia."""
     from types import SimpleNamespace
     linhas = []
@@ -27,7 +27,7 @@ def _flatten_para_excel(posicoes) -> list:
                     linhas.append(SimpleNamespace(
                         rack_numero=rack_numero, rack_tipologia=pos.rack_nome,
                         sku=caixa.sku, descricao=caixa.descricao,
-                        load_type=caixa.load_type, num_unidades=1,
+                        load_type=caixa.load_type, pecas_nesta_caixa=caixa.pecas_nesta_caixa,
                     ))
     return linhas
 
