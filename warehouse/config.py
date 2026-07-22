@@ -31,11 +31,13 @@ class Config:
     #                     fator_empilhamento x altura_artigo (encaixa/aninha).
     fator_empilhamento: float = 0.3
 
-    # Fator de enchimento real no plano horizontal (comp x larg) para artigos
-    # RIGIDO (classe), substituindo o floor() teórico de encaixe perfeito.
-    # Folgas de manuseio/forma irregular reduzem o nº de peças por nível face
-    # ao máximo geométrico. Não se aplica a FLEXIVEL/CONTENTOR (já comprimível).
-    fill_factor_rigido: float = 0.7
+    # Fator de enchimento real no plano horizontal (comp x larg), substituindo o
+    # floor() teórico de encaixe perfeito. Folgas de manuseio/forma irregular e
+    # encaixe imperfeito reduzem o nº de peças por nível face ao máximo
+    # geométrico. Aplicado a TODAS as classes (RIGIDO e FLEXIVEL/CONTENTOR) —
+    # cobre também o encaixe-de-gume irreal de peças finas postas ao alto pela
+    # rotação de orientação (ver boxing.pieces_per_box).
+    fill_factor_plano: float = 0.7
 
     # Encaminhamento para LONGO (cantilever): geometrias que não vão a caixa
     long_geometrias: tuple = ("Comprida",)

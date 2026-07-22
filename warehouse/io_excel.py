@@ -258,8 +258,8 @@ def write_results(path: Path,
     texto(ws_log, "Restantes: best-fit entre S/M/L/PALLET — escolhe a caixa que minimiza o nº total de", 8)
     texto(ws_log, "unidades de carga para o stock máximo (não é 'a 1ª onde cabe', testa todas as opções).", 9)
     texto(ws_log, "Plano horizontal (comp x larg): envelope 2D, testa as 2 orientações do artigo no plano.", 10)
-    texto(ws_log, "Artigos Classe=RIGIDO: nº de peças no plano reduzido por fator de enchimento (folgas de", 11)
-    texto(ws_log, "manuseio/forma irregular) — não assume encaixe geométrico perfeito como FLEXIVEL/CONTENTOR.", 12)
+    texto(ws_log, "Orientação 'Livre' (a maioria): testa ainda as 3 cotas como altura, fica com a que rende mais;", 11)
+    texto(ws_log, "'Base fixa'/'Não deitar' mantêm o Z medido. Fator de enchimento (encaixe imperfeito): todas as classes.", 12)
     texto(ws_log, "Eixo vertical (altura): regra de empilhamento — ver 'Parâmetros utilizados' abaixo.", 13)
     texto(ws_log, "Corte adicional pelo peso máximo da caixa (peso_max_caixa / peso_artigo).", 14)
     texto(ws_log, "Output: tipo de carga por SKU + nº de unidades para cobrir o stock máximo (teto).", 15)
@@ -298,9 +298,10 @@ def write_results(path: Path,
     titulo(ws_log, "Parâmetros utilizados", 45)
     par(ws_log, "Estratégia de escolha de caixa", "Best-fit: minimiza nº total de unidades de carga", 46)
     par(ws_log, "Atribuição de rack", "Por eficiência: menor m² de rack por unidade (entre os compatíveis)", 47)
-    par(ws_log, "Packing plano horizontal", "Envelope 2D (2 orientações, melhor escolhida)", 48)
-    par(ws_log, "Fator de enchimento (Classe=RIGIDO)",
-        "floor(peças_plano_teórico × 70%) — folgas de manuseio/forma irregular", 49)
+    par(ws_log, "Packing plano horizontal",
+        "Envelope 2D; orientação 'Livre' roda nos 3 eixos (melhor escolhida)", 48)
+    par(ws_log, "Fator de enchimento (todas as classes)",
+        "floor(peças_plano_teórico × 70%) — folgas de manuseio/encaixe imperfeito", 49)
     par(ws_log, "Packing por nível de rack", "Envelope 2D (2 orientações, melhor escolhida)", 50)
     par(ws_log, "Capacidade cantilever", "floor(comp_braço / comp_max_LONGO) × níveis", 51)
     par(ws_log, "Empilhamento NAO_EMPILHAVEL", "1 peça de altura, nunca empilha", 52)

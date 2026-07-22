@@ -79,8 +79,60 @@ def test_sem_modulo_fantasma_picking():
     assert pos.num_blocos == 1
 
 
+def test_pode_deitar():
+    """Base fixa / Não deitar travam o eixo vertical; tudo o resto é livre."""
+    from warehouse import boxing
+    assert not boxing.pode_deitar("Base fixa")
+    assert not boxing.pode_deitar("Não deitar")
+    assert not boxing.pode_deitar("nao deitar")
+    assert boxing.pode_deitar("Livre")
+    assert boxing.pode_deitar("")        # default -> livre
+    assert boxing.pode_deitar(None)      # em falta -> livre
+
+
+def test_orientacao_livre_deita_peca():
+    """Peça comprida (1.3 m) não assenta deitada na footprint da palete
+    (1.2 x 0.8), mas de pé cabe na altura (1.5 m). Com 'Base fixa' (Z medido =
+    0.3 m como altura) não cabe -> 0. Com 'Livre' o packer põe a cota de 1.3 m
+    na vertical e encaixa muitas peças no plano fino."""
+    from warehouse import boxing
+    from warehouse.models import Article, BoxType, Empilhamento
+    pallet = BoxType(nome=LoadType.PALLET, int_comp_m=1.2, int_larg_m=0.8, int_alt_m=1.5,
+                     ext_comp_m=1.2, ext_larg_m=0.8, ext_alt_m=1.644, peso_max_kg=1000.0)
+    base = dict(descricao="", comp_m=1.3, larg_m=0.05, alt_m=0.3, peso_kg=0.0,
+                stock_max_un=100, pecas_por_carro=1, empilhamento=Empilhamento.EMPILHAVEL)
+    travado = Article(sku="T", orientacao="Base fixa", **base)
+    livre = Article(sku="L", orientacao="Livre", **base)
+
+    assert boxing.pieces_per_box(travado, pallet) == 0        # 1.3 m não assenta
+    assert boxing.pieces_per_box(livre, pallet) == 64         # de pé: 0.05x0.3 x64
+    assert boxing.pieces_per_box(livre, pallet) > boxing.pieces_per_box(travado, pallet)
+
+
+def test_caixa_rodada_fica_gravada_na_orientacao_colocada():
+    """Regressão do 3D: uma caixa que só cabe RODADA (a cota maior não cabe na
+    profundidade da rack) tem de ficar gravada já na footprint colocada
+    (comp_m/larg_m = retângulo do packer). Antes gravava-se a orientação de
+    catálogo, e o viewer desenhava-a a sair da rack / a sobrepor-se às vizinhas."""
+    from warehouse.racking import _ItemParaColocar, _abrir_bloco, _tentar_colocar_em_posicao
+    r = RackType("R", larg_m=1.0, prof_m=0.3, alt_nivel_m=0.5, niveis=1)
+    pos = PosicaoChao(rack_nome="R", indice=0)
+    pos.blocos.append(_abrir_bloco(r, 0, altura_picking_m=0.0))
+    # 0.28 x 0.9: 0.9 > prof(0.3) -> só cabe com o 0.9 ao longo da larg (1.0)
+    item = _ItemParaColocar("A", "", LoadType.S, 0.28, 0.9, 0.4, 1, False)
+    assert _tentar_colocar_em_posicao(pos, r, item, 0.0, max_blocos=1,
+                                      preferir_picking=False, permitir_fallback=False)
+    c = pos.blocos[0].niveis[0].caixas[0]
+    # footprint colocada cabe na rack (larg x prof), na orientação do packer
+    assert c.x_m + c.comp_m <= r.larg_m + 1e-6
+    assert c.y_m + c.larg_m <= r.prof_m + 1e-6
+    assert abs(c.comp_m - 0.9) < 1e-6 and abs(c.larg_m - 0.28) < 1e-6
+
+
 if __name__ == "__main__":
     test_longo_existe(); test_footprint(); test_floor_area()
     test_zona_area(); test_resumo_area_total()
     test_picking_nivel_pelo_topo(); test_sem_modulo_fantasma_picking()
+    test_pode_deitar(); test_orientacao_livre_deita_peca()
+    test_caixa_rodada_fica_gravada_na_orientacao_colocada()
     print("smoke OK")

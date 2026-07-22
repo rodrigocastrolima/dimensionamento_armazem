@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pré-visualização — BEN (modelo procedural)</title>
+<style>
+  html,body{margin:0;height:100%;background:#1a1d21;color:#dfe3e8;font:14px/1.5 system-ui,sans-serif;overflow:hidden}
+  #c{width:100vw;height:100vh;display:block}
+  #hud{position:fixed;top:12px;left:12px;background:rgba(20,23,27,.82);border:1px solid #333;border-radius:8px;padding:10px 14px}
+  #hud h1{font-size:14px;margin:0 0 4px}
+  #hud p{margin:2px 0;color:#aeb4bc;font-size:12px}
+  .btn{margin-top:8px;background:#2a2f36;border:1px solid #3a4048;color:#dfe3e8;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <h1>BEN — modelo procedural</h1>
+  <p id="info">corpo prateado · cabine/tejadilho pretos · rodas aero grandes</p>
+  <p style="color:#8c929a">Arrasta para rodar · scroll para zoom.</p>
+  <button class="btn" id="rot">⏸ parar rotação</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { criarCarro } from "./carro.js";   // MESMA fonte que o index.html
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d21);
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 200);
+camera.position.set(3.2, 1.7, 3.4);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.target.set(0, 0.75, 0);
+
+scene.add(new THREE.HemisphereLight(0xbfd0e2, 0x4a463e, 0.6));
+const key = new THREE.DirectionalLight(0xfff2dd, 1.5); key.position.set(5, 9, 6); key.castShadow = true; scene.add(key);
+const fill = new THREE.DirectionalLight(0x9fb4d0, 0.5); fill.position.set(-6, 4, -5); scene.add(fill);
+
+const chao = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStandardMaterial({ color: 0x35383c, roughness: 0.98 }));
+chao.rotation.x = -Math.PI / 2; chao.receiveShadow = true; scene.add(chao);
+scene.add(new THREE.GridHelper(20, 20, 0x3a4048, 0x2a2f36));
+
+const carro = criarCarro();
+scene.add(carro);
+
+let autoRotate = true;
+document.getElementById("rot").onclick = (e) => { autoRotate = !autoRotate; e.target.textContent = autoRotate ? "⏸ parar rotação" : "▶ rodar"; };
+
+function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+addEventListener("resize", resize); resize();
+
+(function loop() {
+  requestAnimationFrame(loop);
+  if (autoRotate) carro.rotation.y += 0.006;
+  controls.update(); renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>
