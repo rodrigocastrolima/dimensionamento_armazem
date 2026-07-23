@@ -191,6 +191,20 @@
     <button id="btn-rodar-prop">⟳ Rodar selecionado</button>
     <button id="btn-del-prop">✕ Remover selecionado</button>
     <span class="dica" style="margin:0">Adiciona os que quiseres (repetíveis) e arrasta-os com o rato; clica para selecionar.</span>
+    <span style="flex:1"></span>
+    <label style="font-size:13px;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
+      <input type="checkbox" id="ops-ativo" checked> Operadores
+    </label>
+    <label style="font-size:13px;" title="Operadores a pé — só fazem picking em Prateleira Leve">
+      A pé <input id="ops-n" type="number" min="0" max="20" step="1" value="4" style="width:52px">
+    </label>
+    <label style="font-size:13px;" title="Operadores com porta-paletes — acedem a porta-paletes e cantilever">
+      Porta-paletes <input id="ops-n-porta" type="number" min="0" max="10" step="1" value="2" style="width:52px">
+    </label>
+    <label style="font-size:13px;">Velocidade
+      <input id="ops-vel" type="range" min="0" max="3" step="0.05" value="1" style="width:120px;vertical-align:middle">
+      <span id="ops-vel-val" style="color:#9aa;display:inline-block;width:34px">1.0×</span>
+    </label>
   </div>
   <div class="dica">Resultado do «Renderizar layout 3D» (separador Arranjar Layout).
     Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
@@ -215,6 +229,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import { criarCarro } from "./carro.js";
+import { criarOperadores } from "./operador.js";
 
 const API = "/api";
 
@@ -443,6 +458,7 @@ function initViewer() {
   document.getElementById("btn-rodar-prop").addEventListener("click", () => {
     if (propSel) propSel.rotation.y += Math.PI / 4;
   });
+  ligarControlosOperadores();
   document.getElementById("btn-del-prop").addEventListener("click", () => {
     if (!propSel) return;
     scene.remove(propSel);
@@ -484,8 +500,49 @@ function initViewer() {
   animate();
 }
 
+// Operadores de picking (operador.js): animados por delta de tempo real, para
+// a velocidade não depender do framerate. _opsCtx guarda os dados do último
+// render, para poder recriar quando se muda o nº de operadores.
+let operadores = null;
+let _opsCtx = null;
+const _clock = new THREE.Clock();
+
+function recriarOperadores() {
+  if (operadores) { operadores.dispose(); operadores = null; }
+  if (!_opsCtx) return;
+  const ativo = document.getElementById("ops-ativo")?.checked ?? true;
+  const n = Math.max(0, Math.min(20, +(document.getElementById("ops-n")?.value ?? 4)));
+  const nPorta = Math.max(0, Math.min(10, +(document.getElementById("ops-n-porta")?.value ?? 2)));
+  const vel = +(document.getElementById("ops-vel")?.value ?? 1);
+  if (!ativo || (n === 0 && nPorta === 0)) return;
+  operadores = criarOperadores(scene, _opsCtx.layout, _opsCtx.zonas, {
+    n, nPorta,
+    destino: "7 - Zona de Espera de Transporte para BDL",
+    corredorPorRack: _opsCtx.corredorPorRack,
+    velocidade: vel,
+  });
+}
+
+function ligarControlosOperadores() {
+  const cb = document.getElementById("ops-ativo");
+  const num = document.getElementById("ops-n");
+  const vel = document.getElementById("ops-vel");
+  const velVal = document.getElementById("ops-vel-val");
+  // ativar/nº recriam; velocidade é aplicada a quente (sem recriar)
+  cb?.addEventListener("change", recriarOperadores);
+  num?.addEventListener("change", recriarOperadores);
+  document.getElementById("ops-n-porta")?.addEventListener("change", recriarOperadores);
+  vel?.addEventListener("input", () => {
+    const v = +vel.value;
+    if (velVal) velVal.textContent = v.toFixed(1) + "×";
+    operadores?.setVelocidade(v);
+  });
+}
+
 function animate() {
   requestAnimationFrame(animate);
+  const dt = _clock.getDelta();
+  if (operadores) operadores.update(dt);
   controls.update();
   renderer.render(scene, camera);
   labelRenderer.render(scene, camera);
@@ -496,6 +553,7 @@ let zonaLabelEls = [];
 function limparRacks() {
   zonaLabelEls.forEach(el => el.remove());
   zonaLabelEls = [];
+  if (operadores) { operadores.dispose(); operadores = null; }
   [...scene.children].forEach(obj => {
     if (obj.userData.isRackGroup || obj.userData.isZonaGroup || obj.userData.isParedes) scene.remove(obj);
   });
@@ -1605,6 +1663,12 @@ function inicializarCanvas() {
       desenharLayout(data.layout);
       desenharZonas(data.zonas_layout);
       ajustarCenaECamera(data.layout, data.zonas_layout);
+      // operadores a fazer picking nos corredores reais -> entregam na zona 7
+      const corredorPorRack = {};
+      (await (await fetch("/api/racks")).json())
+        .forEach(r => { corredorPorRack[r.nome] = r.corredor_m || 2.5; });
+      _opsCtx = { layout: data.layout, zonas: data.zonas_layout, corredorPorRack };
+      recriarOperadores();
       const tipos = [...new Set(data.layout.flatMap(r => r.load_types))];
       desenharLegenda(tipos, data.zonas_layout.map(z => z.nome));
 
