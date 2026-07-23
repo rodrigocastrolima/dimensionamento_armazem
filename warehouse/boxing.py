@@ -118,6 +118,32 @@ def pieces_per_box(article: Article, box: BoxType,
     return min(por_geometria, por_peso)
 
 
+def cabe_em_cantilever(article: Article, cfg: Config) -> bool:
+    """True se o artigo é MESMO material de cantilever.
+
+    Ser "Comprida" na folha não chega: a cantilever guarda material 1D
+    (perfis, tubos, vedantes) que assenta atravessado nos braços. Peças
+    volumosas -- altas ou largas -- nao cabem no nivel nem se apoiam bem, e
+    antes eram aceites na mesma, ficando com capacidade 0 (nao dimensionadas)
+    ou a ocupar um nivel inteiro cada.
+
+    Criterio geometrico, com as cotas ordenadas:
+      - a MENOR cota tem de caber na altura util do nivel (senao nao entra);
+      - a cota MEDIA tem de caber na profundidade do braco (apoio);
+      - e a peca tem de ser esbelta: a maior cota bastante maior que a media
+        (razao de esbelteza), senao e um volume, nao um perfil.
+    """
+    d = sorted((article.comp_m, article.larg_m, article.alt_m))
+    curta, media, longa = d
+    if longa <= 0:
+        return False
+    if curta > cfg.cantilever_alt_nivel_m + 1e-9:
+        return False
+    if media > cfg.cantilever_braco_m + 1e-9:
+        return False
+    return (longa / media) >= cfg.cantilever_esbelteza_min if media > 0 else True
+
+
 def choose_load(article: Article, catalogo: list[BoxType],
                 cfg: Config) -> tuple[LoadType, int]:
     """Decide o tipo de carga e devolve (LoadType, peças_por_unidade).
@@ -132,7 +158,8 @@ def choose_load(article: Article, catalogo: list[BoxType],
        Se não couber em nenhuma -> PALLET (1 peça/palete, mesmo a 0).
     """
     if (article.geometria in cfg.long_geometrias
-            and article.subtipo_longo not in cfg.long_subtipos_excluidos):
+            and article.subtipo_longo not in cfg.long_subtipos_excluidos
+            and cabe_em_cantilever(article, cfg)):
         return LoadType.LONGO, 1
 
     catalogo_idx = {b.nome: b for b in catalogo}
@@ -196,3 +223,28 @@ def plan_box(article: Article, catalogo: list[BoxType],
 def plan_all(articles: list[Article], catalogo: list[BoxType],
              cfg: Config) -> list[BoxAssignment]:
     return [plan_box(a, catalogo, cfg) for a in articles]
+
+
+def avisos_cantilever(articles: list[Article], cfg: Config) -> list[str]:
+    """SKUs marcados «Comprida» que o filtro geométrico recusou na cantilever.
+
+    Não é um erro do cálculo: é classificação da folha que não bate certo com
+    a geometria (peças volumosas marcadas como compridas). Ficam no best-fit
+    normal, mas convém serem revistos no master data.
+    """
+    recusados = [
+        a for a in articles
+        if a.geometria in cfg.long_geometrias
+        and a.subtipo_longo not in cfg.long_subtipos_excluidos
+        and not cabe_em_cantilever(a, cfg)
+    ]
+    if not recusados:
+        return []
+    amostra = ", ".join(f"{a.sku} ({a.comp_m:.2f}x{a.larg_m:.2f}x{a.alt_m:.2f})"
+                        for a in recusados[:4])
+    return [
+        f"{len(recusados)} SKU(s) marcados 'Comprida' NAO sao material de "
+        f"cantilever (nao cabem no nivel/braco ou nao sao esbeltos) -- "
+        f"encaminhados para o best-fit normal. Rever Geometria/Subtipo_LONGO "
+        f"no master data: {amostra}{' ...' if len(recusados) > 4 else ''}"
+    ]

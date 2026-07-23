@@ -47,6 +47,14 @@ class Config:
     # (S/M/L/PALLET) em vez de ir para a cantilever.
     long_subtipos_excluidos: tuple = ("PAINEL_GRANDE", "VOLUMOSO_OVERSIZE")
 
+    # Filtro geométrico de admissão à cantilever (boxing.cabe_em_cantilever).
+    # Estar marcado "Comprida" na folha não chega: peças volumosas não cabem no
+    # nível nem se apoiam nos braços. Devem espelhar a tipologia real de
+    # cantilever da folha «Racks» (por defeito: nível 0.6 m, braço 0.6 m).
+    cantilever_alt_nivel_m: float = 0.6     # menor cota tem de caber aqui
+    cantilever_braco_m: float = 0.6         # cota média tem de caber no apoio
+    cantilever_esbelteza_min: float = 3.0   # maior/média: perfil, não volume
+
     # Passo 3 — área  (A CONFIRMAR)
     aisle_factor: float = 0.6        # corredores como % da footprint dos racks
 

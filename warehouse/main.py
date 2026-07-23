@@ -51,13 +51,14 @@ def run(cfg: Config) -> None:
     )
     requirements, avisos_estimativa = racking.racks_needed(assignments, rack_types,  # Passo 2 (resumo)
                                         catalogo_por_tipo, cfg, comp_max_longo,
-                                        cfg.altura_picking_m)
+                                        cfg.altura_picking_m, articles)
 
     posicoes, avisos_alocacao = racking.allocate_to_racks(
         assignments, requirements, rack_types, catalogo_por_tipo, articles, comp_max_longo,
-        cfg.altura_picking_m, cfg.altura_armazem_m)
+        cfg.altura_picking_m, cfg.altura_armazem_m, cfg)
 
-    avisos = avisos_estimativa + avisos_alocacao
+    avisos = (boxing.avisos_cantilever(articles, cfg)
+              + avisos_estimativa + avisos_alocacao)
 
     dim = area.floor_area(posicoes, rack_by_name)                             # Passo 3
     zonas = io_excel.load_zones(cfg.master_data)

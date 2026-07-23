@@ -4,7 +4,8 @@ __pycache__/
 dados/resultados.xlsx
 ~$*
 
-# Build Unity de origem do modelo extraído (511 MB) — não versionar
-PC.zip
+# Fontes 3D pesadas (CAD/render) — não versionar; só o GLB otimizado entra
+BEN 3D/
+*.fbx
 # Modelos 3D pesados extraídos/abandonados
 warehouse/static/models/

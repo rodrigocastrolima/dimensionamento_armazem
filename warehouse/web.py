@@ -179,13 +179,14 @@ def gerar(body: GerarRequest):
     )
     requirements, avisos_estimativa = racking.racks_needed(
         assignments, rack_types, catalogo_por_tipo, local_cfg, comp_max_longo,
-        local_cfg.altura_picking_m)
+        local_cfg.altura_picking_m, articles)
 
     posicoes, avisos_alocacao = racking.allocate_to_racks(
         assignments, requirements, rack_types, catalogo_por_tipo, articles, comp_max_longo,
-        local_cfg.altura_picking_m, local_cfg.altura_armazem_m)
+        local_cfg.altura_picking_m, local_cfg.altura_armazem_m, local_cfg)
 
-    avisos = avisos_estimativa + avisos_alocacao
+    avisos = (boxing.avisos_cantilever(articles, local_cfg)
+              + avisos_estimativa + avisos_alocacao)
 
     dim = area.floor_area(posicoes, rack_by_name)
     zonas = io_excel.load_zones(cfg.master_data)
@@ -340,10 +341,11 @@ def render_layout(body: ArrangeRequest):
     )
     requirements, _ = racking.racks_needed(
         assignments, rack_types, catalogo_por_tipo, local_cfg, comp_max_longo,
-        local_cfg.altura_picking_m)
+        local_cfg.altura_picking_m, articles)
     posicoes, _ = racking.allocate_to_racks(
         assignments, requirements, rack_types, catalogo_por_tipo, articles,
-        comp_max_longo, local_cfg.altura_picking_m, local_cfg.altura_armazem_m)
+        comp_max_longo, local_cfg.altura_picking_m, local_cfg.altura_armazem_m,
+        local_cfg)
     dim = area.floor_area(posicoes, rack_by_name)
 
     # layout interno dos racks (sem zonas: começa em y=0), deslocado para a

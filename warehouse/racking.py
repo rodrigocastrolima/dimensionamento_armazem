@@ -18,6 +18,7 @@ from rectpack import newPacker, PackingMode
 from .models import (RackType, BoxType, LoadType,
                      BoxAssignment, RackRequirement, Article,
                      PosicaoChao, BlocoRack, NivelRack, CaixaColocada)
+from .boxing import pieces_in_stack
 from .config import Config
 
 
@@ -40,16 +41,73 @@ def rack_capacity(rack: RackType, box: BoxType) -> int:
     return por_nivel * rack.niveis
 
 
-def rack_capacity_long(rack: RackType, comp_artigo_m: float) -> int:
-    """Capacidade de uma cantilever para material LONGO.
+def rack_capacity_long(rack: RackType, comp_artigo_m: float,
+                       larg_artigo_m: float = 0.0, alt_artigo_m: float = 0.0,
+                       empilhamento=None, fator_empilhamento: float = 0.3,
+                       fill_factor: float = 1.0) -> int:
+    """Capacidade de uma cantilever para material LONGO, por SKU.
 
-    Itens por braço = floor(comp_braco_m / comp_artigo_m).
-    Capacidade total = itens por braço x niveis.
+    O nível da cantilever é tratado como um VOLUME de arrumação -- "a própria
+    rack é a caixa", sem caixa física:
+
+        por_nivel = floor(braco / comp) x floor(prof / larg) x n_empilhado
+        capacidade = por_nivel x niveis
+
+    Antes contava-se 1 peça por braço (floor(braco/comp) x niveis), ignorando
+    largura e altura: uma peça de 0.13 m ocupava o mesmo que um perfil de
+    2.47 m, e o material nunca era arrumado lado a lado nem empilhado.
+
+    larg/alt a 0 (ou empilhamento None) degradam para o comportamento antigo,
+    para nao partir chamadas que so tenham o comprimento.
     """
     if rack.comp_braco_m <= 0 or comp_artigo_m <= 0:
         return 0
-    itens_por_braco = math.floor(rack.comp_braco_m / comp_artigo_m)
-    return itens_por_braco * rack.niveis
+    # O material assenta ATRAVESSADO sobre varios bracos: o comprimento da peca
+    # corre ao longo da LARGURA do rack (o vao), nao do braco. O comp_braco_m e
+    # a profundidade do apoio -- limita a largura do que se pousa, nao o
+    # comprimento. Comparar o comprimento da peca com o braco (como se fazia)
+    # dava 0 para tudo o que fosse mais largo que 0.6 m.
+    vao = rack.larg_m if rack.larg_m > 0 else rack.comp_braco_m
+    por_comprimento = math.floor(vao / comp_artigo_m)
+    if por_comprimento <= 0:
+        return 0
+
+    # lado a lado, na profundidade util do braco
+    if larg_artigo_m > 0 and rack.comp_braco_m > 0:
+        por_profundidade = math.floor(rack.comp_braco_m / larg_artigo_m)
+        if por_profundidade <= 0:
+            return 0
+    else:
+        por_profundidade = 1
+
+    # empilhado, na altura útil do nível
+    if alt_artigo_m > 0 and empilhamento is not None:
+        n_altura = pieces_in_stack(rack.alt_nivel_m, alt_artigo_m,
+                                   empilhamento, fator_empilhamento)
+        if n_altura <= 0:
+            return 0
+    else:
+        n_altura = 1
+
+    por_nivel_teorico = por_comprimento * por_profundidade
+    por_nivel = max(math.floor(por_nivel_teorico * fill_factor), 1) * n_altura
+    return por_nivel * rack.niveis
+
+
+def _melhor_cantilever(rack_types: list[RackType]) -> RackType | None:
+    """Cantilever compatível com LONGO e com braço definido, de menor footprint."""
+    cands = [r for r in rack_types
+             if LoadType.LONGO in r.aceita and r.comp_braco_m > 0]
+    return min(cands, key=_rack_footprint_m2) if cands else None
+
+
+def _cap_longo_sku(rack: RackType, art: Article | None, cfg: Config) -> int:
+    """Capacidade da cantilever para UM SKU concreto (usa as suas 3 cotas)."""
+    if art is None or art.comp_m <= 0:
+        return 0
+    return rack_capacity_long(
+        rack, art.comp_m, art.larg_m, art.alt_m,
+        art.empilhamento, cfg.fator_empilhamento, cfg.fill_factor_plano)
 
 
 def _rack_footprint_m2(rack: RackType) -> float:
@@ -115,7 +173,8 @@ def racks_needed(assignments: list[BoxAssignment],
                  catalogo: dict[LoadType, BoxType],
                  cfg: Config,
                  comp_max_longo: float = 0.0,
-                 altura_picking_m: float = 0.0) -> tuple[list[RackRequirement], list[str]]:
+                 altura_picking_m: float = 0.0,
+                 articles: list[Article] | None = None) -> tuple[list[RackRequirement], list[str]]:
     """Resumo agregado por tipologia (informativo, usado para a área e o
     sumário da UI). A alocação real e detalhada (posições/blocos/níveis/
     caixas concretas, com mistura de tipos de carga e blocos decididos por
@@ -134,10 +193,46 @@ def racks_needed(assignments: list[BoxAssignment],
     if not totais:
         return [], []
 
+    article_idx = {a.sku: a for a in articles} if articles else {}
+
     avisos: list[str] = []
     por_tipologia: dict[str, dict[LoadType, int]] = {}
 
+    # LONGO: a capacidade depende das cotas DE CADA SKU, por isso não pode ser
+    # estimada com um comprimento único (antes usava-se comp_max_longo, o maior
+    # de todos, o que fazia uma peça de 0.13 m ocupar o mesmo que um perfil de
+    # 2.47 m). Calcula-se módulo a módulo por SKU e soma-se.
+    if LoadType.LONGO in totais:
+        rack_c = _melhor_cantilever(rack_types)
+        if rack_c is None:
+            avisos.append(
+                f"Sem cantilever compativel para LONGO "
+                f"({totais[LoadType.LONGO]} unidades) -- EXCLUIDO do resultado.")
+        else:
+            blocos = blocos_empilhados(rack_c, cfg.altura_armazem_m)
+            modulos = 0.0
+            sem_cap = []
+            for a in assignments:
+                if a.load_type != LoadType.LONGO:
+                    continue
+                art = article_idx.get(a.sku) if article_idx else None
+                cap = _cap_longo_sku(rack_c, art, cfg)
+                if cap <= 0:
+                    sem_cap.append(a.sku)
+                    continue
+                modulos += a.num_unidades / (cap * blocos)
+            if sem_cap:
+                avisos.append(
+                    f"{len(sem_cap)} SKU(s) LONGO sem capacidade na cantilever "
+                    f"(nao cabem no braco/nivel): {', '.join(sem_cap[:5])}"
+                    f"{' ...' if len(sem_cap) > 5 else ''}")
+            if modulos > 0:
+                por_tipologia.setdefault(rack_c.nome, {})[LoadType.LONGO] = \
+                    max(math.ceil(modulos * blocos), 1)
+
     for lt, total_unidades in totais.items():
+        if lt == LoadType.LONGO:
+            continue          # já tratado acima, por SKU
         if lt == LoadType.OVERSIZE:
             # Peças que não assentam em nenhuma unidade de carga do catálogo
             # (nem na footprint da palete). Antes eram contadas como 1/palete,
@@ -338,7 +433,8 @@ def allocate_to_racks(assignments: list[BoxAssignment],
                       articles: list[Article],
                       comp_max_longo: float = 1.0,
                       altura_picking_m: float = 0.0,
-                      altura_armazem_m: float = 0.0) -> tuple[list[PosicaoChao], list[str]]:
+                      altura_armazem_m: float = 0.0,
+                      cfg: Config | None = None) -> tuple[list[PosicaoChao], list[str]]:
     """Aloca todas as caixas de todos os tipos de carga, num packer 2D real
     (rectpack) por nível, com mistura livre de tipos de carga no mesmo
     nível/módulo/posição quando a tipologia de rack aceita esses tipos.
@@ -404,6 +500,8 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             else:
                 boxes_per_stack_per_type[load_type] = 1
 
+    _cfg = cfg if cfg is not None else Config()
+
     itens: list[_ItemParaColocar] = []
     for a in assignments:
         art = article_idx.get(a.sku)
@@ -412,9 +510,18 @@ def allocate_to_racks(assignments: list[BoxAssignment],
         if a.load_type == LoadType.OVERSIZE:
             continue          # não assenta em nada; já reportado em racks_needed
         if a.load_type == LoadType.LONGO:
+            # "A própria rack é a caixa": o item colocado é o FEIXE de peças que
+            # cabe num nível da cantilever, não uma peça solta. Antes cada peça
+            # era a sua unidade (comp x 0.3 x 0.3), o que enchia a cantilever de
+            # itens fictícios e ignorava largura/altura reais.
             comp_dim = art.comp_m if art else (comp_max_longo if comp_max_longo > 0 else 1.0)
-            larg_dim, alt_dim = 0.3, 0.3
-            boxes_per_stack = 1
+            larg_dim = art.larg_m if art and art.larg_m > 0 else 0.3
+            alt_dim = art.alt_m if art and art.alt_m > 0 else 0.3
+            rack_c = _melhor_cantilever(rack_types)
+            cap_nivel = 0
+            if rack_c is not None and art is not None:
+                cap_nivel = _cap_longo_sku(rack_c, art, _cfg) // max(rack_c.niveis, 1)
+            boxes_per_stack = max(cap_nivel, 1)
         else:
             box = catalogo.get(a.load_type)
             if box is None:

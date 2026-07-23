@@ -190,6 +190,61 @@ def test_assenta_na_palete():
     assert not boxing._assenta_na_palete(art(1.26, 2.08, 0.51), P)
 
 
+def test_cantilever_so_aceita_material_esbelto():
+    """Estar marcado 'Comprida' na folha nao chega: a cantilever guarda
+    material 1D. Pecas volumosas (altas/largas) tem de cair no best-fit."""
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cfg = Config()
+
+    def art(c, l, a):
+        return Article(sku="x", descricao="", comp_m=c, larg_m=l, alt_m=a,
+                       peso_kg=1.0, stock_max_un=10, pecas_por_carro=1,
+                       geometria="Comprida",
+                       empilhamento=Empilhamento.EMPILHAVEL)
+
+    # perfil real: comprido e fino -> cantilever
+    assert boxing.cabe_em_cantilever(art(2.47, 0.05, 0.04), cfg)
+    # volumoso alto: 1.38 m nao cabe num nivel de 0.6 m
+    assert not boxing.cabe_em_cantilever(art(2.26, 1.37, 1.38), cfg)
+    # largo/pouco esbelto: e um painel, nao um perfil
+    assert not boxing.cabe_em_cantilever(art(1.06, 1.07, 0.21), cfg)
+    # curto e volumoso
+    assert not boxing.cabe_em_cantilever(art(0.13, 1.53, 1.06), cfg)
+
+
+def test_volumoso_marcado_comprida_nao_vai_para_longo():
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cfg = Config()
+    cat = _catalogo_minimo()
+    volumoso = Article(sku="V", descricao="", comp_m=2.26, larg_m=1.37, alt_m=1.38,
+                       peso_kg=10.0, stock_max_un=7, pecas_por_carro=1,
+                       geometria="Comprida",
+                       empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    lt, _ = boxing.choose_load(volumoso, cat, cfg)
+    assert lt != LoadType.LONGO, "volumoso nao pode ir para cantilever"
+
+
+def test_aviso_cantilever_lista_reclassificados():
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cfg = Config()
+    arts = [
+        Article(sku="PERFIL", descricao="", comp_m=2.47, larg_m=0.05, alt_m=0.04,
+                peso_kg=1.0, stock_max_un=5, pecas_por_carro=1,
+                geometria="Comprida", empilhamento=Empilhamento.EMPILHAVEL),
+        Article(sku="VOLUME", descricao="", comp_m=2.26, larg_m=1.37, alt_m=1.38,
+                peso_kg=1.0, stock_max_un=5, pecas_por_carro=1,
+                geometria="Comprida", empilhamento=Empilhamento.EMPILHAVEL),
+    ]
+    av = boxing.avisos_cantilever(arts, cfg)
+    assert len(av) == 1 and "VOLUME" in av[0] and "PERFIL" not in av[0]
+
+
 if __name__ == "__main__":
     test_longo_existe(); test_footprint(); test_floor_area()
     test_zona_area(); test_resumo_area_total()
