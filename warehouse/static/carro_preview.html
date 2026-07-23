@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pré-visualização — carro.glb (modelo extraído)</title>
+<style>
+  html,body{margin:0;height:100%;background:#1a1d21;color:#dfe3e8;font:14px/1.5 system-ui,sans-serif;overflow:hidden}
+  #c{width:100vw;height:100vh;display:block}
+  #hud{position:fixed;top:12px;left:12px;background:rgba(20,23,27,.82);border:1px solid #333;border-radius:8px;padding:10px 14px;max-width:340px}
+  #hud h1{font-size:14px;margin:0 0 6px}
+  #hud p{margin:2px 0;color:#aeb4bc;font-size:12px}
+  #hud b{color:#dfe3e8}
+  #status{color:#f7c948}
+  .btn{margin-top:8px;background:#2a2f36;border:1px solid #3a4048;color:#dfe3e8;border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px}
+  .btn:hover{background:#343a42}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud">
+  <h1>carro.glb — modelo extraído do PC.zip</h1>
+  <p id="status">a carregar…</p>
+  <p id="info"></p>
+  <p style="margin-top:6px;color:#8c929a">Montagem CAD real (estrutura/interior), remeshada e decimada para peso web. Arrasta para rodar · scroll para zoom.</p>
+  <button class="btn" id="rot">⏸ parar rotação</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+const canvas = document.getElementById("c");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d21);
+
+const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 500);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+
+scene.add(new THREE.HemisphereLight(0xbfd0e2, 0x33302a, 0.7));
+const key = new THREE.DirectionalLight(0xfff2dd, 1.4); key.position.set(6, 12, 8); scene.add(key);
+const fill = new THREE.DirectionalLight(0x9fb4d0, 0.5); fill.position.set(-8, 4, -6); scene.add(fill);
+
+// chão + grelha de referência
+const grid = new THREE.GridHelper(30, 30, 0x3a4048, 0x2a2f36);
+scene.add(grid);
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener("resize", resize); resize();
+
+let autoRotate = true;
+document.getElementById("rot").onclick = (e) => {
+  autoRotate = !autoRotate;
+  e.target.textContent = autoRotate ? "⏸ parar rotação" : "▶ rodar";
+};
+
+new GLTFLoader().load("/models/carro.glb", (gltf) => {
+  const model = gltf.scene;
+  // enquadrar: centrar na origem, assentar no chão
+  const box = new THREE.Box3().setFromObject(model);
+  const size = new THREE.Vector3(); box.getSize(size);
+  const center = new THREE.Vector3(); box.getCenter(center);
+  model.position.set(-center.x, -box.min.y, -center.z);
+  scene.add(model);
+
+  const maxDim = Math.max(size.x, size.y, size.z);
+  camera.position.set(maxDim * 0.9, maxDim * 0.7, maxDim * 1.3);
+  controls.target.set(0, size.y * 0.4, 0);
+  controls.update();
+
+  document.getElementById("status").textContent = "carregado ✓";
+  document.getElementById("status").style.color = "#5ad18a";
+  let tris = 0;
+  model.traverse(o => { if (o.isMesh && o.geometry) tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3; });
+  document.getElementById("info").innerHTML =
+    `<b>Dimensões:</b> ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m (L×A×C)<br>` +
+    `<b>Triângulos:</b> ${Math.round(tris).toLocaleString("pt-PT")}`;
+}, (ev) => {
+  if (ev.total) document.getElementById("status").textContent = `a carregar… ${(100 * ev.loaded / ev.total).toFixed(0)}%`;
+}, (err) => {
+  document.getElementById("status").textContent = "erro a carregar /models/carro.glb";
+  document.getElementById("status").style.color = "#ff6b6b";
+  console.error(err);
+});
+
+(function loop() {
+  requestAnimationFrame(loop);
+  if (autoRotate) scene.rotation.y += 0.003;
+  controls.update();
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

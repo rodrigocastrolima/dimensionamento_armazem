@@ -11,7 +11,8 @@ Unidades: metros / m².
 from __future__ import annotations
 import math
 
-from .models import RackType, PosicaoChao, PosicaoLayout, WarehouseLayout, Zona, ZonaLayout
+from .models import (RackType, PosicaoChao, PosicaoLayout, WarehouseLayout,
+                     Zona, ZonaLayout, Corredor)
 from .area import rack_footprint_m2
 
 CORREDOR_DEFAULT_M = 2.5         # usado quando RackType.corredor_m == 0
@@ -39,14 +40,15 @@ def _melhor_num_por_fiada(n: int, larg_m: float, prof_dupla_m: float, corredor_m
 
 
 def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
-                      y0: float, k: int | None = None) -> tuple[list[PosicaoLayout], float, float]:
+                      y0: float, k: int | None = None
+                      ) -> tuple[list[PosicaoLayout], float, float, list[Corredor]]:
     """Dispõe as posições de UMA tipologia em filas duplas costas-com-costas,
     a partir de y0. k = posições por fiada; se None, otimiza só para esta
     tipologia (perímetro próprio). Devolve (layout, largura_ocupada_m,
-    profundidade_ocupada_m)."""
+    profundidade_ocupada_m, corredores)."""
     n = len(posicoes)
     if n == 0:
-        return [], 0.0, 0.0
+        return [], 0.0, 0.0, []
 
     larg, prof = rack.larg_m, rack.prof_m
     corredor = _corredor_m(rack)
@@ -56,6 +58,7 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
         k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor)
 
     resultado: list[PosicaoLayout] = []
+    corredores: list[Corredor] = []
     idx = 0
     fila_idx = 0
     y_fila = y0
@@ -75,11 +78,17 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
                 ))
                 idx += 1
         largura_max = max(largura_max, cols_fila * larg)
+        # corredor de serviço logo a seguir a esta fila dupla (exceto o último,
+        # removido abaixo). Cobre a largura realmente usada pela fila.
+        corredores.append(Corredor(
+            x_m=0.0, y_m=round(y_fila + prof_dupla, 4),
+            comp_m=round(cols_fila * larg, 4), larg_m=round(corredor, 4)))
         y_fila += prof_dupla + corredor
         fila_idx += 1
 
+    corredores.pop()   # o último corredor (após a última fila) não existe
     profundidade_total = y_fila - corredor - y0  # remove o último corredor não usado
-    return resultado, largura_max, profundidade_total
+    return resultado, largura_max, profundidade_total, corredores
 
 
 def _layout_zonas(zonas: list[Zona], y0: float) -> list[ZonaLayout]:
@@ -172,6 +181,7 @@ def gerar_layout(posicoes: list[PosicaoChao],
     ks_por_tipologia = _larguras_alinhadas(por_tipologia, rack_types)
 
     todas: list[PosicaoLayout] = []
+    corredores: list[Corredor] = []
     y_cursor = y0_racks
     largura_total = 0.0
     area_racks = 0.0
@@ -182,10 +192,15 @@ def gerar_layout(posicoes: list[PosicaoChao],
         if anterior is not None:
             # corredor entre blocos de tipologias: serve os dois lados, logo
             # usa o MAIOR dos corredores das duas (não um valor fixo)
-            y_cursor += max(_corredor_m(anterior), _corredor_m(rack))
-        layout_tipo, largura, profundidade = _layout_tipologia(
+            trans = max(_corredor_m(anterior), _corredor_m(rack))
+            corredores.append(Corredor(x_m=0.0, y_m=round(y_cursor, 4),
+                                       comp_m=round(largura_total, 4),
+                                       larg_m=round(trans, 4)))
+            y_cursor += trans
+        layout_tipo, largura, profundidade, cors = _layout_tipologia(
             rack, lista, y_cursor, ks_por_tipologia.get(rack_nome))
         todas.extend(layout_tipo)
+        corredores.extend(cors)
         largura_total = max(largura_total, largura)
         y_cursor += profundidade
         area_racks += rack_footprint_m2(rack) * len(lista)
@@ -202,4 +217,5 @@ def gerar_layout(posicoes: list[PosicaoChao],
         area_total_m2=round(area_envolvente, 3),
         area_corredores_m2=round(area_corredores, 3),
         zonas=zonas_layout,
+        corredores=corredores,
     )

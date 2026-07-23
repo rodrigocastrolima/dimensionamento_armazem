@@ -269,6 +269,11 @@ def gerar(body: GerarRequest):
             }
             for zl in warehouse_layout.zonas
         ],
+        # Corredores de serviço reais (para os operadores andarem sem adivinhar)
+        "corredores": [
+            {"x": c.x_m, "y": c.y_m, "comp_m": c.comp_m, "larg_m": c.larg_m}
+            for c in warehouse_layout.corredores
+        ],
         # For canvas layout tool
         "racking_block": {
             "id": "racking_block",
@@ -394,6 +399,14 @@ def render_layout(body: ArrangeRequest):
         item["y"] = round(base_y + y, 4)
         item["larg_m"], item["prof_m"] = l, p
 
+    # Corredores de serviço: sofrem a MESMA rotação/deslocamento das posições,
+    # para os operadores andarem sobre eles em qualquer orientação do bloco.
+    corredores_json = []
+    for c in warehouse_layout.corredores:
+        cx, cy, cl, cp = _roda_rect(c.x_m, c.y_m, c.comp_m, c.larg_m, bloco_w, bloco_h)
+        corredores_json.append({"x": round(base_x + cx, 4), "y": round(base_y + cy, 4),
+                                "comp_m": round(cl, 4), "larg_m": round(cp, 4)})
+
     zonas_layout = [
         {
             "nome": b.get("nome", ""), "categoria": b.get("categoria", ""),
@@ -436,10 +449,14 @@ def render_layout(body: ArrangeRequest):
     for z in zonas_layout:
         z["x"] = round(z["x"] - min_x, 4)
         z["y"] = round(z["y"] - min_y, 4)
+    for c in corredores_json:
+        c["x"] = round(c["x"] - min_x, 4)
+        c["y"] = round(c["y"] - min_y, 4)
 
     return {
         "layout": layout_json,
         "zonas_layout": zonas_layout,
+        "corredores": corredores_json,
         "area_racks_m2": round(dim.area_racks_m2, 2),
         "area_zonas_m2": round(sum(z["area_m2"] for z in zonas_layout), 2),
         "largura_total_m": round(largura, 2),

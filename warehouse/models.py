@@ -222,6 +222,22 @@ class PosicaoLayout:
 
 
 @dataclass
+class Corredor:
+    """Faixa de circulação de serviço entre filas de racks (Passo 3b).
+
+    É a faixa por onde um operador anda e de onde faz picking. O layout já a
+    calcula ao dispor as filas duplas; guardá-la explicitamente evita que o
+    frontend a tenha de reconstruir por adivinhação (que só funcionava numa
+    orientação). Um corredor é sempre um retângulo axis-aligned no plano do
+    chão: x_m/y_m é o canto, comp_m ao longo de x, larg_m ao longo de y. A
+    dimensão MAIOR é o eixo de circulação."""
+    x_m: float
+    y_m: float
+    comp_m: float          # extensão ao longo de x
+    larg_m: float          # extensão ao longo de y
+
+
+@dataclass
 class WarehouseLayout:
     """Passo 3b: layout físico completo -- posições com coordenadas reais,
     dimensões do retângulo envolvente e área de corredores incluída."""
@@ -231,3 +247,4 @@ class WarehouseLayout:
     area_total_m2: float = 0.0          # racks + corredores, retângulo envolvente
     area_corredores_m2: float = 0.0
     zonas: list[ZonaLayout] = field(default_factory=list)  # posicionadas à parte, ver Zona
+    corredores: list[Corredor] = field(default_factory=list)  # faixas de serviço reais

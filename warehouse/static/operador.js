@@ -55,33 +55,64 @@ function criarBoneco() {
 }
 
 // ---------------------------------------------------------------- rotas
-// Deriva os pontos de paragem de picking + a faixa de corredor de cada fila.
-//
-// IMPORTANTE (layout.py): as filas são DUPLAS costas-com-costas. A fiada
-// "frente" fica em y e a "tras" em y+prof, encostadas pelas costas; o corredor
-// de serviço é a faixa ANTES da "frente" e DEPOIS da "tras":
-//
-//     [corredor] [frente y] [tras y+prof] [corredor] [frente ...]
-//
-// Logo a face de serviço da "frente" abre para -y (corredor anterior) e a da
-// "tras" para +y (corredor seguinte). Inverter isto põe o operador dentro do
-// bloco de racks (atravessa-os).
-function pontosDePicking(layout, corredorPorRack, tiposPermitidos) {
+// Os operadores andam sobre os CORREDORES REAIS que o backend calcula
+// (layout.py -> web.py "corredores"), em vez de os reconstruir por adivinhação.
+// Cada corredor é um retângulo {x, y, comp_m (ao longo de x), larg_m (ao longo
+// de y)}. O seu eixo de circulação é a dimensão MAIOR -- por isso isto funciona
+// com filas horizontais, verticais ou rodadas, sem qualquer suposição de eixo.
+
+/** Descreve um corredor como uma LINHA de circulação: eixo (0=x, 1=y), a
+ *  coordenada fixa no outro eixo (o centro da faixa), e o intervalo percorrível. */
+function linhaDoCorredor(c) {
+  const horizontal = c.comp_m >= c.larg_m;
+  if (horizontal) {
+    return { eixo: 0, fixo: c.y + c.larg_m / 2, min: c.x, max: c.x + c.comp_m };
+  }
+  return { eixo: 1, fixo: c.x + c.comp_m / 2, min: c.y, max: c.y + c.larg_m };
+}
+
+/** Ponto no corredor `L` mais próximo de (px,py), preso ao intervalo do corredor. */
+function pontoNoCorredor(L, px, py) {
+  if (L.eixo === 0) {   // corredor horizontal: y fixo, x livre
+    return new THREE.Vector2(Math.max(L.min, Math.min(L.max, px)), L.fixo);
+  }
+  return new THREE.Vector2(L.fixo, Math.max(L.min, Math.min(L.max, py)));
+}
+
+/** Índice do corredor cujo eixo passa mais perto de (px,py). */
+function corredorMaisProximo(linhas, px, py) {
+  let best = 0, dBest = Infinity;
+  for (let i = 0; i < linhas.length; i++) {
+    const p = pontoNoCorredor(linhas[i], px, py);
+    const d = Math.hypot(p.x - px, p.y - py);
+    if (d < dBest) { dBest = d; best = i; }
+  }
+  return best;
+}
+
+function pontosDePicking(layout, tiposPermitidos, linhas) {
+  const RENTE = 0.55;   // distância a que o operador para da face da prateleira
   const pts = [];
   for (const r of layout) {
     if (tiposPermitidos && !tiposPermitidos.includes(r.rack_nome)) continue;
     const temPicking = r.blocos?.some(b => b.niveis?.some(n => n.eh_picking && n.caixas.length));
     if (!temPicking) continue;
-    const corredor = corredorPorRack[r.rack_nome] ?? 2.5;
-    const recuo = Math.min(corredor * 0.45, corredor - 0.35);   // dentro do corredor
-    const yFace = (r.lado === "tras") ? r.y + r.prof_m + recuo
-                                      : r.y - recuo;
-    pts.push({
-      x: r.x + r.larg_m / 2,      // em frente ao centro da posição
-      y: yFace,                    // dentro do corredor
-      yCorredor: yFace,
-      rack: r.rack_nome,
-    });
+    // centro da face de serviço da posição, e o corredor que a serve
+    const cx = r.x + r.larg_m / 2;
+    const cy = r.y + r.prof_m / 2;
+    const iCor = corredorMaisProximo(linhas, cx, cy);
+    const L = linhas[iCor];
+    // ponto de PARAGEM: no corredor, à frente da posição, recuado RENTE da face
+    let px, py;
+    if (L.eixo === 0) {                       // corredor horizontal
+      px = Math.max(L.min, Math.min(L.max, cx));
+      py = L.fixo + (cy > L.fixo ? -RENTE : RENTE) * 0 + (cy > L.fixo ? -1 : 1) * 0;
+      py = L.fixo + (cy < L.fixo ? RENTE : -RENTE);   // encosta ao lado da estante
+    } else {                                  // corredor vertical
+      py = Math.max(L.min, Math.min(L.max, cy));
+      px = L.fixo + (cx < L.fixo ? RENTE : -RENTE);
+    }
+    pts.push({ x: px, y: py, iCorredor: iCor, rack: r.rack_nome });
   }
   return pts;
 }
@@ -121,7 +152,9 @@ const T_ENTREGA = 1.6;     // s parado a entregar
 class Operador {
   // comPorta = true -> arrasta porta-paletes (acede a porta-paletes/cantilever);
   // false -> operador a pé, só prateleiras leves.
-  constructor(pontos, destino, rng, comPorta = false) {
+  constructor(pontos, destino, rng, comPorta, linhas, transversal) {
+    this.linhas = linhas;             // linhas de circulação dos corredores
+    this.transversal = transversal;   // linha que liga os corredores nos topos
     const b = criarBoneco();
     this.o = b; this.comPorta = comPorta;
     if (comPorta) {
@@ -145,6 +178,7 @@ class Operador {
     const p0 = pontos[Math.floor(rng() * pontos.length)];
     this.grupo.position.set(p0.x, 0, p0.y);
     this.pos = new THREE.Vector2(p0.x, p0.y);
+    this.corAtual = p0.iCorredor;     // corredor onde está a circular
     this._novoAlvo();
   }
 
@@ -155,18 +189,48 @@ class Operador {
   }
 
   _novoAlvo() {
+    let iDest, px, py, entrega;
     if (this.recolhas >= this.alvoRecolhas) {
+      // entrega: um ponto fora do bloco, alcançado pela transversal
+      entrega = true;
       this.alvo = { x: this.destino.x, y: this.destino.y, entrega: true };
+      iDest = this.corAtual; px = this.destino.x; py = this.destino.y;
     } else {
       const p = this.pontos[Math.floor(this.rng() * this.pontos.length)];
-      this.alvo = { x: p.x, y: p.y, yCorredor: p.yCorredor, entrega: false };
+      entrega = false;
+      this.alvo = { x: p.x, y: p.y, entrega: false };
+      iDest = p.iCorredor; px = p.x; py = p.y;
     }
-    // trajeto em L pelo corredor: primeiro alinha em y (corredor), depois x
-    this.pernas = [
-      new THREE.Vector2(this.pos.x, this.alvo.yCorredor ?? this.alvo.y),
-      new THREE.Vector2(this.alvo.x, this.alvo.yCorredor ?? this.alvo.y),
-    ];
-    if (this.alvo.entrega) this.pernas.push(new THREE.Vector2(this.alvo.x, this.alvo.y));
+
+    // Percurso: (1) recua para a linha do corredor atual, (2) se muda de
+    // corredor, vai por uma TRANSVERSAL fora do bloco ate à linha do destino,
+    // (3) avança nessa linha ate à frente do alvo, (4) passo final ate ao alvo
+    // (rente à estante, ou ao ponto de entrega). Andar SEMPRE sobre linhas de
+    // corredor garante que nunca se atravessa racks, em qualquer orientacao.
+    const Lc = this.linhas[this.corAtual];
+    const Ld = this.linhas[iDest];
+    const T = this.transversal;
+    this.pernas = [];
+    // (1) por na linha do corredor atual
+    const naLinha = pontoNoCorredor(Lc, this.pos.x, this.pos.y);
+    this.pernas.push(naLinha);
+    if (iDest !== this.corAtual) {
+      // (2) muda de corredor pela transversal (fora do bloco)
+      const eleTravessa = pontoNoCorredor(Lc, T.x, T.y); // ponto do corredor atual sobre a transversal
+      const saidaAtual = new THREE.Vector2(
+        Lc.eixo === 0 ? T.x : Lc.fixo,
+        Lc.eixo === 0 ? Lc.fixo : T.y);
+      const entradaDest = new THREE.Vector2(
+        Ld.eixo === 0 ? T.x : Ld.fixo,
+        Ld.eixo === 0 ? Ld.fixo : T.y);
+      this.pernas.push(saidaAtual);    // vai ate ao topo do corredor atual
+      this.pernas.push(entradaDest);   // desliza pela transversal ate ao destino
+    }
+    // (3) avança na linha do destino ate à frente do alvo
+    this.pernas.push(pontoNoCorredor(Ld, px, py));
+    // (4) passo final ate ao alvo
+    this.pernas.push(new THREE.Vector2(px, py));
+    this.corAtual = iDest;
     this.perna = 0;
   }
 
@@ -220,27 +284,57 @@ class Operador {
 // conjunto de tipologias acessíveis.
 const RACKS_A_PE = ["Prateleira Leve"];
 
+/** Faixa transversal (fora do bloco) por onde se muda de corredor. Fica logo a
+ *  seguir ao extremo do bloco, ao longo do eixo PERPENDICULAR ao dos corredores
+ *  -- assim liga todos os corredores sem cruzar racks, seja qual for a
+ *  orientacao das filas. */
+function _transversal(layout, linhas) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const r of layout) {
+    x0 = Math.min(x0, r.x); y0 = Math.min(y0, r.y);
+    x1 = Math.max(x1, r.x + r.larg_m); y1 = Math.max(y1, r.y + r.prof_m);
+  }
+  // corredores horizontais (eixo 0) -> mudam-se por uma faixa VERTICAL na
+  // lateral (x fixo); verticais -> por uma faixa HORIZONTAL no topo (y fixo).
+  const horizontais = linhas.filter(L => L.eixo === 0).length >= linhas.length / 2;
+  return horizontais ? { x: x1 + 1.5, y: (y0 + y1) / 2 }   // lateral direita
+                     : { x: (x0 + x1) / 2, y: y1 + 1.5 };  // topo
+}
+
 export function criarOperadores(scene, layout, zonasLayout, opcoes = {}) {
   const n = opcoes.n ?? 4;
   const nPorta = opcoes.nPorta ?? 2;
   const nomeDestino = opcoes.destino ?? "7 - Zona de Espera de Transporte para BDL";
-  const corredorPorRack = opcoes.corredorPorRack ?? {};
+  const corredores = opcoes.corredores ?? [];
+
+  if (!corredores.length) {
+    console.warn("[operador] backend nao enviou corredores -- nenhum operador criado");
+    return null;
+  }
 
   // tipologias existentes no layout, separadas por perfil
   const todas = [...new Set(layout.map(r => r.rack_nome))];
   const tiposPe = todas.filter(t => RACKS_A_PE.includes(t));
   const tiposPorta = todas.filter(t => !RACKS_A_PE.includes(t));
 
-  const pontosPe = pontosDePicking(layout, corredorPorRack, tiposPe);
-  const pontosPorta = pontosDePicking(layout, corredorPorRack, tiposPorta);
-  if (!pontosPe.length && !pontosPorta.length) return null;
+  // linhas de circulação (uma por corredor real) + transversal que as liga
+  const linhas = corredores.map(linhaDoCorredor);
+  const transversal = _transversal(layout, linhas);
+
+  const pontosPe = pontosDePicking(layout, tiposPe, linhas);
+  const pontosPorta = pontosDePicking(layout, tiposPorta, linhas);
+  if (!pontosPe.length && !pontosPorta.length) {
+    console.warn("[operador] sem posicoes de picking no layout -- nenhum operador criado");
+    return null;
+  }
 
   // destino: por nome de zona (robusto a mudanças de layout); senão, fallback
   let z = zonasLayout?.find(zz => zz.nome === nomeDestino);
   if (!z) z = zonasLayout?.find(zz => (zz.nome || "").includes("Espera de Transporte"));
+  const p0 = pontosPe[0] || pontosPorta[0];
   const destino = z
     ? { x: z.x + z.larg_m / 2, y: z.y + z.prof_m / 2 }
-    : { x: pontos[0].x, y: pontos[0].y };
+    : { x: p0.x, y: p0.y };
 
   let seed = 20260723;
   const rng = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
@@ -251,14 +345,14 @@ export function criarOperadores(scene, layout, zonasLayout, opcoes = {}) {
   // a pé -> só prateleiras leves
   if (pontosPe.length) {
     for (let i = 0; i < n; i++) {
-      const op = new Operador(pontosPe, destino, rng, false);
+      const op = new Operador(pontosPe, destino, rng, false, linhas, transversal);
       ops.push(op); grupo.add(op.grupo);
     }
   }
   // com porta-paletes -> porta-paletes/cantilever (tudo o resto)
   if (pontosPorta.length) {
     for (let i = 0; i < nPorta; i++) {
-      const op = new Operador(pontosPorta, destino, rng, true);
+      const op = new Operador(pontosPorta, destino, rng, true, linhas, transversal);
       ops.push(op); grupo.add(op.grupo);
     }
   }

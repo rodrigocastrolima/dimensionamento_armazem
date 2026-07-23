@@ -518,7 +518,7 @@ function recriarOperadores() {
   operadores = criarOperadores(scene, _opsCtx.layout, _opsCtx.zonas, {
     n, nPorta,
     destino: "7 - Zona de Espera de Transporte para BDL",
-    corredorPorRack: _opsCtx.corredorPorRack,
+    corredores: _opsCtx.corredores,
     velocidade: vel,
   });
 }
@@ -1666,11 +1666,8 @@ function inicializarCanvas() {
       desenharLayout(data.layout);
       desenharZonas(data.zonas_layout);
       ajustarCenaECamera(data.layout, data.zonas_layout);
-      // operadores a fazer picking nos corredores reais -> entregam na zona 7
-      const corredorPorRack = {};
-      (await (await fetch("/api/racks")).json())
-        .forEach(r => { corredorPorRack[r.nome] = r.corredor_m || 2.5; });
-      _opsCtx = { layout: data.layout, zonas: data.zonas_layout, corredorPorRack };
+      // operadores andam nos corredores REAIS que o backend calcula (data.corredores)
+      _opsCtx = { layout: data.layout, zonas: data.zonas_layout, corredores: data.corredores || [] };
       recriarOperadores();
       const tipos = [...new Set(data.layout.flatMap(r => r.load_types))];
       desenharLegenda(tipos, data.zonas_layout.map(z => z.nome));
