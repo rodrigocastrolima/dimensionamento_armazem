@@ -13,6 +13,7 @@ Nota: o import de 1.89 GB e a parte lenta e pesada em RAM. O Decimate corre
 depois, sobre a malha ja unida, que e a forma que da reducao mais estavel.
 """
 import bpy
+from mathutils import Vector
 import sys
 import os
 import time
@@ -92,6 +93,44 @@ def decimar(obj, alvo_tris):
     return depois
 
 
+def remover_pecas_pequenas(min_dim_m=0.12):
+    """Descarta componentes pequenos (parafusos, clips, eletronica interna).
+
+    Num modelo CAD de veiculo a esmagadora maioria das pecas e interna e NUNCA
+    se ve de fora, mas consome o orcamento de triangulos -- obrigando a esmagar
+    a carroçaria ate esta deixar de ser uma superficie (foi o que aconteceu:
+    110 pecas grandes ficaram com 127 triangulos em media, em farrapos).
+    Ficando so com o que se ve, cada painel recebe 20-30x mais triangulos pelo
+    mesmo peso final.
+    """
+    malhas = [o for o in bpy.data.objects if o.type == "MESH"]
+    fora = []
+    for o in malhas:
+        d = o.dimensions
+        if max(d.x, d.y, d.z) < min_dim_m:
+            fora.append(o)
+    for o in fora:
+        bpy.data.objects.remove(o, do_unlink=True)
+    log(f"pecas pequenas removidas (<{min_dim_m} m): {len(fora)} "
+        f"-> restam {len(malhas) - len(fora)}")
+
+
+def material_unico(obj, cor=(0.72, 0.75, 0.79, 1.0)):
+    """Um so material claro. Os materiais do CAD vinham quase pretos
+    (baseColor ~0.0004), o que tornava a cena ilegivel."""
+    obj.data.materials.clear()
+    mat = bpy.data.materials.new(name="BEN_body")
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = cor
+        if "Roughness" in bsdf.inputs:
+            bsdf.inputs["Roughness"].default_value = 0.42
+        if "Metallic" in bsdf.inputs:
+            bsdf.inputs["Metallic"].default_value = 0.25
+    obj.data.materials.append(mat)
+
+
 def decimar_por_peca(alvo_tris):
     """Decima cada malha para a sua quota do orcamento, proporcional ao tamanho.
 
@@ -120,10 +159,14 @@ def decimar_por_peca(alvo_tris):
         # single_user com obdata=True copia as malhas partilhadas
         bpy.ops.object.make_single_user(object=True, obdata=True)
 
-    # margem de 1.6x: a passagem final ajusta ao alvo exato, e assim nao se
-    # perde detalhe a mais nesta fase
-    ratio_global = (alvo_tris * 1.6) / total
-    MIN_TRIS = 12
+    # Sem margem: a margem de 1.6x que aqui existia obrigava a esmagar cada
+    # peca muito abaixo do necessario, e a passagem final so cortava o total --
+    # o estrago ja estava feito.
+    ratio_global = alvo_tris / total
+    # Piso ALTO por peca: abaixo de ~150 triangulos uma peca de carroçaria
+    # deixa de ser uma superficie e vira triangulos soltos (o efeito
+    # "fragmentos" visto no viewer). Peças pequenas ficam intactas.
+    MIN_TRIS = 150
     feitas = 0
     falhas = []
     for i, o in enumerate(malhas):
@@ -173,8 +216,14 @@ def remover_outliers(limiar_mult=3.0):
         return
     dists = []
     for o in malhas:
-        c = o.matrix_world.translation
-        dists.append((c.x ** 2 + c.y ** 2 + c.z ** 2) ** 0.5)
+        # CENTRO DA GEOMETRIA em mundo, não a translação do objeto: em CAD as
+        # peças costumam ter translação (0,0,0) e as coordenadas embutidas nos
+        # vértices, por isso usar matrix_world.translation não detetava nada.
+        bb = [o.matrix_world @ Vector(c) for c in o.bound_box]
+        cx = sum(v.x for v in bb) / 8.0
+        cy = sum(v.y for v in bb) / 8.0
+        cz = sum(v.z for v in bb) / 8.0
+        dists.append((cx ** 2 + cy ** 2 + cz ** 2) ** 0.5)
     med = statistics.median(dists)
     if med <= 0:
         return
@@ -186,10 +235,22 @@ def remover_outliers(limiar_mult=3.0):
         log(f"outliers removidos: {len(fora)} malha(s) a mais de {limite:.1f} da origem")
 
 
+def _dim_reais(obj):
+    """Dimensoes a partir dos VERTICES em mundo. obj.dimensions pode estar
+    desatualizado apos modificadores/transformacoes -- foi o que deu um falso
+    '34 m' quando o modelo media 2.5 m."""
+    vs = [obj.matrix_world @ v.co for v in obj.data.vertices]
+    if not vs:
+        return (0.0, 0.0, 0.0)
+    xs = [v.x for v in vs]; ys = [v.y for v in vs]; zs = [v.z for v in vs]
+    return (max(xs) - min(xs), max(ys) - min(ys), max(zs) - min(zs))
+
+
 def normalizar_escala(obj):
     """CAD costuma vir em MILIMETROS. Se o modelo for absurdamente grande para
     um veiculo, converte para metros (o viewer trabalha em metros)."""
-    d = max(obj.dimensions)
+    bpy.context.view_layer.update()
+    d = max(_dim_reais(obj))
     if d > 100:            # nenhum veiculo tem >100 m
         fator = 0.001
         obj.scale = (fator, fator, fator)
@@ -208,8 +269,8 @@ def assentar_e_centrar(obj):
 
 
 def dimensoes(obj):
-    d = obj.dimensions
-    return d.x, d.y, d.z
+    bpy.context.view_layer.update()
+    return _dim_reais(obj)
 
 
 def main():
@@ -237,6 +298,7 @@ def main():
 
     remover_nao_malhas()
     remover_outliers()
+    remover_pecas_pequenas(min_dim_m=float(os.environ.get("MIN_PECA_M", "0.12")))
 
     # Decimar PEÇA A PEÇA antes de juntar. Juntar primeiro cria uma malha de
     # ~76 M vertices e o Decimate rebenta (EXCEPTION_ACCESS_VIOLATION): as
@@ -249,6 +311,7 @@ def main():
 
     # passagem final: corrige o excesso acumulado do arredondamento por peca
     decimar(obj, alvo)
+    material_unico(obj)
     normalizar_escala(obj)
     assentar_e_centrar(obj)
     x, y, z = dimensoes(obj)

@@ -228,7 +228,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
-import { criarCarro } from "./carro.js";
+import { criarCarro, carregarBen } from "./carro.js";
 import { criarOperadores } from "./operador.js";
 
 const API = "/api";
@@ -1660,6 +1660,9 @@ function inicializarCanvas() {
       const _rk = canvasBlocks.find(b => b.type === "racking");
       _rotRacks = _rk ? ((((+_rk.rot || 0) % 360) + 360) % 360) : 0;
       limparRacks();
+      // garante o BEN real disponível ANTES de desenhar (senão as zonas
+      // apanhavam o carro procedural de fallback); se falhar, segue na mesma
+      await carregarBen();
       desenharLayout(data.layout);
       desenharZonas(data.zonas_layout);
       ajustarCenaECamera(data.layout, data.zonas_layout);

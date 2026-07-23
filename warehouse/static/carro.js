@@ -3,6 +3,48 @@
 // pretas, frente minimalista. Leve (~poucos milhares de triângulos).
 // Fonte única partilhada por index.html e pelas páginas de preview.
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
+
+// ---------------------------------------------------------------- modelo real
+// ben.glb: modelo CAD real do BEN (exterior), convertido de FBX pelo
+// tools/fbx_para_glb.py -- 115.6 M -> 133 k triangulos, 2.3 MB com Draco.
+// Carrega-se UMA vez e clona-se por instancia. Enquanto nao chega (ou se
+// falhar), usa-se o carro procedural, para a cena nunca ficar vazia.
+const BEN_GLB = "./models/ben.glb";
+let _benProto = null;      // Object3D carregado (protótipo a clonar)
+let _benPromise = null;
+
+export function carregarBen() {
+  if (_benPromise) return _benPromise;
+  const loader = new GLTFLoader();
+  const draco = new DRACOLoader();
+  // descompressor Draco do mesmo CDN do three (o GLB foi exportado com Draco)
+  draco.setDecoderPath("https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/");
+  loader.setDRACOLoader(draco);
+  _benPromise = new Promise((resolve) => {
+    loader.load(BEN_GLB, (gltf) => {
+      const raiz = gltf.scene;
+      // o GLB vem em Z-up (Blender) e centrado/assente; o viewer e Y-up
+      raiz.rotation.x = -Math.PI / 2;
+      raiz.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      _benProto = raiz;
+      resolve(raiz);
+    }, undefined, (err) => {
+      console.warn("[carro] ben.glb nao carregou, fica o procedural:", err);
+      resolve(null);
+    });
+  });
+  return _benPromise;
+}
+
+/** Instância do BEN real, ou null se ainda não carregou/falhou. */
+export function criarBenReal() {
+  if (!_benProto) return null;
+  const g = new THREE.Group();
+  g.add(_benProto.clone(true));
+  return g;
+}
 
 const _geo = new Map();
 function box(w, h, d) {
@@ -45,6 +87,14 @@ export function criarRoda() {
 }
 
 export function criarCarro() {
+  // se o modelo CAD real já está carregado, é ele que manda
+  const real = criarBenReal();
+  if (real) return real;
+  return criarCarroProcedural();
+}
+
+/** Carro procedural (fallback leve, sem dependencias). */
+export function criarCarroProcedural() {
   const g = new THREE.Group();
 
   // ---- corpo prateado (boxy, arcos de roda grandes, cintura ~0.88) ----

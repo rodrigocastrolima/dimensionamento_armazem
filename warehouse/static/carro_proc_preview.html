@@ -31,7 +31,7 @@
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { criarCarro } from "./carro.js";   // MESMA fonte que o index.html
+import { criarCarro, carregarBen } from "./carro.js";   // MESMA fonte que o index.html
 
 const canvas = document.getElementById("c");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -54,8 +54,19 @@ const chao = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStand
 chao.rotation.x = -Math.PI / 2; chao.receiveShadow = true; scene.add(chao);
 scene.add(new THREE.GridHelper(20, 20, 0x3a4048, 0x2a2f36));
 
-const carro = criarCarro();
+let carro = criarCarro();          // procedural, imediato
 scene.add(carro);
+// troca pelo modelo CAD real assim que carregar
+carregarBen().then((ok) => {
+  if (!ok) { document.getElementById("info").textContent += " (ben.glb indisponivel - procedural)"; return; }
+  scene.remove(carro);
+  carro = criarCarro();
+  scene.add(carro);
+  const b = new THREE.Box3().setFromObject(carro);
+  const s = new THREE.Vector3(); b.getSize(s);
+  document.getElementById("info").textContent =
+    `BEN real (CAD) — ${s.x.toFixed(2)} × ${s.z.toFixed(2)} × ${s.y.toFixed(2)} m · 133k triangulos`;
+});
 
 let autoRotate = true;
 document.getElementById("rot").onclick = (e) => { autoRotate = !autoRotate; e.target.textContent = autoRotate ? "⏸ parar rotação" : "▶ rodar"; };
