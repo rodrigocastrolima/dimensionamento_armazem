@@ -129,6 +129,67 @@ def test_caixa_rodada_fica_gravada_na_orientacao_colocada():
     assert abs(c.comp_m - 0.9) < 1e-6 and abs(c.larg_m - 0.28) < 1e-6
 
 
+def _catalogo_minimo():
+    from warehouse.models import BoxType
+    return [
+        BoxType(nome=LoadType.S, int_comp_m=0.40, int_larg_m=0.30, int_alt_m=0.24,
+                ext_comp_m=0.42, ext_larg_m=0.32, ext_alt_m=0.25, peso_max_kg=15),
+        BoxType(nome=LoadType.PALLET, int_comp_m=1.20, int_larg_m=0.80, int_alt_m=1.50,
+                ext_comp_m=1.20, ext_larg_m=0.80, ext_alt_m=1.64, peso_max_kg=1000),
+    ]
+
+
+def test_oversize_nao_e_inventado_como_uma_palete():
+    """Regressão: uma peça que NÃO assenta na footprint da palete em nenhuma
+    orientação não pode sair como (PALLET, 1). Antes o fallback devolvia
+    sempre 1/palete, inventando capacidade inexistente e subdimensionando a
+    área sem qualquer aviso."""
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cfg = Config()
+    cat = _catalogo_minimo()
+    # 1.75 x 1.37: as duas menores cotas (0.17, 1.37) NAO cabem em 1.20 x 0.80
+    grande = Article(sku="OVS", descricao="", comp_m=1.75, larg_m=1.37, alt_m=0.17,
+                     peso_kg=200.0, stock_max_un=4, pecas_por_carro=1,
+                     orientacao="Base fixa", empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    lt, ppu = boxing.choose_load(grande, cat, cfg)
+    assert lt == LoadType.OVERSIZE, f"esperado OVERSIZE, veio {lt}"
+
+
+def test_peca_que_assenta_mas_nao_cabe_de_pe_fica_em_palete():
+    """Contraponto: se a peça ASSENTA na footprint da palete mas a restrição de
+    orientação a impede de ser arrumada, 1/palete continua a ser uma
+    aproximação legítima — não deve virar OVERSIZE."""
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cfg = Config()
+    cat = _catalogo_minimo()
+    # 1.05 x 1.31 x 0.75 -> menores cotas (0.75, 1.05) cabem em 1.20 x 0.80?
+    # 0.75 <= 0.80 e 1.05 <= 1.20 -> assenta
+    a = Article(sku="OK", descricao="", comp_m=1.05, larg_m=1.31, alt_m=0.75,
+                peso_kg=7.85, stock_max_un=50, pecas_por_carro=1,
+                orientacao="Base fixa", empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    lt, ppu = boxing.choose_load(a, cat, cfg)
+    assert lt == LoadType.PALLET and ppu == 1
+
+
+def test_assenta_na_palete():
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    cat = {b.nome: b for b in _catalogo_minimo()}
+    P = cat[LoadType.PALLET]
+    def art(c, l, a):
+        return Article(sku="x", descricao="", comp_m=c, larg_m=l, alt_m=a,
+                       peso_kg=1.0, stock_max_un=1, pecas_por_carro=1,
+                       empilhamento=Empilhamento.EMPILHAVEL)
+    assert boxing._assenta_na_palete(art(1.2, 0.8, 3.0), P)      # de pé, assenta
+    assert boxing._assenta_na_palete(art(0.5, 0.5, 0.5), P)
+    assert not boxing._assenta_na_palete(art(1.75, 1.37, 0.17), P)
+    assert not boxing._assenta_na_palete(art(1.26, 2.08, 0.51), P)
+
+
 if __name__ == "__main__":
     test_longo_existe(); test_footprint(); test_floor_area()
     test_zona_area(); test_resumo_area_total()

@@ -15,6 +15,10 @@ class LoadType(str, Enum):
     MEIA = "MEIA"         # meia-palete (0.8 x 0.6): entrada do catálogo, como a PALLET
     PALLET = "PALLET"     # palete: entrada do catálogo (BoxType), packed como um bin
     LONGO = "LONGO"       # material comprido: NÃO é caixa -> vai direto para cantilever
+    OVERSIZE = "OVERSIZE"  # não assenta em NENHUMA unidade de carga do catálogo
+                           # (nem na footprint da palete): precisa de solução
+                           # dedicada. Nunca é inventado como "1 por palete" --
+                           # é reportado nos avisos para decisão humana.
 
 
 class Empilhamento(str, Enum):

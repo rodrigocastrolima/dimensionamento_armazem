@@ -138,6 +138,16 @@ def racks_needed(assignments: list[BoxAssignment],
     por_tipologia: dict[str, dict[LoadType, int]] = {}
 
     for lt, total_unidades in totais.items():
+        if lt == LoadType.OVERSIZE:
+            # Peças que não assentam em nenhuma unidade de carga do catálogo
+            # (nem na footprint da palete). Antes eram contadas como 1/palete,
+            # o que inventava capacidade inexistente; agora ficam de fora do
+            # dimensionamento e são reportadas para decisão humana.
+            avisos.append(
+                f"{total_unidades} peca(s) OVERSIZE: nao assentam na footprint "
+                f"da palete em nenhuma orientacao -- NAO dimensionadas. "
+                f"Requerem solucao dedicada (palete especial/chao/cantilever).")
+            continue
         escolha = best_rack_for_load(lt, rack_types, catalogo, comp_max_longo,
                                      cfg.altura_armazem_m)
         if escolha is None:
@@ -399,6 +409,8 @@ def allocate_to_racks(assignments: list[BoxAssignment],
         art = article_idx.get(a.sku)
         desc = art.descricao if art else ""
 
+        if a.load_type == LoadType.OVERSIZE:
+            continue          # não assenta em nada; já reportado em racks_needed
         if a.load_type == LoadType.LONGO:
             comp_dim = art.comp_m if art else (comp_max_longo if comp_max_longo > 0 else 1.0)
             larg_dim, alt_dim = 0.3, 0.3

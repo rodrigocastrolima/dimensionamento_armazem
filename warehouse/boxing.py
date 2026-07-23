@@ -157,8 +157,32 @@ def choose_load(article: Article, catalogo: list[BoxType],
     if melhor is not None:
         return melhor
 
-    # não cabe em nenhuma caixa/palete -> palete a 1 peça (fallback)
+    # Não coube em nenhuma unidade de carga. O fallback antigo devolvia
+    # (PALLET, 1) sem verificar nada, o que MENTIA em dois sentidos:
+    #   - peças maiores que a footprint da palete (em qualquer orientação)
+    #     apareciam como "1 por palete", escondendo que são oversize e não
+    #     assentam -- subdimensionando a área e sem gerar aviso;
+    #   - peças que só não cabem por causa da restrição de orientação ficavam
+    #     silenciosamente a 1/palete, sem sinalizar a causa.
+    # Agora distingue-se: se a peça ASSENTA na footprint da palete (as duas
+    # menores cotas cabem em comp x larg), 1/palete é uma aproximação legítima;
+    # caso contrário é OVERSIZE e tem de ser reportado, não inventado.
+    pallet = catalogo_idx.get(LoadType.PALLET)
+    if pallet is not None and not _assenta_na_palete(article, pallet):
+        return LoadType.OVERSIZE, 1
     return LoadType.PALLET, 1
+
+
+def _assenta_na_palete(article: Article, pallet: BoxType) -> bool:
+    """True se a peça assenta na footprint da palete nalguma orientação, ou
+    seja se as suas duas MENORES cotas cabem em (int_comp_m x int_larg_m).
+    Ignora a restrição de orientação de propósito: a questão aqui é apenas se a
+    peça é fisicamente comportável por uma palete, não como se arruma."""
+    d = sorted((article.comp_m, article.larg_m, article.alt_m))
+    curta, media = d[0], d[1]
+    lado_maior = max(pallet.int_comp_m, pallet.int_larg_m)
+    lado_menor = min(pallet.int_comp_m, pallet.int_larg_m)
+    return curta <= lado_menor + 1e-9 and media <= lado_maior + 1e-9
 
 
 def plan_box(article: Article, catalogo: list[BoxType],
