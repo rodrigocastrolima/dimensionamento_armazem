@@ -55,8 +55,12 @@ class Config:
     cantilever_braco_m: float = 0.6         # cota média tem de caber no apoio
     cantilever_esbelteza_min: float = 3.0   # maior/média: perfil, não volume
 
-    # Passo 3 — área  (A CONFIRMAR)
-    aisle_factor: float = 0.6        # corredores como % da footprint dos racks
+    # NOTA: existiu aqui um `aisle_factor` (corredores como % da footprint dos
+    # racks). Foi REMOVIDO por ser código morto: desde que layout.py passou a
+    # dispor os racks fisicamente, a área de corredores é MEDIDA (retângulo
+    # envolvente - footprint dos racks) e as larguras vêm de RackType.corredor_m
+    # / CORREDOR_DEFAULT_M / CORREDOR_TRANSICAO_M. O fator já não era lido por
+    # ninguém, mas parecia configurável -- afiná-lo não mudava nada.
 
     # Altura útil do armazém (pé-direito disponível para empilhar módulos de
     # rack). Qualquer tipologia pode ser empilhada na vertical: nº de módulos

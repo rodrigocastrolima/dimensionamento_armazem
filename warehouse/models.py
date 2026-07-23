@@ -180,7 +180,7 @@ class WarehouseDimensioning:
 class Zona:
     """Zona funcional do armazém (INPUT): área fora dos racks -- receção, expedição,
     equipamento, staging, etc. Dimensão dada diretamente (comp x larg), sem SKU/stock
-    associado. Área somada à área total à parte dos corredores de racks (aisle_factor)."""
+    associado. Área somada à área total à parte dos corredores de racks."""
     nome: str
     categoria: str          # livre (ex: "Receção", "Expedição", "Equipamento", "Staging")
     comp_m: float

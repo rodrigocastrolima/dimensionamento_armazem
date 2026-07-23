@@ -64,7 +64,7 @@ vêm com níveis e altura por nível definidos). Não reintroduzir.
   não replica as fórmulas de fluxo de receção de uma folha de referência
   (evita depender de dados de encomendas que não existem no master data). A
   área de zonas soma-se à área total **à parte** dos corredores de racks: o
-  `aisle_factor`/`layout.py` não mudam. `Config.margem_estrutural_pct` (0 =
+  `layout.py` não muda. `Config.margem_estrutural_pct` (0 =
   desligado) aplica-se sobre racks + corredores + zonas para chegar à área
   bruta total (`area.resumo_area_total`). No layout 3D, as zonas só recebem
   coordenadas para não sobrepor o bloco de racks (`layout._layout_zonas`);
@@ -73,8 +73,17 @@ vêm com níveis e altura por nível definidos). Não reintroduzir.
 ## Em aberto (ver `config.py`, "A CONFIRMAR")
 - Regra de escolha de caixa (`BoxStrategy`): default = minimizar nº de caixas.
 - Capacidade do rack: calculada a partir das dimensões (não dada em posições).
-- Área: fator de corredor agregado (refinar para filas/corredores reais).
 - 16 SKUs sem `Peso_kg` no master data (#N/A) — tratar na leitura.
+
+## Decisão fechada: corredores
+O `aisle_factor` (fator de corredor agregado, % da footprint) foi **removido** —
+era código morto desde que `layout.py` passou a dispor os racks fisicamente. A
+área de corredores é **medida** (retângulo envolvente − footprint dos racks) e as
+larguras vêm de `RackType.corredor_m` (folha «Racks»), com `CORREDOR_DEFAULT_M`
+(2.5 m) e `CORREDOR_TRANSICAO_M` (3.0 m) como omissões. Não reintroduzir: um
+fator único não distingue corredor de empilhador (2.5 m) de picking manual
+(1.2 m), e subestimava — nos dados atuais os corredores dão ~108% da footprint,
+não 60%.
 
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.

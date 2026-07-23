@@ -41,7 +41,8 @@ def floor_area(posicoes: list[PosicaoChao],
 @dataclass
 class ResumoAreaTotal:
     """Área bruta total do armazém: racks + corredores + zonas funcionais + margem
-    estrutural. Zonas são somadas à parte dos corredores de racks (aisle_factor não muda)."""
+    estrutural. Zonas são somadas à parte dos corredores de racks (que são
+    medidos pelo layout físico, não estimados por um fator)."""
     area_racks_m2: float
     area_corredores_m2: float
     area_zonas_m2: float
