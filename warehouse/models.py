@@ -39,7 +39,11 @@ class Article:
     alt_m: float
     peso_kg: float
     stock_max_un: int
-    pecas_por_carro: int           # quantidade para uma car (picking unit)
+    # Peças deste artigo consumidas por CARRO. É FRACIONÁRIO por natureza: 0.5 =
+    # 1 peça a cada 2 carros (par esquerdo/direito), 0.03 = 1 a cada ~33. Era
+    # `int` e o int() da leitura truncava: os 138 SKUs a 0.5 viravam 0 e deixavam
+    # de pedir zona de picking em silêncio (ver io_excel.load_articles).
+    pecas_por_carro: float         # quantidade para um carro (picking unit)
     orientacao: str = "Livre"      # restrição de rotação no packing
     empilhamento: Empilhamento = Empilhamento.EMPILHAVEL
     fragilidade: str = "Normal"
@@ -203,6 +207,32 @@ class ZonaLayout:
 
 
 @dataclass
+class PilhaChao:
+    """Uma pilha de peças volumosas arrumada no CHÃO, sem rack (block stacking).
+
+    Existe para o 3D poder desenhar o que `area.area_oversize_chao` dimensiona:
+    sem isto a área era reportada mas invisível na cena. Não é uma PosicaoChao --
+    não tem tipologia, módulos nem níveis; é só um empilhamento de peças soltas.
+
+    comp_m/larg_m são a footprint da peça DEITADA (as duas maiores cotas);
+    alt_peca_m é a menor cota, e a pilha tem `n_pecas` dessas em altura.
+    """
+    sku: str
+    descricao: str
+    x_m: float
+    y_m: float
+    comp_m: float          # ao longo de x
+    larg_m: float          # ao longo de y
+    alt_peca_m: float      # altura de UMA peça
+    n_pecas: int           # peças nesta pilha
+    peso_kg: float = 0.0   # peso total da pilha
+
+    @property
+    def altura_total_m(self) -> float:
+        return self.alt_peca_m * self.n_pecas
+
+
+@dataclass
 class PosicaoLayout:
     """Passo 3b — posição de chão com coordenadas físicas reais (layout.py).
 
@@ -248,3 +278,11 @@ class WarehouseLayout:
     area_corredores_m2: float = 0.0
     zonas: list[ZonaLayout] = field(default_factory=list)  # posicionadas à parte, ver Zona
     corredores: list[Corredor] = field(default_factory=list)  # faixas de serviço reais
+    # Pilhas de peças volumosas no chão (sem rack). Como as zonas, só recebem
+    # coordenadas para não sobrepor os racks -- a área conta em
+    # ResumoAreaTotal.area_oversize_chao_m2, não em largura/profundidade_total_m.
+    pilhas_chao: list[PilhaChao] = field(default_factory=list)
+    # Avisos do envelope (Config.largura_max_m / profundidade_max_m): o layout
+    # respeita a largura mas o stock manda no nº de racks, por isso a
+    # profundidade pode exceder o teto. Lista vazia = cabe tudo (ou sem limites).
+    avisos: list[str] = field(default_factory=list)

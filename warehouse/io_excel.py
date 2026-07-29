@@ -72,7 +72,11 @@ def load_articles(path: Path) -> list[Article]:
         pecas_por_carro_val = r[7]
         if pecas_por_carro_val is None or str(pecas_por_carro_val) == "#N/A":
             raise ValueError(f"SKU {sku}: Peças_por_carro is required but missing or #N/A")
-        pecas_por_carro = int(pecas_por_carro_val)
+        # float, NÃO int: o valor é fracionário por natureza (0.5 = 1 peça a cada
+        # 2 carros). O int() que aqui estava truncava e os 138 SKUs a 0.5 ficavam
+        # a 0 -- deixavam de pedir zona de picking sem qualquer aviso, porque
+        # ceil(0 / n) = 0. Também perdia a fração em 1.5, 17.85, etc.
+        pecas_por_carro = float(pecas_por_carro_val)
 
         orient = str(r[8]) if r[8] else "Livre"
         empilh = r[9]
