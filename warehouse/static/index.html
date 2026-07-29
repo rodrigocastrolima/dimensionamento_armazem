@@ -127,6 +127,14 @@
     <label>Altura de picking (m, 0 = desativado):
       <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
     </label>
+    <label title="TETO da largura do bloco de racks (racks + corredores, sem zonas). O layout escolhe sempre a forma mais compacta; só aperta a largura se ela exceder este valor — dar folga não muda nada. 0 = sem limite.">
+      Largura máx. racks (m):
+      <input id="largura-max" type="number" step="0.1" min="0" value="0" style="width:80px">
+    </label>
+    <label title="Profundidade máxima do bloco de racks. É um TETO DE AVISO: o nº de racks vem do stock, por isso se não couber avisa-se em vez de deixar stock de fora. 0 = sem limite.">
+      Profundidade máx. (m):
+      <input id="profundidade-max" type="number" step="0.1" min="0" value="0" style="width:80px">
+    </label>
     <button class="action" id="btn-gerar-racks">1 · Gerar racks</button>
     <button id="btn-rodar-zona">⟳ Rodar (zona 45° · racks 90°)</button>
     <button id="btn-reset-canvas">↺ Repor</button>
@@ -171,9 +179,9 @@
     <label style="font-size:13px;">Adicionar elemento:
       <select id="prop-tipo" style="padding:4px; font-size:13px;">
         <optgroup label="Linha de montagem">
-          <option value="veiculo">Veículo sobre carrier (2,5×1,5)</option>
-          <option value="carro">Carro solto (2,5×1,5)</option>
-          <option value="carrier">Carrier vazio (2,5×1,5)</option>
+          <option value="veiculo">BEN sobre carrier (2,51×1,72)</option>
+          <option value="carro">BEN solto (2,51×1,72)</option>
+          <option value="carrier">Carrier vazio (2,7×1,9)</option>
           <option value="estante-dinamica">Estante dinâmica / flow-rack (1,35×0,8)</option>
           <option value="carro-kitting">Carro de kitting (1,2×0,8)</option>
           <option value="jig">Jig / bancada sub-assembly (2,0×1,0)</option>
@@ -188,9 +196,13 @@
       </select>
     </label>
     <button class="action" id="btn-add-prop">+ Adicionar</button>
+    <button id="btn-copiar-prop" title="Duplica o objeto selecionado ao lado, com a mesma orientação (Ctrl+D)">⧉ Copiar selecionado</button>
     <button id="btn-rodar-prop">⟳ Rodar selecionado</button>
     <button id="btn-del-prop">✕ Remover selecionado</button>
-    <span class="dica" style="margin:0">Adiciona os que quiseres (repetíveis) e arrasta-os com o rato; clica para selecionar.</span>
+    <button id="btn-limpar-props" title="Apaga TODOS os objetos colocados e esquece-os (não afeta racks nem zonas)">🗑 Limpar objetos</button>
+    <span id="props-count" class="dica" style="margin:0"></span>
+    <span class="dica" style="margin:0">Adiciona os que quiseres (repetíveis) e arrasta-os com o rato; clica para selecionar.
+      <b>Ctrl+D</b> duplica o selecionado ao lado — repete para fazer uma fila.</span>
     <span style="flex:1"></span>
     <label style="font-size:13px;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
       <input type="checkbox" id="ops-ativo" checked> Operadores
@@ -205,6 +217,10 @@
       <input id="ops-vel" type="range" min="0" max="3" step="0.05" value="1" style="width:120px;vertical-align:middle">
       <span id="ops-vel-val" style="color:#9aa;display:inline-block;width:34px">1.0×</span>
     </label>
+    <span style="border-left:1px solid #444;margin:0 4px;height:20px"></span>
+    <button id="btn-voo" title="Voo livre: WASD move, Q/E desce/sobe, rato olha, Shift turbo, Ctrl lento. Esc larga o rato.">🕹 Voo livre</button>
+    <button class="action" id="btn-gravar" title="Grava o que estás a ver para .webm (descarrega ao parar)">⏺ Gravar</button>
+    <span id="voo-estado" class="dica" style="margin:0"></span>
   </div>
   <div class="dica">Resultado do «Renderizar layout 3D» (separador Arranjar Layout).
     Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
@@ -230,6 +246,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
 import { criarCarro, carregarBen } from "./carro.js";
 import { criarOperadores } from "./operador.js";
+import { criarVooLivre, gravarCanvas } from "./voo.js";
 
 const API = "/api";
 
@@ -321,18 +338,24 @@ const CORES = {
   // caixas de picking (bins de bico aberto): tons de azul por tamanho
   XS: 0x8ec4f7, S: 0x4dabf7, M: 0x2f83cc, L: 0x1c5a92,
   MEIA: 0xf7c948, PALLET: 0xff6b6b, LONGO: 0xda77f2,
+  OVERSIZE: 0x6f7c8a,   // componente pousado nu na wide-span (ver MAT_OVERSIZE)
 };
 
 function initViewer() {
   const el = document.getElementById("viewer");
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x1a1d21);
-  scene.fog = new THREE.Fog(0x1a1d21, 40, 160);
+  // Cena de DIA: céu claro. O fog usa a MESMA cor do fundo, senão as bordas da
+  // cena destacam-se contra o céu em vez de se dissolverem nele.
+  scene.background = new THREE.Color(0xdfe9f2);
+  scene.fog = new THREE.Fog(0xdfe9f2, 60, 260);
 
   camera = new THREE.PerspectiveCamera(50, Math.max(el.clientWidth, 1) / Math.max(el.clientHeight, 1), 0.1, 1000);
   camera.position.set(20, 20, 20);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  // preserveDrawingBuffer: obrigatório para gravar/capturar o canvas
+  // (canvas.captureStream). Sem isto o browser pode limpar o buffer depois de
+  // apresentar o frame e o vídeo sai preto ou intermitente.
+  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setSize(el.clientWidth, el.clientHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -369,21 +392,32 @@ function initViewer() {
     }
   }, { passive: false });
 
-  // luz de nave industrial: hemisférica (céu frio / chão quente) + "sol" das claraboias
-  scene.add(new THREE.HemisphereLight(0xbfd0e2, 0x4a463e, 0.55));
-  dirLight = new THREE.DirectionalLight(0xfff2dd, 1.1);
-  dirLight.position.set(15, 30, 10);
+  // Luz de DIA: hemisférica forte (céu azul claro / chão que reflete) + sol.
+  // A hemisférica é o que ilumina o interior dos racks -- sem ela as caixas nas
+  // prateleiras baixas ficam em sombra dura e ilegíveis, porque o sol vem de
+  // cima e os níveis de cima tapam-no.
+  scene.add(new THREE.HemisphereLight(0xcfe2f5, 0x9a9186, 1.15));
+  dirLight = new THREE.DirectionalLight(0xfff6e8, 2.0);
+  dirLight.position.set(28, 42, 18);
   dirLight.castShadow = true;
   dirLight.shadow.mapSize.set(2048, 2048);
   dirLight.shadow.camera.near = 1;
-  dirLight.shadow.camera.far = 150;
+  dirLight.shadow.camera.far = 220;
+  // sombras mais suaves: sol de dia claro não dá contornos duros a esta escala
+  dirLight.shadow.radius = 2;
+  dirLight.shadow.bias = -0.0005;      // evita shadow-acne nas faces planas
   scene.add(dirLight);
   scene.add(dirLight.target);
+  // preenchimento frontal fraco, sem sombra: levanta as faces viradas para a
+  // câmara que ficariam de costas para o sol
+  const fill = new THREE.DirectionalLight(0xe8f0fa, 0.35);
+  fill.position.set(-20, 16, -14);
+  scene.add(fill);
 
   // chão exterior (terreno à volta do edifício)
   chao = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: 0x35383c, roughness: 0.98 }),
+    new THREE.MeshStandardMaterial({ color: 0x9fa5a0, roughness: 0.96 }),
   );
   chao.rotation.x = -Math.PI / 2;
   chao.position.y = -0.02;
@@ -429,13 +463,108 @@ function initViewer() {
     if (p) p.add(aroSel);
   }
 
-  function adicionarProp(factory) {
+  function adicionarProp(factory, tipo) {
     const p = factory();
     p.userData.isProp = true;
+    // guarda o TIPO: sem isto o botão copiar não sabe que factory recriar
+    // (o objeto já criado não diz de onde veio)
+    p.userData.propTipo = tipo || null;
     p.position.set(controls.target.x + (Math.random() - 0.5) * 2, 0,
                    controls.target.z + (Math.random() - 0.5) * 2);
     scene.add(p);
     selecionarProp(p);
+    guardarProps();
+    return p;
+  }
+
+  // ---- persistência dos props (localStorage) -------------------------------
+  // Os props são elementos de cenário colocados à mão e custam a repor; sem isto
+  // um refresh apagava tudo. Guarda-se apenas (tipo, posição, rotação, escala) e
+  // recria-se pela factory -- o Object3D em si não é serializável.
+  const PROPS_KEY = "armazem.props.v1";
+
+  function guardarProps() {
+    try {
+      const props = scene.children
+        .filter(o => o.userData?.isProp && o.userData.propTipo)
+        .map(o => ({
+          tipo: o.userData.propTipo,
+          x: +o.position.x.toFixed(3), y: +o.position.y.toFixed(3), z: +o.position.z.toFixed(3),
+          rx: +o.rotation.x.toFixed(4), ry: +o.rotation.y.toFixed(4), rz: +o.rotation.z.toFixed(4),
+          s: +o.scale.x.toFixed(3),
+        }));
+      localStorage.setItem(PROPS_KEY, JSON.stringify(props));
+      _mostrarNumProps(props.length);
+    } catch (e) {
+      console.warn("[props] não foi possível guardar:", e);
+    }
+  }
+
+  function restaurarProps() {
+    let props;
+    try {
+      props = JSON.parse(localStorage.getItem(PROPS_KEY) || "[]");
+    } catch { return; }
+    if (!Array.isArray(props) || !props.length) return;
+
+    let n = 0;
+    for (const d of props) {
+      const factory = PROP_FACTORIES[d.tipo];
+      if (!factory) continue;          // tipo removido do catálogo: ignora
+      const p = factory();
+      p.userData.isProp = true;
+      p.userData.propTipo = d.tipo;
+      p.position.set(d.x || 0, d.y || 0, d.z || 0);
+      p.rotation.set(d.rx || 0, d.ry || 0, d.rz || 0);
+      if (d.s) p.scale.setScalar(d.s);
+      scene.add(p);
+      n++;
+    }
+    _mostrarNumProps(n);
+    if (n < props.length) {
+      console.warn(`[props] ${props.length - n} objeto(s) de tipo desconhecido ignorados`);
+    }
+  }
+
+  function _mostrarNumProps(n) {
+    const el = document.getElementById("props-count");
+    if (el) el.textContent = n ? `${n} objeto(s) guardado(s)` : "";
+  }
+
+  /** Duplica o prop selecionado ao lado, com a MESMA orientação. Usa o tipo
+   *  guardado em userData para recriar pela factory, em vez de clonar o
+   *  Object3D: um clone traria o aro de seleção agarrado como filho, e alguns
+   *  props partilham geometria/materiais em cache (clonar não é de graça).
+   *
+   *  O deslocamento é feito no referencial do próprio objeto (à sua direita),
+   *  para a cópia aparecer ao lado como se estivesse na mesma fila -- e não
+   *  numa direção fixa que ignora a rotação. */
+  function copiarProp() {
+    if (!propSel) { alert("Seleciona primeiro um objeto no 3D."); return; }
+    const tipo = propSel.userData.propTipo;
+    const factory = tipo ? PROP_FACTORIES[tipo] : null;
+    if (!factory) {
+      alert("Este objeto não pode ser copiado (tipo desconhecido).");
+      return;
+    }
+    const copia = factory();
+    copia.userData.isProp = true;
+    copia.userData.propTipo = tipo;
+    copia.rotation.copy(propSel.rotation);      // mesma orientação
+    copia.scale.copy(propSel.scale);
+
+    // largura real do objeto, para o afastamento não sobrepor nem deixar buraco
+    const bb = new THREE.Box3().setFromObject(propSel);
+    const tam = new THREE.Vector3(); bb.getSize(tam);
+    const passo = Math.max(tam.x, tam.z) + 0.35;   // folga de manuseio
+
+    // "à direita" do objeto, no seu próprio referencial (respeita a rotação)
+    const lado = new THREE.Vector3(1, 0, 0).applyQuaternion(propSel.quaternion);
+    copia.position.copy(propSel.position).addScaledVector(lado, passo);
+
+    scene.add(copia);
+    selecionarProp(copia);   // seleciona a cópia: clicar várias vezes faz uma fila
+    guardarProps();
   }
 
   const PROP_FACTORIES = {
@@ -452,17 +581,41 @@ function initViewer() {
     pessoa: criarPessoa,
   };
   document.getElementById("btn-add-prop").addEventListener("click", () => {
-    const f = PROP_FACTORIES[document.getElementById("prop-tipo").value];
-    if (f) adicionarProp(f);
+    const tipo = document.getElementById("prop-tipo").value;
+    const f = PROP_FACTORIES[tipo];
+    if (f) adicionarProp(f, tipo);
+  });
+  document.getElementById("btn-copiar-prop").addEventListener("click", copiarProp);
+  document.getElementById("btn-limpar-props")?.addEventListener("click", () => {
+    const props = scene.children.filter(o => o.userData?.isProp);
+    if (!props.length) return;
+    if (!confirm(`Apagar ${props.length} objeto(s) colocado(s)? Não afeta racks nem zonas.`)) return;
+    selecionarProp(null);
+    props.forEach(o => scene.remove(o));
+    guardarProps();
+  });
+  // Ctrl+D duplica: a fazer filas de objetos, ir ao botão a cada cópia é lento.
+  // Só age no separador 3D e fora de campos de texto, para não roubar o atalho.
+  document.addEventListener("keydown", (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.key.toLowerCase() !== "d") return;
+    const em3d = document.getElementById("armazem")?.classList.contains("active");
+    const aEscrever = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || "");
+    if (!em3d || aEscrever || !propSel) return;
+    ev.preventDefault();     // Ctrl+D do browser é "adicionar aos favoritos"
+    copiarProp();
   });
   document.getElementById("btn-rodar-prop").addEventListener("click", () => {
-    if (propSel) propSel.rotation.y += Math.PI / 4;
+    if (propSel) { propSel.rotation.y += Math.PI / 4; guardarProps(); }
   });
   ligarControlosOperadores();
+  // repõe os props da sessão anterior (o limparRacks não os apaga, por isso
+  // sobrevivem a novos "Renderizar layout 3D" -- só ao refresh é que se perdiam)
+  restaurarProps();
   document.getElementById("btn-del-prop").addEventListener("click", () => {
     if (!propSel) return;
     scene.remove(propSel);
     selecionarProp(null);
+    guardarProps();
   });
 
   function _mouseNDC(event) {
@@ -493,7 +646,12 @@ function initViewer() {
       dragProp.position.set(ptChao.x, 0, ptChao.z);
     }
   });
-  const soltarProp = () => { dragProp = null; controls.enabled = true; };
+  const soltarProp = () => {
+    // guarda ao SOLTAR, não a cada frame do arrasto (seria escrever no
+    // localStorage dezenas de vezes por segundo)
+    if (dragProp) guardarProps();
+    dragProp = null; controls.enabled = true;
+  };
   renderer.domElement.addEventListener("pointerup", soltarProp);
   renderer.domElement.addEventListener("pointerleave", soltarProp);
 
@@ -537,13 +695,70 @@ function ligarControlosOperadores() {
     if (velVal) velVal.textContent = v.toFixed(1) + "×";
     operadores?.setVelocidade(v);
   });
+  document.getElementById("btn-voo")?.addEventListener("click", alternarVoo);
+  document.getElementById("btn-gravar")?.addEventListener("click", alternarGravacao);
+}
+
+// ---- voo livre + gravação de vídeo (voo.js) --------------------------------
+// O percurso automático (tour.js) foi abandonado: nenhuma heurística acerta no
+// enquadramento que um humano quer para uma apresentação. Aqui o utilizador
+// pilota com WASD e grava o que está a ver.
+let _voo = null;            // controlador do voo livre
+let _gravador = null;
+let _timerEstado = null;
+
+function _estadoVoo(txt) {
+  const el = document.getElementById("voo-estado");
+  if (el) el.innerHTML = txt || "";
+}
+
+function alternarVoo() {
+  if (!_voo) _voo = criarVooLivre(camera, controls, renderer.domElement);
+  const btn = document.getElementById("btn-voo");
+  if (_voo.estaAtivo()) {
+    _voo.sair(false);       // fica onde parou: é onde o utilizador quer ficar
+    btn.textContent = "🕹 Voo livre";
+    btn.classList.remove("action");
+    if (!_gravador) _estadoVoo("");
+  } else {
+    _voo.entrar();
+    btn.textContent = "🕹 Sair do voo";
+    btn.classList.add("action");
+    _estadoVoo("<b>W/S/A/D</b> mover · <b>Q/E</b> descer/subir · <b>Shift</b> turbo · " +
+               "<b>Ctrl</b> lento · rato: olhar (clica no 3D) · <b>Esc</b> larga o rato");
+  }
+}
+
+function alternarGravacao() {
+  const btn = document.getElementById("btn-gravar");
+  if (_gravador) {
+    _gravador.parar();
+    _gravador = null;
+    if (_timerEstado) { clearInterval(_timerEstado); _timerEstado = null; }
+    btn.textContent = "⏺ Gravar";
+    _estadoVoo("Vídeo descarregado.");
+    return;
+  }
+  _gravador = gravarCanvas(renderer.domElement, 60, `armazem-${Date.now()}.webm`);
+  if (!_gravador) {
+    alert("Este browser não suporta gravação do canvas (MediaRecorder).");
+    return;
+  }
+  btn.textContent = "⏹ Parar gravação";
+  // contador de tempo: sem isto não se sabe quanto já se gravou
+  _timerEstado = setInterval(() => {
+    if (_gravador) _estadoVoo(`⏺ a gravar… ${_gravador.duracao_s().toFixed(0)} s`);
+  }, 500);
 }
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = _clock.getDelta();
   if (operadores) operadores.update(dt);
-  controls.update();
+  // No voo livre NÃO se chama controls.update(): com enableDamping o
+  // OrbitControls interpola a câmara para o SEU alvo e luta com o WASD.
+  if (_voo?.estaAtivo()) _voo.update(dt);
+  else controls.update();
   renderer.render(scene, camera);
   labelRenderer.render(scene, camera);
 }
@@ -555,24 +770,28 @@ function limparRacks() {
   zonaLabelEls = [];
   if (operadores) { operadores.dispose(); operadores = null; }
   [...scene.children].forEach(obj => {
-    if (obj.userData.isRackGroup || obj.userData.isZonaGroup || obj.userData.isParedes) scene.remove(obj);
+    if (obj.userData.isRackGroup || obj.userData.isZonaGroup || obj.userData.isParedes
+        || obj.userData.isPilhaGroup) scene.remove(obj);
   });
 }
 
 function texturaChapa() {
   // chapa ondulada: nervuras verticais + faixa de claraboias no topo
   return _canvasTex((ctx, w, h) => {
+    // chapa clara (cena de dia): nervuras em cinza-claro, não em cinza-escuro
     for (let x = 0; x < w; x += 16) {
       const g = ctx.createLinearGradient(x, 0, x + 16, 0);
-      g.addColorStop(0, "#5a616c"); g.addColorStop(0.5, "#767e8a"); g.addColorStop(1, "#5a616c");
+      g.addColorStop(0, "#98a2af"); g.addColorStop(0.5, "#c3cbd5"); g.addColorStop(1, "#98a2af");
       ctx.fillStyle = g;
       ctx.fillRect(x, 0, 16, h);
     }
-    ctx.fillStyle = "#aac9dd";                     // claraboias
-    ctx.globalAlpha = 0.85;
-    for (let x = 8; x < w - 20; x += 40) ctx.fillRect(x, h * 0.06, 26, h * 0.13);
+    // claraboias: mais largas e quase brancas -- é o que dá a leitura de
+    // "entra luz do dia" nas paredes vistas por dentro
+    ctx.fillStyle = "#eef6ff";
+    ctx.globalAlpha = 0.95;
+    for (let x = 6; x < w - 16; x += 34) ctx.fillRect(x, h * 0.05, 24, h * 0.16);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = "rgba(30,32,36,0.5)";          // rodapé
+    ctx.fillStyle = "rgba(70,74,80,0.35)";         // rodapé
     ctx.fillRect(0, h * 0.92, w, h * 0.08);
   }, 256, 256);
 }
@@ -739,6 +958,9 @@ const MAT_VIGA = new THREE.MeshStandardMaterial({ color: 0xe0641e, roughness: 0.
 const MAT_PRATELEIRA = new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.6, metalness: 0.5 });
 const MAT_MADEIRA = new THREE.MeshStandardMaterial({ color: 0x9a6b3f, roughness: 0.85 });
 const MAT_PERFIL_LONGO = new THREE.MeshStandardMaterial({ color: 0x8b9098, roughness: 0.35, metalness: 0.75 });
+// OVERSIZE: componente pousado nu na wide-span (chapa/estrutura pintada, não
+// cartão nem palete) -- distingue-se do perfil metálico do LONGO por ser mate.
+const MAT_OVERSIZE = new THREE.MeshStandardMaterial({ color: 0x6f7c8a, roughness: 0.62, metalness: 0.35 });
 
 function criarPalete(comp, prof) {
   const g = new THREE.Group();
@@ -959,18 +1181,21 @@ const MAT_CARRIER = new THREE.MeshStandardMaterial({ color: 0x3b4149, roughness:
 const MAT_RODA = new THREE.MeshStandardMaterial({ color: 0x161719, roughness: 0.85 });
 
 function criarCarrier() {
-  // carrier / plataforma de montagem 2.5 x 1.5 m: estrado baixo sobre rodas
+  // Carrier / plataforma de montagem: estrado baixo sobre rodas.
+  // 2.7 x 1.9 m -- tem de ser MAIOR que o BEN (2.51 x 1.72, ver BEN_DIM em
+  // carro.js), senão as rodas do veículo ficam a pender fora do estrado.
   const g = new THREE.Group();
-  const estrado = new THREE.Mesh(geoCaixa(2.5, 0.12, 1.5), MAT_CARRIER);
+  const estrado = new THREE.Mesh(geoCaixa(2.7, 0.12, 1.9), MAT_CARRIER);
   estrado.position.y = 0.34;
   g.add(estrado);
-  for (const [px, pz] of [[-1.05, -0.6], [1.05, -0.6], [-1.05, 0.6], [1.05, 0.6]]) {
+  for (const [px, pz] of [[-1.15, -0.8], [1.15, -0.8], [-1.15, 0.8], [1.15, 0.8]]) {
     const roda = new THREE.Mesh(geoCaixa(0.14, 0.26, 0.14), MAT_RODA);
     roda.position.set(px, 0.13, pz);
     g.add(roda);
   }
-  for (const pz of [-0.32, 0.32]) {               // batentes onde assenta o veículo
-    const b = new THREE.Mesh(geoCaixa(2.3, 0.08, 0.1), MAT_VIGA);
+  // batentes onde assentam as rodas do veículo (bitola do BEN: +-0.76 m)
+  for (const pz of [-0.76, 0.76]) {
+    const b = new THREE.Mesh(geoCaixa(2.5, 0.08, 0.1), MAT_VIGA);
     b.position.set(0, 0.44, pz);
     g.add(b);
   }
@@ -998,7 +1223,7 @@ function criarVeiculo() {
   const g = new THREE.Group();
   g.add(criarCarrier());
   const carro = criarCarro();
-  carro.position.y = 0.39;   // topo do estrado (0.40) - folga do pneu
+  carro.position.y = 0.48;   // topo dos batentes (0.44 + 0.04) onde as rodas assentam
   g.add(carro);
   return g;
 }
@@ -1078,6 +1303,48 @@ function criarJig() {
   g.add(fixt);
   g.traverse(o => { if (o.isMesh) o.castShadow = true; });
   return g;
+}
+
+function desenharPilhasChao(pilhas) {
+  // Peças volumosas empilhadas no CHÃO, sem rack (block stacking). Não há
+  // estrutura para desenhar: só as peças pousadas umas sobre as outras, com uma
+  // marcação no pavimento a delimitar a área — é assim que se lê num armazém
+  // real que aquilo é uma zona de armazenagem e não material largado no chão.
+  if (!pilhas || !pilhas.length) return;
+
+  const grupo = new THREE.Group();
+  grupo.userData.isPilhaGroup = true;
+
+  // envolvente das pilhas, para a marcação no chão
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of pilhas) {
+    x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+    x1 = Math.max(x1, p.x + p.comp_m); y1 = Math.max(y1, p.y + p.larg_m);
+  }
+  const M = 0.6;   // margem da marcação (acesso em volta)
+  const marca = new THREE.Mesh(
+    new THREE.PlaneGeometry((x1 - x0) + M * 2, (y1 - y0) + M * 2),
+    new THREE.MeshBasicMaterial({ color: 0xf5c518, transparent: true, opacity: 0.13,
+                                  side: THREE.DoubleSide }));
+  marca.rotation.x = -Math.PI / 2;
+  marca.position.set((x0 + x1) / 2, 0.012, (y0 + y1) / 2);
+  grupo.add(marca);
+
+  for (const p of pilhas) {
+    const cx = p.x + p.comp_m / 2;
+    const cz = p.y + p.larg_m / 2;
+    const n = Math.max(p.n_pecas || 1, 1);
+    for (let i = 0; i < n; i++) {
+      // folga entre peças: 0.88 da altura, para se distinguirem na pilha
+      const peca = new THREE.Mesh(
+        geoCaixa(p.comp_m * 0.98, p.alt_peca_m * 0.88, p.larg_m * 0.98), MAT_OVERSIZE);
+      peca.position.set(cx, i * p.alt_peca_m + p.alt_peca_m * 0.44, cz);
+      peca.castShadow = true;
+      peca.userData.pilha = p;
+      grupo.add(peca);
+    }
+  }
+  scene.add(grupo);
 }
 
 function desenharZonas(zonasLayout) {
@@ -1207,6 +1474,21 @@ function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
       continue;
     }
 
+    if (c.load_type === "OVERSIZE") {
+      // Componente POUSADO nu na wide-span: sem palete e sem caixa de cartão.
+      // c.alt_m é a altura do STACK todo, por isso desenham-se n peças
+      // sobrepostas de altUnit cada -- é o que o dimensionamento conta.
+      const nOvs = Math.max(c.num_boxes_in_stack || 1, 1);
+      const hUnit = Math.max(c.alt_m / nOvs, 0.02);
+      for (let s = 0; s < nOvs; s++) {
+        const peca = new THREE.Mesh(
+          geoCaixa(c.comp_m * 0.97, hUnit * 0.88, c.larg_m * 0.97), MAT_OVERSIZE);
+        peca.position.set(cx, baseY + folga + s * hUnit + hUnit * 0.44, cz);
+        _marcarCaixa(peca, r, c, nivel, grupo);
+      }
+      continue;
+    }
+
     const altUnit = c.alt_m / n;
 
     if (c.load_type === "PALLET" || c.load_type === "MEIA") {
@@ -1276,14 +1558,19 @@ function desenharLayout(layout) {
   }
 }
 
-function ajustarCenaECamera(layout, zonasLayout) {
-  const pontosX = [...layout.map(r => r.x + r.larg_m), ...zonasLayout.map(z => z.x + z.larg_m)];
-  const pontosY = [...layout.map(r => r.y + r.prof_m), ...zonasLayout.map(z => z.y + z.prof_m)];
+function ajustarCenaECamera(layout, zonasLayout, pilhas = []) {
+  // As pilhas no chão entram no enquadramento e nas PAREDES: ficam fora do bloco
+  // de racks, por isso sem isto caíam fora do edifício desenhado.
+  const pontosX = [...layout.map(r => r.x + r.larg_m), ...zonasLayout.map(z => z.x + z.larg_m),
+                   ...pilhas.map(p => p.x + p.comp_m)];
+  const pontosY = [...layout.map(r => r.y + r.prof_m), ...zonasLayout.map(z => z.y + z.prof_m),
+                   ...pilhas.map(p => p.y + p.larg_m)];
   if (!pontosX.length) return;
 
   const maxX = Math.max(...pontosX);
   const maxY = Math.max(...pontosY);
-  const maxZ = Math.max(1, ...layout.map(r => r.altura_m * (r.blocos_empilhados || 1)));
+  const maxZ = Math.max(1, ...layout.map(r => r.altura_m * (r.blocos_empilhados || 1)),
+                        ...pilhas.map(p => p.altura_total_m || 0));
 
   desenharParedes(maxX, maxY, maxZ);
 
@@ -1295,8 +1582,10 @@ function ajustarCenaECamera(layout, zonasLayout) {
   camera.updateProjectionMatrix();
   controls.minDistance = 0.5;
   controls.maxDistance = escala * 10;
-  scene.fog.near = escala * 4;
-  scene.fog.far = escala * 15;
+  // Fog afastado: de dia serve só para dissolver o horizonte distante. Perto
+  // (escala*4) lavava o bloco de racks contra o céu claro e tirava contraste.
+  scene.fog.near = escala * 8;
+  scene.fog.far = escala * 30;
 
   dirLight.position.set(maxX / 2 + escala * 0.5, escala * 1.2, maxY / 2 + escala * 0.3);
   dirLight.target.position.set(maxX / 2, 0, maxY / 2);
@@ -1596,6 +1885,8 @@ function inicializarCanvas() {
           altura_armazem_m: parseFloat(document.getElementById("altura-armazem").value) || 0,
           altura_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
           margem_estrutural_pct: 0,
+          largura_max_m: parseFloat(document.getElementById("largura-max").value) || 0,
+          profundidade_max_m: parseFloat(document.getElementById("profundidade-max").value) || 0,
         }),
       });
       lastGerarData = await resp.json();
@@ -1603,9 +1894,37 @@ function inicializarCanvas() {
       selBlockId = null;
       desenharBlocks();
       const rb = lastGerarData.racking_block;
-      let html = `<b>Bloco de racks:</b> ${rb.w} × ${rb.h} m = ${(rb.w * rb.h).toFixed(1)} m² ` +
-                 `(footprint de racks: ${lastGerarData.area_racks_m2} m²; corredores internos incluídos no bloco)` +
+      // O bloco inclui a fiada de armazenagem ao chão quando existe -- dizê-lo,
+      // senão as dimensões parecem só de racks e o arranjo no canvas fica curto.
+      const temChao = (lastGerarData.area_oversize_chao_m2 || 0) > 0;
+      let html = `<b>Bloco de racks${temChao ? " + armazenagem ao chão" : ""}:</b> ` +
+                 `${rb.w} × ${rb.h} m = ${(rb.w * rb.h).toFixed(1)} m² ` +
+                 `(ocupado: ${lastGerarData.area_racks_m2} m²${temChao ? ", racks + pilhas" : ""}; ` +
+                 `corredores internos incluídos no bloco)` +
                  ` · <a href="/api/download/pecas-caixas" download style="color:#7fb3f0">⬇ Excel peças → tipo de caixa</a>`;
+      // Peças volumosas em pilha no chão (sem rack): área calculada das cotas +
+      // stock, reportada à parte porque não tem posições de rack nem corredores.
+      const achao = lastGerarData.area_oversize_chao_m2 || 0;
+      if (achao > 0) {
+        const det = lastGerarData.detalhe_oversize_chao || [];
+        const linhas = det.map(d =>
+          `${d.sku}: ${d.unidades} un → ${d.pilhas} pilha(s) de ${d.por_pilha} ` +
+          `(limita ${d.limitado_por}, ${d.peso_pilha_kg} kg) = ${d.area_m2} m²`).join("<br>");
+        html += `<div style="font-size:12px;color:#9aa;margin-top:6px">` +
+                `<b>Armazenagem ao chão (pilhas, sem rack): ${achao} m² com acesso</b> ` +
+                `— já incluída nas dimensões do bloco acima<br>${linhas}</div>`;
+      }
+      // O teto de largura só age se for violado. Distinguir "não mordeu" de
+      // "apertou" evita a dúvida de se o campo está a fazer alguma coisa.
+      const lmax = parseFloat(document.getElementById("largura-max").value) || 0;
+      if (lmax > 0) {
+        const mordeu = rb.w < lmax - 1e-6;
+        html += `<div style="font-size:12px;color:#9aa;margin-top:4px">` +
+                (mordeu
+                  ? `Teto de largura ${lmax} m — o bloco ficou em ${rb.w} m e cresceu em profundidade.`
+                  : `Teto de largura ${lmax} m — não foi preciso apertar (a forma mais compacta já cabe).`) +
+                `</div>`;
+      }
       if (lastGerarData.avisos && lastGerarData.avisos.length) {
         html += `<div class="avisos">⚠ ${lastGerarData.avisos.join("<br>⚠ ")}</div>`;
       }
@@ -1646,6 +1965,11 @@ function inicializarCanvas() {
           blocks: canvasBlocks,
           altura_armazem_m: parseFloat(document.getElementById("altura-armazem").value) || 0,
           altura_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
+          // MESMO envelope do "Gerar racks": o render recalcula o pipeline, e sem
+          // isto obtinha a forma livre e depois rodava-a com as dimensões do
+          // bloco do canvas -> fiadas cortadas a meio.
+          largura_max_m: parseFloat(document.getElementById("largura-max").value) || 0,
+          profundidade_max_m: parseFloat(document.getElementById("profundidade-max").value) || 0,
         }),
       });
       const data = await resp.json();
@@ -1664,10 +1988,12 @@ function inicializarCanvas() {
       // apanhavam o carro procedural de fallback); se falhar, segue na mesma
       await carregarBen();
       desenharLayout(data.layout);
+      desenharPilhasChao(data.pilhas_chao);
       desenharZonas(data.zonas_layout);
-      ajustarCenaECamera(data.layout, data.zonas_layout);
+      ajustarCenaECamera(data.layout, data.zonas_layout, data.pilhas_chao || []);
       // operadores andam nos corredores REAIS que o backend calcula (data.corredores)
-      _opsCtx = { layout: data.layout, zonas: data.zonas_layout, corredores: data.corredores || [] };
+      _opsCtx = { layout: data.layout, zonas: data.zonas_layout, corredores: data.corredores || [],
+                   pilhas: data.pilhas_chao || [] };
       recriarOperadores();
       const tipos = [...new Set(data.layout.flatMap(r => r.load_types))];
       desenharLegenda(tipos, data.zonas_layout.map(z => z.nome));
@@ -1675,7 +2001,8 @@ function inicializarCanvas() {
       document.getElementById("resumo").innerHTML = `
         <p><b>Área total do armazém (envolvente do arranjo): ${data.area_total_m2} m²</b>
           — ${data.largura_total_m} × ${data.profundidade_total_m} m</p>
-        <p>Footprint de racks: ${data.area_racks_m2} m² · Zonas funcionais: ${data.area_zonas_m2} m²</p>`;
+        <p>Footprint de racks: ${data.area_racks_m2} m² · Zonas funcionais: ${data.area_zonas_m2} m²${
+          data.area_oversize_chao_m2 ? ` · Armazenagem ao chão: ${data.area_oversize_chao_m2} m²` : ""}</p>`;
     } finally {
       btn.textContent = "2 · Renderizar layout 3D";
       btn.disabled = false;
