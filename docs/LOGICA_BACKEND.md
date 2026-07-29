@@ -119,7 +119,7 @@ Modelo de envelope 3D com três cortes:
 `peças_por_unidade = min(plano × vertical, corte_por_peso)`.
 
 ### 3.3 Escolha da unidade — `choose_load()`
-Estratégia **FEWEST_BOXES** (default): testa todas as candidatas
+Minimiza o **nº de unidades de carga**: testa todas as candidatas
 **S → M → L → MEIA → PALLET** onde caiba ≥ 1 peça e escolhe a que minimiza
 `ceil(stock_max_un / peças_por_unidade)`. Em **empate ganha a mais pequena**
 (ordem de teste). Se a peça não cabe em nenhuma → PALLET com 1 peça/palete
@@ -272,7 +272,6 @@ Excel.
 
 | Parâmetro | Default | Efeito |
 |---|---|---|
-| `box_strategy` | FEWEST_BOXES | única estratégia implementada |
 | `fator_empilhamento` | 0.3 | altura extra por peça ANINHAVEL |
 | `fill_factor_plano` | 0.7 | fator de enchimento no plano (todas as classes) |
 | `long_geometrias` | ("Comprida",) | encaminhamento para LONGO |
@@ -291,8 +290,10 @@ Excel («Caixas», «Racks»); alturas de picking/armazém → UI web ou CLI
 
 - A palete e a meia-palete são entradas do catálogo, não casos especiais.
 - `alt_nivel_m` é altura por nível; total do prumo = nível × níveis.
-- FEWEST_BOXES é a estratégia certa para minimizar chão (validado: alternativas
-  de volume mínimo dão blocos maiores).
+- Minimizar o nº de unidades é a regra certa para minimizar chão (validado:
+  alternativas de volume mínimo dão blocos maiores). O enum `BoxStrategy` e o
+  `min_fill_ratio` foram removidos do `config.py` — as outras estratégias nunca
+  passaram de nomes.
 - Stacks só juntam caixas **do mesmo SKU**; a altura do stack usa o nível mais
   baixo entre racks onde a caixa cabe (garante que o stack cabe em qualquer
   colocação possível).

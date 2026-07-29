@@ -14,7 +14,7 @@ Unidades em metros / m³. Não faz slotting/picking — é dimensionamento de ca
 ```
 warehouse/
   models.py     dataclasses (INPUT vs OUTPUT); LoadType = S/M/L/PALLET/LONGO
-  config.py     parâmetros e regras de negócio (ver "A CONFIRMAR")
+  config.py     parâmetros e regras de negócio
   io_excel.py   ler master data / escrever resultados
   boxing.py     Passo 1 — escolher unidade + contar (py3dbp); encaminha LONGO
   racking.py    Passo 2 — racks necessários (rectpack); cantilever p/ LONGO

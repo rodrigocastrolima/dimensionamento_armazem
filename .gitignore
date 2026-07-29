@@ -2,6 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 dados/resultados.xlsx
+# outputs do pipeline (regerados a cada execucao)
+dados/pecas_tipo_caixa.xlsx
+# backups locais do master data
+dados/*_antigo.xlsx
 ~$*
 
 # Fontes 3D pesadas (CAD/render) — não versionar; só o GLB otimizado entra
