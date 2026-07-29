@@ -31,7 +31,7 @@
 <script type="module">
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { criarCarro, carregarBen } from "./carro.js";   // MESMA fonte que o index.html
+import { criarCarro, BEN_DIM } from "./carro.js";   // MESMA fonte que o index.html
 
 const canvas = document.getElementById("c");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -54,19 +54,26 @@ const chao = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshStand
 chao.rotation.x = -Math.PI / 2; chao.receiveShadow = true; scene.add(chao);
 scene.add(new THREE.GridHelper(20, 20, 0x3a4048, 0x2a2f36));
 
-let carro = criarCarro();          // procedural, imediato
+let carro = criarCarro();
 scene.add(carro);
-// troca pelo modelo CAD real assim que carregar
-carregarBen().then((ok) => {
-  if (!ok) { document.getElementById("info").textContent += " (ben.glb indisponivel - procedural)"; return; }
-  scene.remove(carro);
-  carro = criarCarro();
-  scene.add(carro);
+
+// Mede o que está na cena e compara com as cotas do CAD real (BEN_DIM), que é o
+// alvo das proporções. O CAD real não é usado -- ver a nota em carro.js.
+{
   const b = new THREE.Box3().setFromObject(carro);
   const s = new THREE.Vector3(); b.getSize(s);
-  document.getElementById("info").textContent =
-    `BEN real (CAD) — ${s.x.toFixed(2)} × ${s.z.toFixed(2)} × ${s.y.toFixed(2)} m · 133k triangulos`;
-});
+  let tris = 0;
+  carro.traverse(o => {
+    const g = o.geometry;
+    if (g) tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+  });
+  const d = BEN_DIM;
+  const dif = (a, b2) => `${a.toFixed(2)}<span style="opacity:.55">/${b2.toFixed(2)}</span>`;
+  document.getElementById("info").innerHTML =
+    `BEN procedural — comp×larg×alt (real/CAD): ` +
+    `${dif(s.x, d.comp_m)} × ${dif(s.z, d.larg_m)} × ${dif(s.y, d.alt_m)} m · ` +
+    `${Math.round(tris).toLocaleString("pt-PT")} triângulos`;
+}
 
 let autoRotate = true;
 document.getElementById("rot").onclick = (e) => { autoRotate = !autoRotate; e.target.textContent = autoRotate ? "⏸ parar rotação" : "▶ rodar"; };
