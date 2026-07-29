@@ -195,21 +195,54 @@ def choose_load(article: Article, catalogo: list[BoxType],
     # menores cotas cabem em comp x larg), 1/palete é uma aproximação legítima;
     # caso contrário é OVERSIZE e tem de ser reportado, não inventado.
     pallet = catalogo_idx.get(LoadType.PALLET)
-    if pallet is not None and not _assenta_na_palete(article, pallet):
+    if pallet is not None and not _assenta_na_palete(
+            article, pallet, cfg.pallet_transbordo_max_pct):
         return LoadType.OVERSIZE, 1
     return LoadType.PALLET, 1
 
 
-def _assenta_na_palete(article: Article, pallet: BoxType) -> bool:
-    """True se a peça assenta na footprint da palete nalguma orientação, ou
-    seja se as suas duas MENORES cotas cabem em (int_comp_m x int_larg_m).
+def _assenta_na_palete(article: Article, pallet: BoxType,
+                       transbordo_max_pct: float = 0.25) -> bool:
+    """True se a peça é comportável por uma palete: as duas MENORES cotas cabem
+    na footprint E a MAIOR não fica em voo além do tolerado.
+
     Ignora a restrição de orientação de propósito: a questão aqui é apenas se a
-    peça é fisicamente comportável por uma palete, não como se arruma."""
-    d = sorted((article.comp_m, article.larg_m, article.alt_m))
-    curta, media = d[0], d[1]
+    peça é fisicamente paletizável, não como se arruma.
+
+    O teste do transbordo é essencial e faltava. Sem ele, uma lateral de 2.47 m
+    saía como "1 por palete" com 1.27 m a pender de uma palete de 1.20 m -- mais
+    do que a palete mede. E uma palete assim não é armazenável em rack: o
+    rack_capacity conta-a como ocupando 1.20 m quando na prática colide com as
+    vizinhas. Peças acima do limiar são OVERSIZE e vão para armazenagem ao chão
+    (ver Config.pallet_transbordo_max_pct).
+
+    O transbordo mede-se sempre no PLANO, nunca na altura: das 3 orientações
+    possíveis (cada cota como vertical), basta uma pousar dentro da footprint
+    (com a tolerância) para a peça ser paletizável. Uma peça de 1.2 x 0.8 x 3.0 m
+    posta de pé não pende para fora, apesar de ter 3 m de cota máxima."""
+    c, l, a = article.comp_m, article.larg_m, article.alt_m
     lado_maior = max(pallet.int_comp_m, pallet.int_larg_m)
     lado_menor = min(pallet.int_comp_m, pallet.int_larg_m)
-    return curta <= lado_menor + 1e-9 and media <= lado_maior + 1e-9
+    tol_maior = lado_maior * (1.0 + transbordo_max_pct)
+
+    # As 3 escolhas de cota vertical; em cada uma, (vertical) é a altura e o par
+    # (base_menor, base_maior) fica no plano. A peça é paletizável se ALGUMA
+    # orientação satisfizer as três condições:
+    #   - a cota vertical cabe na ALTURA ÚTIL da palete -- sem isto, aceitava-se
+    #     pôr uma lateral de 2.47 m de pé numa palete de 1.50 m de altura útil,
+    #     que é o que fazia estas peças escaparem ao critério;
+    #   - a cota menor do plano apoia dentro do lado menor (senão pende dos DOIS
+    #     lados e não há apoio nenhum);
+    #   - a cota maior do plano fica dentro do lado maior + tolerância. A
+    #     tolerância aplica-se SÓ a esta: alargá-la a ambas seria inventar uma
+    #     palete maior, não tolerar que a peça penda de uma ponta.
+    for vertical, (p, q) in ((a, (c, l)), (l, (c, a)), (c, (l, a))):
+        if vertical > pallet.int_alt_m + 1e-9:
+            continue
+        base_maior, base_menor = max(p, q), min(p, q)
+        if base_menor <= lado_menor + 1e-9 and base_maior <= tol_maior + 1e-9:
+            return True
+    return False
 
 
 def plan_box(article: Article, catalogo: list[BoxType],

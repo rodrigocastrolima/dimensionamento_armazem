@@ -60,10 +60,31 @@ def run(cfg: Config) -> None:
     avisos = (boxing.avisos_cantilever(articles, cfg)
               + avisos_estimativa + avisos_alocacao)
 
-    dim = area.floor_area(posicoes, rack_by_name)                             # Passo 3
     zonas = io_excel.load_zones(cfg.master_data)
-    wl = layout_mod.gerar_layout(posicoes, rack_by_name, zonas)               # Passo 3b
-    resumo = area.resumo_area_total(dim, wl, zonas, cfg.margem_estrutural_pct)
+
+    # OVERSIZE ao chão (só se não houver tipologia wide-span: o rack tem
+    # prioridade). Antes do layout, para as pilhas entrarem como fiada do bloco.
+    artigos_chao: list[tuple] = []
+    area_chao_m2 = 0.0
+    if cfg.oversize_ao_chao and not racking._melhor_oversize(rack_types, cfg.oversize_racks):
+        artigos_chao = [
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades)
+            for a in assignments if a.load_type == LoadType.OVERSIZE
+            for art in [article_idx.get(a.sku)] if art
+        ]
+        area_chao_m2, _ = area.area_oversize_chao(
+            artigos_chao, cfg.oversize_chao_altura_max_m,
+            cfg.oversize_chao_peso_max_kg, cfg.oversize_chao_acesso_pct)
+
+    wl = layout_mod.gerar_layout(posicoes, rack_by_name, zonas,               # Passo 3b
+                                 cfg.largura_max_m, cfg.profundidade_max_m,
+                                 artigos_chao, cfg.oversize_chao_altura_max_m,
+                                 cfg.oversize_chao_peso_max_kg)
+    avisos = avisos + wl.avisos
+
+    # Passo 3 depois do 3b: o footprint das pilhas conta como área ocupada
+    dim = area.floor_area(posicoes, rack_by_name, wl.pilhas_chao)
+    resumo = area.resumo_area_total(dim, wl, zonas, cfg.margem_estrutural_pct, area_chao_m2)
 
     slots = _flatten_para_excel(posicoes)
     io_excel.write_results(cfg.output, assignments, requirements, dim, slots, avisos, wl,

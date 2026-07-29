@@ -146,19 +146,31 @@ class GerarRequest(BaseModel):
     altura_armazem_m: float = 0.0
     altura_picking_m: float = 0.0
     margem_estrutural_pct: float = 0.0
+    # envelope do bloco de racks (0 = sem limite); ver Config.largura_max_m
+    largura_max_m: float = 0.0
+    profundidade_max_m: float = 0.0
 
 
 class ArrangeRequest(BaseModel):
     blocks: list  # [{id, type: "zone"|"racking", nome, w, h, x, y, rot}, ...]
     altura_armazem_m: float = 0.0
     altura_picking_m: float = 0.0
+    # Envelope do bloco de racks: TEM de ser o mesmo com que /api/gerar produziu
+    # o bloco que está no canvas. Sem isto, o render recalculava o layout LIVRE
+    # (forma diferente) e depois rodava-o/deslocava-o usando as dimensões do
+    # bloco do canvas -- as posições eram espremidas num retângulo que não era o
+    # delas e as fiadas apareciam cortadas a meio (ver _roda_rect).
+    largura_max_m: float = 0.0
+    profundidade_max_m: float = 0.0
 
 
 @app.post("/api/gerar")
 def gerar(body: GerarRequest):
     local_cfg = Config(altura_armazem_m=body.altura_armazem_m,
                        altura_picking_m=body.altura_picking_m,
-                       margem_estrutural_pct=body.margem_estrutural_pct)
+                       margem_estrutural_pct=body.margem_estrutural_pct,
+                       largura_max_m=body.largura_max_m,
+                       profundidade_max_m=body.profundidade_max_m)
 
     articles = io_excel.load_articles(cfg.master_data)
     catalogo = io_excel.load_catalog(cfg.master_data)
@@ -188,11 +200,37 @@ def gerar(body: GerarRequest):
     avisos = (boxing.avisos_cantilever(articles, local_cfg)
               + avisos_estimativa + avisos_alocacao)
 
-    dim = area.floor_area(posicoes, rack_by_name)
     zonas = io_excel.load_zones(cfg.master_data)
-    warehouse_layout = layout_mod.gerar_layout(posicoes, rack_by_name, zonas)
+
+    # OVERSIZE ao chão: só existe quando NÃO há tipologia wide-span (o rack tem
+    # prioridade). A área vem das cotas + stock, não de um valor fixo. Calcula-se
+    # ANTES do layout, para as pilhas receberem coordenadas e aparecerem no 3D.
+    artigos_chao: list[tuple] = []
+    area_chao_m2, detalhe_chao = 0.0, []
+    if local_cfg.oversize_ao_chao and not racking._melhor_oversize(
+            rack_types, local_cfg.oversize_racks):
+        artigos_chao = [
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades)
+            for a in assignments if a.load_type == LoadType.OVERSIZE
+            for art in [article_idx.get(a.sku)] if art
+        ]
+        area_chao_m2, detalhe_chao = area.area_oversize_chao(
+            artigos_chao, local_cfg.oversize_chao_altura_max_m,
+            local_cfg.oversize_chao_peso_max_kg, local_cfg.oversize_chao_acesso_pct)
+
+    warehouse_layout = layout_mod.gerar_layout(
+        posicoes, rack_by_name, zonas,
+        local_cfg.largura_max_m, local_cfg.profundidade_max_m,
+        artigos_chao, local_cfg.oversize_chao_altura_max_m,
+        local_cfg.oversize_chao_peso_max_kg)
+    avisos = avisos + warehouse_layout.avisos
     layout_json = _serializar_layout(warehouse_layout, rack_by_name)
-    resumo = area.resumo_area_total(dim, warehouse_layout, zonas, local_cfg.margem_estrutural_pct)
+
+    # floor_area DEPOIS do layout: as pilhas são uma fiada do bloco e o seu
+    # footprint conta como área ocupada (senão aparecia como corredor).
+    dim = area.floor_area(posicoes, rack_by_name, warehouse_layout.pilhas_chao)
+    resumo = area.resumo_area_total(dim, warehouse_layout, zonas,
+                                    local_cfg.margem_estrutural_pct, area_chao_m2)
 
     totais_carga: dict[str, int] = {}
     for a in assignments:
@@ -207,8 +245,13 @@ def gerar(body: GerarRequest):
                     s.add(c.load_type.value)
 
     # Racking block dimensions (for canvas layout tool)
+    # Dimensões do bloco COMO ELE É no layout: incluem a fiada de armazenagem ao
+    # chão, se houver (ver layout.gerar_layout). O canvas precisa do retângulo
+    # real, senão o utilizador arranja o armazém com um bloco menor do que o que
+    # vai ocupar.
     racking_w = warehouse_layout.largura_total_m
     racking_h = warehouse_layout.profundidade_total_m
+    tem_chao = bool(warehouse_layout.pilhas_chao)
 
     # Posições iniciais das zonas no canvas: grelha compacta (shelf-packing,
     # várias linhas) à direita do bloco de racks, em vez de uma única coluna
@@ -236,6 +279,16 @@ def gerar(body: GerarRequest):
         "largura_layout_m": warehouse_layout.largura_total_m,
         "profundidade_layout_m": warehouse_layout.profundidade_total_m,
         "area_zonas_m2": round(resumo.area_zonas_m2, 2),
+        "area_oversize_chao_m2": round(resumo.area_oversize_chao_m2, 2),
+        "detalhe_oversize_chao": detalhe_chao,
+        # pilhas com coordenadas, para o 3D as desenhar (ver PilhaChao)
+        "pilhas_chao": [
+            {"sku": p.sku, "x": p.x_m, "y": p.y_m,
+             "comp_m": p.comp_m, "larg_m": p.larg_m,
+             "alt_peca_m": p.alt_peca_m, "n_pecas": p.n_pecas,
+             "peso_kg": p.peso_kg, "altura_total_m": round(p.altura_total_m, 3)}
+            for p in warehouse_layout.pilhas_chao
+        ],
         "margem_estrutural_m2": round(resumo.margem_estrutural_m2, 2),
         "area_bruta_total_m2": round(resumo.area_bruta_total_m2, 2),
         "avisos": avisos,
@@ -278,7 +331,7 @@ def gerar(body: GerarRequest):
         "racking_block": {
             "id": "racking_block",
             "type": "racking",
-            "nome": "Bloco de Racks",
+            "nome": "Bloco de Racks + chao" if tem_chao else "Bloco de Racks",
             "w": round(racking_w, 2),
             "h": round(racking_h, 2),
             "area_m2": round(dim.area_racks_m2, 2),
@@ -289,7 +342,7 @@ def gerar(body: GerarRequest):
             {
                 "id": "racking_block",
                 "type": "racking",
-                "nome": "Bloco de Racks",
+                "nome": "Bloco de Racks + chao" if tem_chao else "Bloco de Racks",
                 "w": round(racking_w, 2),
                 "h": round(racking_h, 2),
                 "x": 0.5,
@@ -329,7 +382,9 @@ def render_layout(body: ArrangeRequest):
     de racks; as zonas usam as posições/rotações do canvas; a área total é o
     retângulo envolvente de todos os blocos colocados."""
     local_cfg = Config(altura_armazem_m=body.altura_armazem_m,
-                       altura_picking_m=body.altura_picking_m)
+                       altura_picking_m=body.altura_picking_m,
+                       largura_max_m=body.largura_max_m,
+                       profundidade_max_m=body.profundidade_max_m)
 
     articles = io_excel.load_articles(cfg.master_data)
     catalogo = io_excel.load_catalog(cfg.master_data)
@@ -351,11 +406,30 @@ def render_layout(body: ArrangeRequest):
         assignments, requirements, rack_types, catalogo_por_tipo, articles,
         comp_max_longo, local_cfg.altura_picking_m, local_cfg.altura_armazem_m,
         local_cfg)
-    dim = area.floor_area(posicoes, rack_by_name)
+
+    # OVERSIZE ao chão (ver /api/gerar): antes do layout, para as pilhas
+    # receberem coordenadas e serem desenhadas no 3D.
+    artigos_chao: list[tuple] = []
+    area_chao_m2 = 0.0
+    if local_cfg.oversize_ao_chao and not racking._melhor_oversize(
+            rack_types, local_cfg.oversize_racks):
+        artigos_chao = [
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades)
+            for a in assignments if a.load_type == LoadType.OVERSIZE
+            for art in [article_idx.get(a.sku)] if art
+        ]
+        area_chao_m2, _ = area.area_oversize_chao(
+            artigos_chao, local_cfg.oversize_chao_altura_max_m,
+            local_cfg.oversize_chao_peso_max_kg, local_cfg.oversize_chao_acesso_pct)
 
     # layout interno dos racks (sem zonas: começa em y=0), deslocado para a
     # posição do bloco de racks no canvas
-    warehouse_layout = layout_mod.gerar_layout(posicoes, rack_by_name, None)
+    warehouse_layout = layout_mod.gerar_layout(
+        posicoes, rack_by_name, None,
+        local_cfg.largura_max_m, local_cfg.profundidade_max_m,
+        artigos_chao, local_cfg.oversize_chao_altura_max_m,
+        local_cfg.oversize_chao_peso_max_kg)
+    dim = area.floor_area(posicoes, rack_by_name, warehouse_layout.pilhas_chao)
     layout_json = _serializar_layout(warehouse_layout, rack_by_name)
 
     bloco_racks = next((b for b in body.blocks if b.get("type") == "racking"), None)
@@ -453,8 +527,30 @@ def render_layout(body: ArrangeRequest):
         c["x"] = round(c["x"] - min_x, 4)
         c["y"] = round(c["y"] - min_y, 4)
 
+    # Pilhas no chão: são uma fiada DENTRO do bloco de racks (ver
+    # layout.gerar_layout), por isso rodam e deslocam-se exatamente como as
+    # posições de rack -- mesmo frame, mesmo contentor, mesma base.
+    pilhas_json = []
+    for p in warehouse_layout.pilhas_chao:
+        px, py, pl, pp = _roda_rect(p.x_m, p.y_m, p.comp_m, p.larg_m,
+                                    bloco_w, bloco_h)
+        pilhas_json.append(
+            {"sku": p.sku,
+             "x": round(base_x + px - min_x, 4),
+             "y": round(base_y + py - min_y, 4),
+             "comp_m": round(pl, 4), "larg_m": round(pp, 4),
+             "alt_peca_m": p.alt_peca_m, "n_pecas": p.n_pecas,
+             "peso_kg": p.peso_kg, "altura_total_m": round(p.altura_total_m, 3)})
+
+    # NOTA: já não é preciso reajustar/renormalizar por causa das pilhas. Quando
+    # elas eram um bloco SEPARADO (além de bloco_h) caíam em coordenadas
+    # negativas ao rodar e ficavam fora das paredes; agora que são uma fiada
+    # dentro do bloco, o _roda_rect e a normalização dos racks já as cobrem.
+
     return {
         "layout": layout_json,
+        "pilhas_chao": pilhas_json,
+        "area_oversize_chao_m2": round(area_chao_m2, 2),
         "zonas_layout": zonas_layout,
         "corredores": corredores_json,
         "area_racks_m2": round(dim.area_racks_m2, 2),

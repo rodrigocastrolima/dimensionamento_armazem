@@ -1,14 +1,7 @@
-"""Parâmetros e decisões de negócio. Os pontos 'A CONFIRMAR' mudam resultados."""
+"""Parâmetros e decisões de negócio. Mudar estes valores muda resultados."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
-from enum import Enum
-
-
-class BoxStrategy(str, Enum):
-    FEWEST_BOXES = "fewest_boxes"    # minimizar nº de caixas (default)
-    MIN_WASTE = "min_waste"          # minimizar volume desperdiçado
-    SMALLEST_FIT = "smallest_fit"    # menor caixa com ocupação >= limiar
 
 
 @dataclass
@@ -17,9 +10,15 @@ class Config:
     master_data: Path = Path("dados/master_data_classificado_v1.xlsx")
     output: Path = Path("dados/resultados.xlsx")
 
-    # Passo 1 — escolha de caixa  (A CONFIRMAR)
-    box_strategy: BoxStrategy = BoxStrategy.FEWEST_BOXES
-    min_fill_ratio: float = 0.0          # usado por SMALLEST_FIT
+    # Passo 1 — escolha de caixa
+    # NOTA: existiu aqui um `box_strategy` (enum BoxStrategy com FEWEST_BOXES /
+    # MIN_WASTE / SMALLEST_FIT) e um `min_fill_ratio`. Foram REMOVIDOS por serem
+    # código morto: só FEWEST_BOXES chegou a ser implementado (boxing.choose_load
+    # minimiza ceil(stock_max_un / pecas_por_unidade), empate -> caixa mais
+    # pequena) e `min_fill_ratio` só servia o SMALLEST_FIT. A decisão está
+    # fechada e validada: minimizar nº de caixas é o que minimiza chão --
+    # estratégias de volume mínimo dão blocos maiores. Não reintroduzir como
+    # parâmetro: parecia configurável, mas ninguém o lia.
     pallet_threshold_unidades: int = 6   # acima disto em caixas L -> palete
 
     # Empilhamento de artigos (dentro de caixa/palete), eixo da altura.
@@ -69,6 +68,90 @@ class Config:
     # do Excel já são o total).
     altura_armazem_m: float = 0.0
 
+    # Transbordo máximo tolerado ao pousar uma peça EM CIMA da palete, como
+    # fração do lado maior da palete. Aplica-se só no fallback do boxing (peça
+    # que não cabe em nenhuma unidade de carga mas assenta na footprint).
+    #
+    # Porquê: `_assenta_na_palete` testava só as duas MENORES cotas -- respondia
+    # a "equilibra-se em cima?" e ignorava quanto a maior cota fica em voo. As
+    # laterais GFRP (2.47 m) saíam como 1/palete com **1.27 m a pender para
+    # fora**, mais do que a própria palete mede. Isso não é só estética: uma
+    # palete assim NÃO é armazenável em rack -- o rack_capacity conta-a como
+    # ocupando 1.20 m, quando na prática colide com as vizinhas ou invade o
+    # corredor. Era subdimensionamento silencioso.
+    #
+    # 0.25 = tolera até 1.50 m numa palete de 1.20 m. Apanha as laterais (2.47 m)
+    # e o tejadilho (1.54 m) -> vão para o chão; deixa em palete o firewall
+    # (+1.7 cm) e os painéis (+11 cm), que são transbordos irrelevantes.
+    # Valor alto (ex.: 10.0) desliga o critério (comportamento anterior).
+    pallet_transbordo_max_pct: float = 0.25
+
+    # --- OVERSIZE ao CHÃO (block stacking) ------------------------------------
+    # Peças volumosas que não assentam na palete podem ser arrumadas EM PILHA NO
+    # CHÃO, sem rack -- é o "block stacking" clássico. Escolhe-se isto quando são
+    # poucas referências: montar uma tipologia de rack inteira para 3 SKUs não se
+    # justifica. A área é CALCULADA a partir das cotas e do stock (não é um
+    # número fixo na folha «Zonas»), por isso acompanha o master data.
+    #
+    # Ativo quando não há tipologia que aceite OVERSIZE (ver oversize_racks): o
+    # rack tem prioridade, o chão é a alternativa.
+    oversize_ao_chao: bool = True
+
+    # Limites da pilha ao chão. Sem estrutura a suportar, o que trava é o
+    # alcance do operador e o bom senso de carga sobre a peça de baixo.
+    oversize_chao_altura_max_m: float = 1.8      # alcance/estabilidade
+    oversize_chao_peso_max_kg: float = 1000.0    # carga na peça do fundo
+
+    # Acesso: fração da área de pilhas somada como corredor/manuseio em volta do
+    # bloco. 0.45 = +45%, coerente com um acesso frontal de ~1.2 m num bloco
+    # destas dimensões. Não é corredor de rack (não há filas), é o espaço para
+    # chegar às pilhas.
+    oversize_chao_acesso_pct: float = 0.45
+
+    # --- OVERSIZE em rack wide-span (bulk rack) -------------------------------
+    # Peças volumosas que não assentam na footprint da palete (boxing -> OVERSIZE)
+    # passam a ser dimensionadas numa tipologia própria em vez de ficarem só em
+    # aviso. "A própria rack é a superfície": os componentes ficam POUSADOS no
+    # nível, sem palete nem caixa -- como no LONGO/cantilever, a capacidade é de
+    # outro tipo (footprint do nível + empilhamento, não unidades de carga).
+    #
+    # Referência da indústria: wide span / longspan shelving ("bulk rack") --
+    # construção de porta-paletes com aplicação de estante, para carga NÃO
+    # paletizada e carregada à mão. Profundidades standard 450-1200 mm (métrico)
+    # ou até 60" = 1524 mm; vãos 1200/1500/1800/2400/2700 mm; 500-1000 kg/nível.
+    # O porta-paletes normal não serve: só vai até 48" (1219 mm) de profundidade
+    # e as peças aqui precisam de ~1.38 m.
+    #
+    # Tipologias da folha «Racks» cujo nome contenha uma destas chaves aceitam
+    # OVERSIZE (case-insensitive). Vazio = nenhuma; os OVERSIZE voltam a ficar
+    # só em aviso, como antes.
+    oversize_racks: tuple = ("wide", "bulk")
+
+    # Peso máximo por nível da wide-span (kg). Nas peças reais é o PESO, não a
+    # altura, que trava o empilhamento: uma peça de 216 kg empilharia 8x por
+    # altura mas só 4x por peso. 0 = sem limite de peso.
+    oversize_peso_max_nivel_kg: float = 1000.0
+
+    # Folga de manuseio descontada à altura do nível, ao empilhar peças pousadas
+    # (é preciso espaço para as mãos/equipamento entre a peça de cima e a viga).
+    oversize_folga_altura_m: float = 0.05
+
+    # Máximo de MÓDULOS de rack empilhados (racks inteiros uns por cima dos
+    # outros na mesma posição de chão), por tipologia cujo nome contenha uma
+    # destas chaves. Não confundir com RackType.niveis, que são as prateleiras
+    # DENTRO de um módulo (input da folha «Racks», não se mexe).
+    #
+    # Porquê: uma prateleira leve é servida por operador a pé, e empilhar
+    # módulos põe stock fora do alcance (com altura_armazem_m=10 e um prumo de
+    # 2.10 m caberiam 4 módulos = 12 prateleiras em coluna). Ao travar, o stock
+    # que subiria espalha-se por MAIS posições de chão ao lado -- mais área,
+    # mas tudo acessível. O porta-paletes não entra: é servido por empilhador.
+    #
+    # Chave = substring do nome da tipologia (case-insensitive); valor = máx. de
+    # módulos. Tipologias não listadas não têm limite próprio (só a altura).
+    max_modulos_por_tipologia: dict = field(
+        default_factory=lambda: {"prateleira": 2})
+
     # Modo de armazém picking: altura MÁXIMA (m) de alcance do operador. Um
     # nível conta como zona de picking se o seu TOPO (base + altura do nível)
     # ficar dentro deste valor -- o nível inteiro tem de estar ao alcance, por
@@ -84,3 +167,23 @@ class Config:
     # zonas funcionais, para chegar à área bruta total do edifício.
     # 0 = sem margem estrutural aplicada.
     margem_estrutural_pct: float = 0.0
+
+    # --- Envelope do bloco de racks (Passo 3b, layout.py) ---------------------
+    # Limita o retângulo de racks + corredores. NÃO abrange as zonas funcionais,
+    # que continuam a ser posicionadas à parte (ver a decisão sobre Zona).
+    #
+    # O nº de racks continua a vir do STOCK (Passo 2 intocado): estas cotas são
+    # restrição de FORMA, não de capacidade. Se o que o stock exige não couber, o
+    # layout arruma o que pode e emite aviso com o excesso -- nunca deixa stock
+    # de fora em silêncio nem inventa capacidade.
+    #
+    # largura_max_m: TETO da largura do bloco -- não um alvo. O layout parte
+    #   sempre da forma que minimiza a área e só REDUZ as tipologias que excedam
+    #   o limite; dar um teto acima do ótimo livre não muda nada. Se uma
+    #   tipologia tiver uma posição mais larga que este valor, é impossível
+    #   respeitá-lo -> aviso.
+    # profundidade_max_m: teto de AVISO. Com a largura fixa, a profundidade é
+    #   consequência (livre); ultrapassá-la não reorganiza nada, só avisa.
+    # 0 = sem limite (comportamento original: o layout escolhe a forma).
+    largura_max_m: float = 0.0
+    profundidade_max_m: float = 0.0
