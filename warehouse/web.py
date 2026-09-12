@@ -22,11 +22,15 @@ from .cenario_autonomia import aplicar_autonomia
 from .config import Config
 from .models import LoadType
 
-# WAREHOUSE_MASTER_DATA permite apontar o servidor para outro master data (ex.:
-# comparar versões) sem editar código -- omitido = comportamento normal
-# (Config.master_data por omissão).
+# WAREHOUSE_CLIENT escolhe qual dados/clients/<nome>.json carregar (default
+# "sia" -- comportamento de sempre para quem não define a variável).
+# WAREHOUSE_MASTER_DATA continua a existir por cima disso, para apontar o
+# servidor para outro master data (ex.: comparar versões) sem editar código
+# nem o ficheiro do cliente -- omitido = usa o master_data do cliente tal qual.
+cfg = Config.for_client(os.environ.get("WAREHOUSE_CLIENT", "sia"))
 _master_data_override = os.environ.get("WAREHOUSE_MASTER_DATA")
-cfg = Config(master_data=Path(_master_data_override)) if _master_data_override else Config()
+if _master_data_override:
+    cfg.master_data = Path(_master_data_override)
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Simulador de Armazém")

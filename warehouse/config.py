@@ -1,12 +1,55 @@
-"""Parâmetros e decisões de negócio. Mudar estes valores muda resultados."""
+"""Parâmetros e decisões de negócio. Mudar estes valores muda resultados.
+
+Campos CLIENT-SPECIFIC (os que mudam de cliente para cliente -- ver auditoria
+"CORE vs CLIENT-SPECIFIC") já não se editam aqui: vivem em
+`dados/clients/<nome>.json` e entram via `Config.for_client(nome)` (ver
+classmethod ao fundo do ficheiro). Os valores por omissão abaixo continuam a
+existir só como fallback de um `Config()` nu (ex.: testes que constroem
+Config() sem cliente nenhum) -- não são "a configuração", são só o default de
+campo do dataclass.
+"""
 from __future__ import annotations
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# dados/clients/<nome>.json vive ao lado de dados/ (irmão de warehouse/), não
+# relativo à cwd -- para Config.for_client funcionar tanto a partir de
+# `python -m warehouse.main` (cwd = dimensionamento_armazem/) como de dentro
+# de pytest (cwd pode ser outro). master_data/output continuam relativos à
+# cwd de sempre (comportamento inalterado: quem já corria a partir da pasta
+# certa continua a funcionar sem tocar em nada).
+_CLIENTS_DIR = Path(__file__).resolve().parent.parent / "dados" / "clients"
+
+# Nomes de campo do dataclass que Config.for_client aceita ler do JSON do
+# cliente, com o conversor a aplicar ao valor lido (JSON só tem list/dict/
+# str/float/int -- os campos Path/tuple do dataclass precisam de conversão
+# explícita). Mantido como tabela em vez de "aceitar tudo o que vier no JSON"
+# para um cliente não poder, por engano, injetar um campo CORE (ex.:
+# fill_factor_plano) através do ficheiro errado.
+_CLIENT_FIELD_CONVERTERS = {
+    "master_data": Path,
+    "output": Path,
+    "autonomia_minima_carros": float,
+    "capacidade_override_sku": dict,
+    "stock_autonomia_override_sku": dict,
+    "oversize_racks": tuple,
+    "oversize_par_racks": tuple,
+    "max_modulos_por_tipologia": dict,
+    "empilhamento_por_nivel": tuple,
+    "picking_manual_racks": tuple,
+}
 
 
 @dataclass
 class Config:
-    # caminhos
+    # Nome do cliente que originou esta instância (ver Config.for_client).
+    # "" = Config() nu, sem cliente associado (comportamento de sempre, usado
+    # por quem constrói Config() diretamente, ex. testes/racking.py:648).
+    client_name: str = ""
+
+    # caminhos (fallback de um Config() nu -- ver nota no topo do ficheiro;
+    # o valor real de cada cliente vem de dados/clients/<nome>.json)
     master_data: Path = Path("dados/master_data_classificado_v3.xlsx")
     output: Path = Path("dados/resultados.xlsx")
 
@@ -284,3 +327,51 @@ class Config:
     # de `max_modulos_por_tipologia`/`oversize_racks`. Vazio = nenhuma
     # garantia de contiguidade (comportamento anterior).
     picking_manual_racks: tuple = ("prateleira",)
+
+    # ------------------------------------------------------------ multi-cliente
+    @classmethod
+    def for_client(cls, name: str, clients_dir: Path | None = None) -> "Config":
+        """Constrói um Config para o cliente `name`, a partir de
+        `dados/clients/<name>.json`.
+
+        Só os campos CLIENT-SPECIFIC identificados na auditoria (caminhos,
+        overrides manuais por SKU, autonomia mínima, e as chaves de substring
+        que casam nomes de tipologia de rack) vêm do JSON -- ver
+        `_CLIENT_FIELD_CONVERTERS`. Tudo o resto do Config (fatores de
+        enchimento/empilhamento, limites de picking/altura de armazém, etc.)
+        continua a ser CORE: o mesmo para qualquer cliente, só ajustável por
+        quem corre o pipeline (CLI/UI web), nunca por identidade de cliente.
+
+        Um novo cliente = um novo `dados/clients/<nome>.json` + o Excel dele
+        no caminho que esse ficheiro apontar -- nunca uma edição a este
+        módulo. `dados/clients/_template.json` é o ponto de partida (valores
+        placeholder, sem SKUs reais) para copiar ao criar um cliente novo.
+        """
+        base = clients_dir or _CLIENTS_DIR
+        path = base / f"{name}.json"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Sem configuração para o cliente '{name}': {path} não existe. "
+                f"Cria dados/clients/{name}.json (usa dados/clients/_template.json "
+                f"como ponto de partida)."
+            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        # chaves "_algo" são comentário (JSON não tem comentários nativos),
+        # nunca um campo -- ignoradas antes de validar campos desconhecidos.
+        data = {k: v for k, v in data.items() if not k.startswith("_")}
+
+        desconhecidos = set(data) - set(_CLIENT_FIELD_CONVERTERS)
+        if desconhecidos:
+            raise ValueError(
+                f"dados/clients/{name}.json tem campo(s) não reconhecido(s) como "
+                f"CLIENT-SPECIFIC: {sorted(desconhecidos)}. Se é um parâmetro "
+                f"CORE (afeta todos os clientes da mesma forma), pertence a "
+                f"Config, não ao ficheiro do cliente; se é mesmo específico "
+                f"deste cliente, acrescenta-o a _CLIENT_FIELD_CONVERTERS primeiro."
+            )
+
+        cfg = cls(client_name=name)
+        for campo, conversor in _CLIENT_FIELD_CONVERTERS.items():
+            if campo in data:
+                setattr(cfg, campo, conversor(data[campo]))
+        return cfg

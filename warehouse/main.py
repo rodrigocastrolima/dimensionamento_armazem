@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 import argparse
+import os
 from pathlib import Path
 
 from . import io_excel, boxing, racking, area, layout as layout_mod
@@ -106,14 +107,17 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Dimensionamento de armazem")
-    p.add_argument("--data", type=Path, help="master data .xlsx")
-    p.add_argument("--out", type=Path, help="resultados .xlsx")
+    p.add_argument("--client", default=os.environ.get("WAREHOUSE_CLIENT", "sia"),
+                   help="nome do cliente (dados/clients/<nome>.json); default 'sia' "
+                        "ou $WAREHOUSE_CLIENT")
+    p.add_argument("--data", type=Path, help="master data .xlsx (substitui o do cliente)")
+    p.add_argument("--out", type=Path, help="resultados .xlsx (substitui o do cliente)")
     p.add_argument("--altura", type=float,
                    help="altura util do armazem em metros (ativa empilhamento de modulos de rack)")
     p.add_argument("--picking", type=float,
                    help="altura da zona de picking em metros (ativa modo armazem picking)")
     args = p.parse_args()
-    cfg = Config()
+    cfg = Config.for_client(args.client)
     if args.data:
         cfg.master_data = args.data
     if args.out:
