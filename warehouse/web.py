@@ -8,6 +8,7 @@ Corre com: python -m warehouse.web
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 import os
 from pathlib import Path
@@ -238,11 +239,24 @@ class ArrangeRequest(BaseModel):
 
 @app.post("/api/gerar")
 def gerar(body: GerarRequest):
-    local_cfg = Config(altura_armazem_m=body.altura_armazem_m,
-                       altura_picking_m=body.altura_picking_m,
-                       margem_estrutural_pct=body.margem_estrutural_pct,
-                       largura_max_m=body.largura_max_m,
-                       profundidade_max_m=body.profundidade_max_m)
+    # dataclasses.replace(cfg, ...) -- NÃO Config(...) -- porque `cfg` é o
+    # Config do CLIENTE (Config.for_client, carregado uma vez ao subir o
+    # servidor): um Config(...) bare aqui reconstruía TODOS os campos a partir
+    # dos defaults do dataclass, incluindo oversize_racks/oversize_par_racks/
+    # max_modulos_por_tipologia/empilhamento_por_nivel/picking_manual_racks --
+    # ou seja, cada pedido silenciosamente esquecia a configuração do
+    # cliente e usava os defaults "de fábrica" (que só por coincidência
+    # calham a ser os valores da SIA). Para outro cliente isto desativava as
+    # regras de negócio dele em TODOS os pedidos, sem aviso nenhum -- exatamente
+    # o modo de falha que verificar_chaves_substring_sem_correspondencia
+    # existe para apanhar (ver main.run), só que aqui a causa não era um nome
+    # de tipologia trocado, era o próprio Config a ser descartado a cada pedido.
+    local_cfg = dataclasses.replace(
+        cfg, altura_armazem_m=body.altura_armazem_m,
+        altura_picking_m=body.altura_picking_m,
+        margem_estrutural_pct=body.margem_estrutural_pct,
+        largura_max_m=body.largura_max_m,
+        profundidade_max_m=body.profundidade_max_m)
 
     articles = io_excel.load_articles(cfg.master_data)
     catalogo = io_excel.load_catalog(cfg.master_data)
@@ -250,6 +264,8 @@ def gerar(body: GerarRequest):
     if body.carros_alvo > 0:
         articles = aplicar_autonomia(articles, body.carros_alvo)
     rack_types = io_excel.load_rack_types(cfg.master_data)
+    # ANTES de com_par_oversize -- ver a mesma nota em main.run.
+    avisos_config = racking.verificar_chaves_substring_sem_correspondencia(rack_types, local_cfg)
     rack_types = racking.com_par_oversize(rack_types, local_cfg)
     catalogo_por_tipo = {b.nome: b for b in catalogo}
     rack_by_name = {r.nome: r for r in rack_types}
@@ -268,7 +284,7 @@ def gerar(body: GerarRequest):
         assignments, requirements, rack_types, catalogo_por_tipo, articles,
         local_cfg.altura_picking_m, local_cfg.altura_armazem_m, local_cfg)
 
-    avisos = avisos_estimativa + avisos_alocacao
+    avisos = avisos_config + avisos_estimativa + avisos_alocacao
 
     zonas = io_excel.load_zones(cfg.master_data)
 
@@ -481,10 +497,13 @@ def render_layout(body: ArrangeRequest):
     e corredores do bloco) e deslocados para onde o utilizador colocou o bloco
     de racks; as zonas usam as posições/rotações do canvas; a área total é o
     retângulo envolvente de todos os blocos colocados."""
-    local_cfg = Config(altura_armazem_m=body.altura_armazem_m,
-                       altura_picking_m=body.altura_picking_m,
-                       largura_max_m=body.largura_max_m,
-                       profundidade_max_m=body.profundidade_max_m)
+    # Ver a nota equivalente em gerar(): tem de ser dataclasses.replace(cfg, ...),
+    # não Config(...), para não perder a configuração do cliente a cada pedido.
+    local_cfg = dataclasses.replace(
+        cfg, altura_armazem_m=body.altura_armazem_m,
+        altura_picking_m=body.altura_picking_m,
+        largura_max_m=body.largura_max_m,
+        profundidade_max_m=body.profundidade_max_m)
 
     articles = io_excel.load_articles(cfg.master_data)
     catalogo = io_excel.load_catalog(cfg.master_data)

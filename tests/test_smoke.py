@@ -735,6 +735,92 @@ def test_oversize_sem_widespan_continua_em_aviso():
     assert any("OVERSIZE" in a for a in avisos)
 
 
+# -------------------------------------------------- avisos de chave sem match
+# racking.verificar_chaves_substring_sem_correspondencia: o modo de falha mais
+# perigoso (uma chave de substring configurada -- oversize_racks/
+# oversize_par_racks/max_modulos_por_tipologia/empilhamento_por_nivel/
+# picking_manual_racks -- que não corresponde a NENHUMA tipologia real) nunca
+# pode passar por um sucesso limpo e silencioso.
+
+def test_chave_sem_correspondencia_gera_aviso():
+    from warehouse.config import Config
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=4)
+    cfg = Config(oversize_racks=("wide", "bulk"), oversize_par_racks=(),
+                 max_modulos_por_tipologia={}, empilhamento_por_nivel=(),
+                 picking_manual_racks=())
+    avisos = racking.verificar_chaves_substring_sem_correspondencia([pp], cfg)
+    assert len(avisos) == 1
+    assert "oversize_racks" in avisos[0]
+    assert "Rack Porta-Paletes" in avisos[0]   # nomeia a tipologia real disponível
+
+
+def test_chave_que_corresponde_nao_gera_aviso():
+    from warehouse.config import Config
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=4)
+    cfg = Config(oversize_racks=(), oversize_par_racks=("porta-paletes",),
+                 max_modulos_por_tipologia={}, empilhamento_por_nivel=(),
+                 picking_manual_racks=())
+    assert racking.verificar_chaves_substring_sem_correspondencia([pp], cfg) == []
+
+
+def test_chave_vazia_nunca_gera_aviso():
+    """Cliente que simplesmente não usa a regra (chave vazia) não é um erro."""
+    from warehouse.config import Config
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=4)
+    cfg = Config(oversize_racks=(), oversize_par_racks=(), max_modulos_por_tipologia={},
+                 empilhamento_por_nivel=(), picking_manual_racks=())
+    assert racking.verificar_chaves_substring_sem_correspondencia([pp], cfg) == []
+
+
+def test_max_modulos_por_tipologia_usa_as_chaves_do_dict():
+    """max_modulos_por_tipologia é um dict (chave = substring, valor = teto) --
+    o aviso tem de olhar para as CHAVES, não tentar tratar o dict como tuple."""
+    from warehouse.config import Config
+    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
+    cfg = Config(oversize_racks=(), oversize_par_racks=(),
+                 max_modulos_por_tipologia={"tipologia inexistente": 2},
+                 empilhamento_por_nivel=(), picking_manual_racks=())
+    avisos = racking.verificar_chaves_substring_sem_correspondencia([pl], cfg)
+    assert len(avisos) == 1 and "max_modulos_por_tipologia" in avisos[0]
+
+
+# ------------------------------------------------- io_excel: tokens desconhecidos
+# Um token na coluna "Aceita" que não bate com nenhum LoadType (ex.: "LONGO",
+# removido do enum) não pode voltar a ser ignorado em silêncio -- ver
+# io_excel.load_rack_types e a limpeza da linha "Rack Cantilever" stale no
+# master data real (CLAUDE.md "cantilever/LONGO removida").
+
+def _wb_racks(path, aceita_str: str):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Racks"
+    ws.append(["Nome", "Larg_m", "Prof_m", "Alt_nivel_m", "Níveis", "Aceita", "Footprint_m2"])
+    ws.append(["Rack X", 3.0, 0.6, 0.6, 4, aceita_str, 1.8])
+    wb.save(path)
+
+
+def test_token_desconhecido_na_coluna_aceita_avisa(tmp_path, capsys):
+    from warehouse import io_excel
+    path = tmp_path / "racks_longo.xlsx"
+    _wb_racks(path, "LONGO")
+    racks = io_excel.load_rack_types(path)
+    assert racks[0].aceita == []          # token desconhecido continua a ser ignorado...
+    out = capsys.readouterr().out
+    assert "AVISO" in out and "Rack X" in out and "LONGO" in out   # ...mas agora avisa
+    assert "aceita" in out.lower() and "VAZIO" in out   # sinaliza a tipologia morta
+
+
+def test_token_conhecido_nao_avisa(tmp_path, capsys):
+    from warehouse import io_excel
+    path = tmp_path / "racks_ok.xlsx"
+    _wb_racks(path, "PALLET, L")
+    racks = io_excel.load_rack_types(path)
+    assert [lt.value for lt in racks[0].aceita] == ["PALLET", "L"]
+    out = capsys.readouterr().out
+    assert "AVISO" not in out
+
+
 if __name__ == "__main__":
     test_footprint(); test_floor_area()
     test_zona_area(); test_resumo_area_total()

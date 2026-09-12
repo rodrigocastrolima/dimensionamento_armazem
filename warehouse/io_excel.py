@@ -189,6 +189,13 @@ def load_rack_types(path: Path) -> list[RackType]:
     header = [str(c).strip() if c else "" for c in rows[0]]
     corredor_col = header.index("Corredor_m") if "Corredor_m" in header else None
     racks = []
+    # Tokens da coluna "Aceita" que não batem com nenhum LoadType (ex.: "LONGO",
+    # removido do enum -- ver CLAUDE.md "cantilever/LONGO removida") eram
+    # silenciosamente ignorados: uma tipologia inteira podia ficar com
+    # `aceita=[]` (não aceita NADA, contribui zero capacidade em tudo) sem
+    # nenhum sinal de que isso aconteceu. Recolhe-se aqui para avisar, em vez
+    # de deixar essa tipologia morta parecer só mais uma linha normal.
+    tokens_desconhecidos: dict[str, list[str]] = {}
     for r in rows[1:]:
         if r[0] is None:
             continue
@@ -199,7 +206,7 @@ def load_rack_types(path: Path) -> list[RackType]:
             try:
                 aceita.append(LoadType(t))
             except ValueError:
-                pass  # ignora tokens desconhecidos
+                tokens_desconhecidos.setdefault(str(nome), []).append(t)
         corredor = float(r[corredor_col]) if corredor_col is not None and r[corredor_col] else 0.0
         racks.append(RackType(
             nome=str(nome),
@@ -211,6 +218,18 @@ def load_rack_types(path: Path) -> list[RackType]:
             footprint_m2=float(footprint) if footprint else 0.0,
             corredor_m=corredor,
         ))
+
+    if tokens_desconhecidos:
+        for nome, tokens in tokens_desconhecidos.items():
+            rack_correspondente = next((r for r in racks if r.nome == nome), None)
+            ficou_morta = rack_correspondente is not None and not rack_correspondente.aceita
+            print(f"AVISO: tipologia '{nome}': token(s) desconhecido(s) na coluna "
+                  f"'Aceita' ignorado(s) -- {', '.join(tokens)} não corresponde(m) a "
+                  f"nenhum LoadType válido."
+                  + (f" Esta tipologia ficou com 'aceita' VAZIO -- não aceita "
+                     f"nenhum tipo de carga, contribui zero capacidade em tudo. "
+                     f"Corrige a coluna 'Aceita' na folha «Racks» ou remove a linha."
+                     if ficou_morta else ""))
     return racks
 
 

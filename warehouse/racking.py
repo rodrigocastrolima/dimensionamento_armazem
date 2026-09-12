@@ -241,6 +241,58 @@ def _nome_bate(rack: RackType, chaves: tuple | None) -> bool:
     return any(k.lower() in nome for k in chaves)
 
 
+# Config fields whose value is a substring-match key against RackType.nome
+# (ver `_nome_bate`/`aceita_oversize`): nome do campo -> como extrair as
+# chaves desse campo (a maioria já é uma tuple; max_modulos_por_tipologia é
+# um dict, as chaves de negócio são as SUAS chaves, não os valores).
+_CAMPOS_SUBSTRING_RACK = {
+    "oversize_racks": lambda cfg: cfg.oversize_racks,
+    "oversize_par_racks": lambda cfg: cfg.oversize_par_racks,
+    "max_modulos_por_tipologia": lambda cfg: tuple(cfg.max_modulos_por_tipologia),
+    "empilhamento_por_nivel": lambda cfg: cfg.empilhamento_por_nivel,
+    "picking_manual_racks": lambda cfg: cfg.picking_manual_racks,
+}
+
+
+def verificar_chaves_substring_sem_correspondencia(
+        rack_types: list[RackType], cfg: "Config") -> list[str]:
+    """Deteta o modo de falha mais perigoso das chaves de substring do cliente
+    (`Config.oversize_racks`/`oversize_par_racks`/`max_modulos_por_tipologia`/
+    `empilhamento_por_nivel`/`picking_manual_racks`): uma chave CONFIGURADA
+    que não casa NENHUMA tipologia real da folha «Racks» deste cliente.
+
+    Sem este aviso, esse caso é indistinguível de um sucesso limpo -- o
+    pipeline continua a correr e a produzir uma área plausível, só que a
+    regra de negócio correspondente (OVERSIZE em rack dedicado, par
+    emparelhado, limite de módulos, empilhamento nível-a-nível, ou picking
+    manual nunca fragmentado) fica silenciosamente inativa, tipicamente
+    porque o nome da tipologia mudou na folha «Racks» ou a chave foi copiada
+    de outro cliente sem ajustar. Chamar ANTES de `com_par_oversize` (que
+    acrescenta uma tipologia sintética cujo nome também casaria a própria
+    chave, mascarando exatamente o caso que este aviso existe para apanhar).
+
+    Uma chave vazia (`()`/`{}`, cliente que não usa a regra) nunca gera
+    aviso -- só uma chave configurada e sem correspondência é sinal de
+    problema."""
+    nomes = [r.nome for r in rack_types]
+    avisos: list[str] = []
+    for campo, extrator in _CAMPOS_SUBSTRING_RACK.items():
+        chaves = extrator(cfg)
+        if not chaves:
+            continue
+        if any(_nome_bate(r, chaves) for r in rack_types):
+            continue
+        lista_nomes = ", ".join(f"'{n}'" for n in nomes) if nomes else "(nenhuma tipologia na folha «Racks»)"
+        avisos.append(
+            f"Config.{campo}={list(chaves)} (cliente '{cfg.client_name or '?'}') não "
+            f"corresponde a NENHUMA tipologia da folha «Racks» -- {lista_nomes}. "
+            f"Esta regra de negócio está configurada mas NUNCA vai disparar: "
+            f"verifica se o nome da tipologia mudou no Excel, ou corrige "
+            f"'{campo}' em dados/clients/{cfg.client_name or '<cliente>'}.json."
+        )
+    return avisos
+
+
 def blocos_empilhados(rack: RackType, altura_armazem_m: float,
                       max_por_tipologia: dict | None = None,
                       empilhamento_por_nivel: tuple | None = None) -> int:

@@ -46,6 +46,11 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
         articles = io_excel.load_articles(cfg.master_data)
         articles, autonomia_resultados = boxing.aplicar_stock_autonomia(articles, catalogo, cfg)  # Passo 0
     rack_types = io_excel.load_rack_types(cfg.master_data)
+    # ANTES de com_par_oversize: a tipologia sintética "(emparelhada)" também
+    # casaria a própria chave (herda o nome base), mascarando exatamente o
+    # caso "chave configurada, nenhuma tipologia real corresponde" que este
+    # aviso existe para apanhar (ver racking.verificar_chaves_substring_sem_correspondencia).
+    avisos_config = racking.verificar_chaves_substring_sem_correspondencia(rack_types, cfg)
     rack_types = racking.com_par_oversize(rack_types, cfg)     # par emparelhado p/ OVERSIZE
     catalogo_por_tipo = {b.nome: b for b in catalogo}
     rack_by_name = {r.nome: r for r in rack_types}
@@ -64,7 +69,7 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
         assignments, requirements, rack_types, catalogo_por_tipo, articles,
         cfg.altura_picking_m, cfg.altura_armazem_m, cfg)
 
-    avisos = avisos_estimativa + avisos_alocacao
+    avisos = avisos_config + avisos_estimativa + avisos_alocacao
 
     zonas = io_excel.load_zones(cfg.master_data)
 

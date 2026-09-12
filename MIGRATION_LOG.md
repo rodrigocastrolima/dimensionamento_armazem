@@ -15,21 +15,60 @@ before this branch. See `NEEDS_HUMAN.md` for anything blocked on a human.
 - [x] This log file.
 
 ## Phase 1 — client-config loader
-- [ ] `Config.for_client(name)` loader in `warehouse/config.py`.
-- [ ] `dados/clients/sia.json` with every CLIENT-SPECIFIC value from the audit.
-- [ ] `dados/clients/_template.json` placeholder client.
-- [ ] `warehouse/main.py` uses `Config.for_client(...)`.
-- [ ] `warehouse/web.py` uses `Config.for_client(...)`.
-- [ ] Verify: `pytest` passes.
-- [ ] Verify: before/after run of `python -m warehouse.main` on SIA data
-      produces identical output.
-- [ ] Verify: `Config.for_client("_template")` instantiates without error.
+- [x] `Config.for_client(name)` loader in `warehouse/config.py`.
+- [x] `dados/clients/sia.json` with every CLIENT-SPECIFIC value from the audit.
+- [x] `dados/clients/_template.json` placeholder client.
+- [x] `warehouse/main.py` uses `Config.for_client(...)` (`--client`/`$WAREHOUSE_CLIENT`, default "sia").
+- [x] `warehouse/web.py` uses `Config.for_client(...)` (`$WAREHOUSE_CLIENT`, default "sia"; `$WAREHOUSE_MASTER_DATA` still overrides on top).
+- [x] Verify: `pytest` passes (42/42, unchanged).
+- [x] Verify: before/after run of `python -m warehouse.main` on SIA data —
+      every cell of every sheet in resultados.xlsx identical (openpyxl diff,
+      not just the printed totals).
+- [x] Verify: `Config.for_client("_template")` instantiates without error;
+      `Config.for_client("does_not_exist")` raises `FileNotFoundError`.
+- Commit: `ee481e2`.
 
 ## Phase 2 — correctness gaps
-- [ ] Decide + fix stale "Rack Cantilever"/LONGO row (remove from live data
-      vs. loud warning on unrecognized `Aceita` token).
-- [ ] Warning when a client's rack names match none of the configured
-      substring keys (oversize/pairing/module-limit/picking-manual all inert).
+- [x] Stale "Rack Cantilever"/LONGO row: **removed from the live workbook**
+      (`dados/master_data_classificado_v3.xlsx`, Racks sheet), not just
+      warned about — it's dead per CLAUDE.md's own "cantilever/LONGO
+      removida" decision, so leaving it was actively misleading. Surgical
+      zip-XML edit (backup kept: `dados/master_data_classificado_v3.xlsx.pre-longo-cleanup.bak`),
+      verified via openpyxl + `io_excel.load_rack_types` + full pipeline
+      re-run (totals unchanged: 89.9/194.4/298.3 m², as expected since the
+      row already contributed 0 capacity). This edit is **not committed**
+      (real client data) — see MIGRATION_REPORT.md.
+- [x] `io_excel.load_rack_types` now warns loudly (AVISO, matching the
+      existing print-based convention) whenever an "Aceita" token doesn't
+      match a `LoadType`, and specifically flags a rack left with an empty
+      `aceita` (accepts nothing, contributes 0 capacity everywhere) —
+      defense-in-depth so this class of drift can't be silent again, even
+      though the one known instance is now actually fixed above.
+- [x] New `racking.verificar_chaves_substring_sem_correspondencia(rack_types, cfg)`:
+      warns when a *configured* substring key (`oversize_racks`/
+      `oversize_par_racks`/`max_modulos_por_tipologia`/`empilhamento_por_nivel`/
+      `picking_manual_racks`) matches zero real rack names — the "looks like
+      clean success while a business rule is silently dead" failure mode.
+      Wired into `main.run()` and `web.py /api/gerar`, before
+      `com_par_oversize` (which would otherwise mask the check with its own
+      synthetic rack name).
+- [x] **Found and fixed a live instance of exactly this bug while wiring the
+      check in**: `web.py`'s `/api/gerar` and `/api/render-layout` built each
+      request's `local_cfg` from a bare `Config(...)`, silently discarding
+      the loaded client config (only "worked" because the dataclass
+      defaults happened to equal SIA's values). Fixed with
+      `dataclasses.replace(cfg, ...)` in both places.
+- [x] Confirmed against the live SIA workbook: `oversize_racks=("wide","bulk")`
+      matches **no** rack in the current "Racks" sheet — a real, previously
+      invisible gap (CLAUDE.md documents this as a "tipologia proposta" that
+      was apparently never actually added to the sheet). Not a code bug —
+      correctly falls through to the paired-rack/floor-stacking fallback —
+      but now visible in the Avisos sheet / `/api/gerar` JSON instead of silent.
+- [x] Tests added: `test_chave_sem_correspondencia_gera_aviso`,
+      `test_chave_que_corresponde_nao_gera_aviso`, `test_chave_vazia_nunca_gera_aviso`,
+      `test_max_modulos_por_tipologia_usa_as_chaves_do_dict`,
+      `test_token_desconhecido_na_coluna_aceita_avisa`, `test_token_conhecido_nao_avisa`.
+      Full suite: 48/48 passed.
 
 ## Phase 3 — Supabase data layer
 - [ ] SQL migration files: `clients`, `articles`, `box_catalog`, `rack_types`,
