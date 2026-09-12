@@ -1,53 +1,31 @@
-# Conversão do modelo 3D do BEN (FBX → GLB)
+# Conversão do modelo 3D do BEN (FBX → GLB) — ABANDONADO, scripts removidos
 
-Converte o CAD do BEN (FBX pesado, para render offline) num GLB leve para o
-viewer web. **Não corre sozinho** — é um bake manual, demora ~35 min.
-
-## Pré-requisitos
-- **Blender 5.2 LTS** em `C:\Program Files\Blender Foundation\Blender 5.2\`
-  (instalado via `winget install BlenderFoundation.Blender`).
-- O FBX em `BEN 3D/` (gitignored — 1,89 GB, não versionar).
-
-## Como correr
-
-```bash
-MIN_PECA_M=0.12 "/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
-  --background --factory-startup --python tools/fbx_para_glb.py -- \
-  "BEN 3D/2025 - ben exterior for anim (1).fbx" \
-  warehouse/static/models/ben.glb \
-  300000
-```
-
-Argumentos: `<entrada.fbx> <saida.glb> <alvo_triangulos>`
-Variável: `MIN_PECA_M` — descarta peças abaixo desta dimensão (m).
-
-Como demora, convém correr em background e ver o log:
-
-```bash
-... > /tmp/ben_conv.log 2>&1 &
-grep fbx2glb /tmp/ben_conv.log | tail
-```
-
-## Se só for preciso reenquadrar (segundos, sem reconverter)
-
-```bash
-"/c/Program Files/Blender Foundation/Blender 5.2/blender.exe" \
-  --background --factory-startup --python tools/reenquadrar_glb.py -- \
-  entrada.glb saida.glb [limiar_m]
-```
-
-Corta a geometria-lixo distante, centra a footprint na origem e assenta a base
-em Z=0. O `limiar_m` (omissão 6 m) é a meia-largura da caixa aceite em torno da
-mediana dos vértices; aborta se mais de 2% dos polígonos caírem fora, para não
-mutilar a carroçaria por um limiar mal escolhido.
-
-**É um passo obrigatório depois da conversão**, não opcional — ver abaixo.
-
-## ABANDONADO — este pipeline não produz um modelo utilizável
+Este pipeline tentava converter o CAD real do BEN (FBX pesado, para render
+offline, fornecido pelo fabricante) num GLB leve para o viewer web. **Não
+produz um modelo utilizável** (ver medições abaixo) e **os scripts
+(`fbx_para_glb.py`, `reenquadrar_glb.py`) foram removidos do repositório**
+— ficam só no histórico do git (`git log --all -- tools/fbx_para_glb.py`)
+para quem precisar de os recuperar como ponto de partida.
 
 **O viewer usa o BEN procedural** (`criarCarroProcedural()` em
-`warehouse/static/carro.js`). Não há `ben.glb` instalado e o `carro.js` já não
-carrega nenhum. Estes scripts ficam como registo do que foi tentado.
+`warehouse/static/carro.js`) — um modelo desenhado à mão em Three.js com as
+proporções certas (ver `BEN_DIM` no mesmo ficheiro), não uma conversão do
+CAD. Não há `ben.glb` nenhum instalado e o `carro.js` já não carrega
+nenhum. Este ficheiro fica como registo do que foi tentado e porquê não
+funcionou, para ninguém repetir a mesma tentativa sem saber que já foi
+medida e descartada.
+
+## Como corria (histórico — os scripts já não existem)
+
+- **Pré-requisitos**: Blender 5.2 LTS; o FBX do fornecedor em `BEN 3D/`
+  (gitignored — 1,89 GB, nunca versionado).
+- `fbx_para_glb.py <entrada.fbx> <saida.glb> <alvo_triangulos>` (variável
+  `MIN_PECA_M` — descarta peças abaixo desta dimensão, em metros) fazia o
+  bake principal, ~35 min.
+- `reenquadrar_glb.py entrada.glb saida.glb [limiar_m]` cortava a
+  geometria-lixo distante, centrava a footprint na origem e assentava a
+  base em Z=0 — passo obrigatório depois da conversão, não opcional (ver
+  "a bounding box vem envenenada" abaixo).
 
 **Porquê:** o GLB sai em farrapos, e não é afinação — é aritmética.
 

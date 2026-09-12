@@ -106,9 +106,46 @@ before this branch. See `NEEDS_HUMAN.md` for anything blocked on a human.
   unchanged (89.9/194.4/298.3 m²).
 
 ## Phase 4 — repo cleanup
-- [ ] `.gitignore` excludes live client workbooks / real data.
-- [ ] Decision + action on abandoned FBX/Blender tooling.
-- [ ] Decision + action on ad-hoc versioned filenames in `dados/`.
+- [x] `.gitignore`: broadened `dados/*.xlsx|.xlsm|.xls|.csv|.bak` (was only
+      3 narrow exceptions), with `dados/clients/*.json` explicitly carved
+      out (config, not data). Also `.env`/`.env.*` (Supabase credentials,
+      Phase 3/6) and `dados/archive/*` (below) with its `README.md` kept
+      tracked.
+- [x] **Untracked** (`git rm --cached`, files stay on disk) the 6 real-data
+      files that were already committed before this branch: `ARMAZÉM_final
+      Copy.xlsm`, `master_data.xlsx`, `master_data_classificado_v1.xlsx` +
+      `.backup`/`.pre_xs.bak`/`.pre_zonas_montagem.bak`. Their content
+      remains in git history (old commits) — a human would need a separate,
+      more invasive history-rewrite (e.g. `git filter-repo`) to purge that
+      too; not done here since it rewrites shared history and needs a
+      force-push, which I won't do without an explicit ask.
+- [x] Abandoned FBX/Blender 3D conversion tooling: **removed**
+      `tools/fbx_para_glb.py` and `tools/reenquadrar_glb.py` (already
+      documented as producing an unusable result — 90k+ disconnected mesh
+      fragments, per the README's own measurements — and superseded by the
+      procedural BEN model in `carro.js`). Kept and rewrote
+      `tools/README_conversao_3d.md` as the permanent post-mortem (what was
+      tried, the measurements, why it failed) so nobody repeats the same
+      dead end blind; the scripts themselves are still recoverable from git
+      history if ever needed as a starting point.
+- [x] Ad-hoc versioned filenames in `dados/` (v1/v2/v3/_antigo/.bak/Copy):
+      moved every superseded master-data snapshot and supporting analysis
+      export (23 files — the v1/v2 families, the original raw workbook,
+      `peso_max_estimado_v3.xlsx`/`comparacao_pecas_por_sku.xlsx`, and the
+      12 `estudo_*.csv` evidence files behind CLAUDE.md's decisions) into
+      `dados/archive/`, with a manifest (`dados/archive/README.md`)
+      cataloguing what each one is. `dados/` root now holds only the one
+      live file (`master_data_classificado_v3.xlsx`) plus `clients/`/
+      `cenarios/`. Deleted (not archived — pure regenerable pipeline
+      output): `resultados.xlsx`, `resultados_v3.xlsx`,
+      `pecas_tipo_caixa.xlsx`, and a stray root-level `scratch_out.xlsx`.
+      The manifest is explicit that the real fix is Supabase (Phase 3,
+      pending human setup — see NEEDS_HUMAN.md): once that's live, there's
+      no more "v4.xlsx" to hand-create, re-running the import replaces the
+      client's rows outright.
+- Verified: pytest 59/59 unchanged; full pipeline re-run unchanged
+  (89.9/194.4/298.3 m²) — moving/deleting these files doesn't touch
+  `master_data_classificado_v3.xlsx`, the only one anything reads.
 
 ## Phase 5 — PROTOCOL.md
 - [ ] Written at project root per the requested outline.
