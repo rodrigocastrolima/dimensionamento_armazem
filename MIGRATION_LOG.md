@@ -184,4 +184,4 @@ before this branch. See `NEEDS_HUMAN.md` for anything blocked on a human.
   NOT verified — see `NEEDS_HUMAN.md` #2.
 
 ## Finish
-- [ ] `MIGRATION_REPORT.md` written.
+- [x] `MIGRATION_REPORT.md` written at project root.
