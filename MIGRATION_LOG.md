@@ -148,7 +148,13 @@ before this branch. See `NEEDS_HUMAN.md` for anything blocked on a human.
   `master_data_classificado_v3.xlsx`, the only one anything reads.
 
 ## Phase 5 — PROTOCOL.md
-- [ ] Written at project root per the requested outline.
+- [x] Written at project root (`PROTOCOL.md`), following the requested
+      outline: what this is, the CORE engine (named files), the
+      CLIENT-SPECIFIC surface (config file / Supabase client row / 3D
+      asset), exact onboarding steps + minimum information, an honest "not
+      yet client-agnostic" section (pieces-per-vehicle called out as
+      structural, not a config value, per the explicit instruction not to
+      overclaim), and a definition of done.
 
 ## Phase 6 — deployment readiness (if time allows)
 - [ ] Minimal deploy path + `NEEDS_HUMAN.md` entries.
