@@ -4,10 +4,6 @@ from warehouse.models import (RackType, LoadType, PosicaoChao, BlocoRack, NivelR
                               Zona, WarehouseDimensioning, WarehouseLayout)
 
 
-def test_longo_existe():
-    assert LoadType.LONGO.value == "LONGO"
-
-
 def test_footprint():
     r = RackType("A", larg_m=2.7, prof_m=1.1, alt_nivel_m=1.5, niveis=4)
     assert abs(area.rack_footprint_m2(r) - 2.97) < 1e-9
@@ -214,61 +210,6 @@ def test_assenta_na_palete():
     assert not boxing._assenta_na_palete(art(0.9, 0.9, 0.9), P, 0.25)
 
 
-def test_cantilever_so_aceita_material_esbelto():
-    """Estar marcado 'Comprida' na folha nao chega: a cantilever guarda
-    material 1D. Pecas volumosas (altas/largas) tem de cair no best-fit."""
-    from warehouse import boxing
-    from warehouse.models import Article, Empilhamento
-    from warehouse.config import Config
-    cfg = Config()
-
-    def art(c, l, a):
-        return Article(sku="x", descricao="", comp_m=c, larg_m=l, alt_m=a,
-                       peso_kg=1.0, stock_max_un=10, pecas_por_carro=1,
-                       geometria="Comprida",
-                       empilhamento=Empilhamento.EMPILHAVEL)
-
-    # perfil real: comprido e fino -> cantilever
-    assert boxing.cabe_em_cantilever(art(2.47, 0.05, 0.04), cfg)
-    # volumoso alto: 1.38 m nao cabe num nivel de 0.6 m
-    assert not boxing.cabe_em_cantilever(art(2.26, 1.37, 1.38), cfg)
-    # largo/pouco esbelto: e um painel, nao um perfil
-    assert not boxing.cabe_em_cantilever(art(1.06, 1.07, 0.21), cfg)
-    # curto e volumoso
-    assert not boxing.cabe_em_cantilever(art(0.13, 1.53, 1.06), cfg)
-
-
-def test_volumoso_marcado_comprida_nao_vai_para_longo():
-    from warehouse import boxing
-    from warehouse.models import Article, Empilhamento
-    from warehouse.config import Config
-    cfg = Config()
-    cat = _catalogo_minimo()
-    volumoso = Article(sku="V", descricao="", comp_m=2.26, larg_m=1.37, alt_m=1.38,
-                       peso_kg=10.0, stock_max_un=7, pecas_por_carro=1,
-                       geometria="Comprida",
-                       empilhamento=Empilhamento.NAO_EMPILHAVEL)
-    lt, _ = boxing.choose_load(volumoso, cat, cfg)
-    assert lt != LoadType.LONGO, "volumoso nao pode ir para cantilever"
-
-
-def test_aviso_cantilever_lista_reclassificados():
-    from warehouse import boxing
-    from warehouse.models import Article, Empilhamento
-    from warehouse.config import Config
-    cfg = Config()
-    arts = [
-        Article(sku="PERFIL", descricao="", comp_m=2.47, larg_m=0.05, alt_m=0.04,
-                peso_kg=1.0, stock_max_un=5, pecas_por_carro=1,
-                geometria="Comprida", empilhamento=Empilhamento.EMPILHAVEL),
-        Article(sku="VOLUME", descricao="", comp_m=2.26, larg_m=1.37, alt_m=1.38,
-                peso_kg=1.0, stock_max_un=5, pecas_por_carro=1,
-                geometria="Comprida", empilhamento=Empilhamento.EMPILHAVEL),
-    ]
-    av = boxing.avisos_cantilever(arts, cfg)
-    assert len(av) == 1 and "VOLUME" in av[0] and "PERFIL" not in av[0]
-
-
 # --------------------------------------------------------- envelope do bloco
 # Config.largura_max_m / profundidade_max_m: restrição de FORMA, não de
 # capacidade -- nunca se perdem posições, avisa-se quando não cabe.
@@ -300,8 +241,8 @@ def test_pilhas_chao_recebem_coordenadas_sem_sobrepor():
     from warehouse import layout as layout_mod
     r = RackType("A", larg_m=2.0, prof_m=1.0, alt_nivel_m=1.5, niveis=4, corredor_m=2.5)
     pos = _posicoes_para_layout("A", 12)
-    artigos = [("P", 2.26, 1.37, 1.38, 84.4, 4),      # não empilha (1.38 alto)
-               ("Q", 1.75, 1.37, 0.17, 100.0, 4)]     # empilha 4
+    artigos = [("P", 2.26, 1.37, 1.38, 84.4, 4, "Base fixa"),      # não empilha (1.38 alto)
+               ("Q", 1.75, 1.37, 0.17, 100.0, 4, "Base fixa")]     # empilha 4
     wl = layout_mod.gerar_layout(pos, {"A": r}, None, 0.0, 0.0,
                                  artigos, 1.8, 1000.0)
     assert len(wl.pilhas_chao) == 4 + 1      # 4 pilhas de 1 + 1 pilha de 4
@@ -331,7 +272,7 @@ def test_pilhas_chao_tem_corredor_a_cada_2_fiadas():
     r = RackType("A", larg_m=2.0, prof_m=1.0, alt_nivel_m=1.5, niveis=4, corredor_m=2.5)
     pos = _posicoes_para_layout("A", 4)
     # 30 peças de 1.0 x 1.0 x 1.8 (não empilham) -> muitas fiadas
-    artigos = [("P", 1.0, 1.0, 1.8, 10.0, 30)]
+    artigos = [("P", 1.0, 1.0, 1.8, 10.0, 30, "Base fixa")]
     wl = layout_mod.gerar_layout(pos, {"A": r}, None, 6.0, 0.0, artigos, 1.8, 1000.0)
     ys = sorted({p.y_m for p in wl.pilhas_chao})
     assert len(ys) >= 4, "precisa de várias fiadas para o teste ser útil"
@@ -366,7 +307,7 @@ def test_oversize_ao_chao_empilha_e_soma_acesso():
     manda. O acesso entra na área porque não há corredores medidos pelo layout."""
     # 4 peças de 1.75x1.37x0.17, 215.8 kg: por altura 1.8/0.17 = 10, por peso
     # 1000/215.8 = 4 -> o peso manda
-    artigos = [("A", 1.75, 1.37, 0.17, 215.8, 4)]
+    artigos = [("A", 1.75, 1.37, 0.17, 215.8, 4, "Base fixa")]
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
     assert det[0]["por_pilha"] == 4 and det[0]["limitado_por"] == "peso"
     assert det[0]["pilhas"] == 1
@@ -377,17 +318,42 @@ def test_oversize_ao_chao_empilha_e_soma_acesso():
 
 
 def test_oversize_ao_chao_peca_alta_nao_empilha():
-    """Peça de 1.37 m de altura com pilha máx. de 1.8 m: só 1 por pilha, logo
-    cada unidade ocupa o seu lugar no chão."""
-    artigos = [("B", 2.26, 1.37, 1.38, 84.4, 7)]
+    """Peça de 1.38 m de altura (orientação travada: Z medido = altura) com
+    pilha máx. de 1.8 m: só 1 por pilha, logo cada unidade ocupa o seu lugar
+    no chão. Footprint = as outras duas cotas (comp x larg), não a "deitada"
+    genérica -- a orientação está travada, o Z é sempre a vertical."""
+    artigos = [("B", 2.26, 1.37, 1.38, 84.4, 7, "Base fixa")]
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
     assert det[0]["por_pilha"] == 1 and det[0]["pilhas"] == 7
-    assert abs(a - 7 * 2.26 * 1.38) < 0.05
+    assert abs(a - 7 * 2.26 * 1.37) < 0.05
+
+
+def test_oversize_ao_chao_orientacao_livre_fica_de_pe():
+    """SIDE BODY LH-like: 1.58 x 0.25 x 1.28, orientação Livre. Deitada
+    (footprint = as 2 maiores, 1.58x1.28 = 2.02 m2) desperdiça espaço -- a
+    peça é fina (0.25 m) e cabe perfeitamente de pé, com a MAIOR cota (1.58)
+    na vertical e a footprint reduzida a 0.25x1.28 = 0.32 m2. Como só há 1
+    unidade (não empilha em nenhuma orientação), a escolha de orientação é
+    pura minimização de footprint -- tem de ficar de pé."""
+    artigos = [("SIDE", 1.58, 0.25, 1.28, 12.0, 1, "Livre")]
+    a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
+    assert abs(det[0]["footprint_peca_m2"] - 0.25 * 1.28) < 1e-6
+    assert abs(a - 0.25 * 1.28) < 1e-6
+
+
+def test_oversize_ao_chao_orientacao_travada_fica_deitada_mesmo_pior():
+    """A mesma peça do teste anterior, mas com orientação travada (Base fixa):
+    mantém-se deitada (footprint = comp x larg) mesmo sendo pior -- a peça
+    não pode ser reorientada, ponto final."""
+    artigos = [("SIDE", 1.58, 0.25, 1.28, 12.0, 1, "Base fixa")]
+    a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
+    assert abs(det[0]["footprint_peca_m2"] - 1.58 * 0.25) < 1e-6
+    assert abs(a - 1.58 * 0.25) < 0.01   # `a` arredonda a 2 casas decimais
 
 
 def test_oversize_ao_chao_ignora_sem_stock_ou_sem_geometria():
-    artigos = [("Z", 1.0, 1.0, 0.5, 10.0, 0),      # sem stock
-               ("Y", 0.0, 1.0, 0.5, 10.0, 4)]      # sem geometria
+    artigos = [("Z", 1.0, 1.0, 0.5, 10.0, 0, "Livre"),      # sem stock
+               ("Y", 0.0, 1.0, 0.5, 10.0, 4, "Livre")]      # sem geometria
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.45)
     assert a == 0.0 and det == []
 
@@ -497,6 +463,153 @@ def test_largura_max_menor_que_a_posicao_avisa():
     assert any("menor que uma posicao" in a for a in wl.avisos)
 
 
+def _sem_sobreposicoes(posicoes):
+    def _retangulo(p):
+        return (p.x_m, p.y_m, p.x_m + p.largura_m, p.y_m + p.profundidade_m)
+    for i, a in enumerate(posicoes):
+        ra = _retangulo(a)
+        for b in posicoes[i + 1:]:
+            rb = _retangulo(b)
+            separadas = (ra[2] <= rb[0] + 1e-6 or rb[2] <= ra[0] + 1e-6
+                        or ra[3] <= rb[1] + 1e-6 or rb[3] <= ra[1] + 1e-6)
+            assert separadas, f"posições sobrepostas: {a} / {b}"
+
+
+def test_tipologias_diferentes_partilham_a_mesma_banda_quando_compensa():
+    """Decisão fechada: continua a mandar o PERÍMETRO mínimo do bloco (não se
+    força mistura só porque dá para encaixar) -- mas agora a busca decompõe
+    cada tipologia nas suas fiadas duplas (_fiadas_tipologia) e testa TODAS as
+    somas de subconjuntos de larguras como largura-alvo candidata (não só
+    somas cumulativas por profundidade), com um packer FFDH (_empacotar_por_
+    shelf) que tenta cada fiada em QUALQUER prateleira já aberta, não só na
+    última. Isto significa que quando misturar tipologias diferentes na MESMA
+    faixa Y dá mesmo um perímetro melhor, o algoritmo encontra-o -- 13 Rack
+    Porta-Paletes (sobra 1 na última fiada dupla) + 2 Prateleira Leve (cabem
+    exatamente nessa sobra) é um desses casos."""
+    from warehouse import layout as layout_mod
+    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+                  niveis=3, corredor_m=1.2)
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
+                  niveis=4, corredor_m=3.0)
+    pos = _posicoes_para_layout("Prateleira Leve", 2) + _posicoes_para_layout("Rack Porta-Paletes", 13)
+    rack_types = {"Prateleira Leve": pl, "Rack Porta-Paletes": pp}
+
+    wl = layout_mod.gerar_layout(pos, rack_types)
+    assert len(wl.posicoes) == len(pos)
+    _sem_sobreposicoes(wl.posicoes)
+
+    # as duas tipologias partilham pelo menos uma faixa Y (prova de mistura)
+    ys_pl = [(p.y_m, p.y_m + p.profundidade_m) for p in wl.posicoes
+            if p.posicao.rack_nome == "Prateleira Leve"]
+    ys_pp = [(p.y_m, p.y_m + p.profundidade_m) for p in wl.posicoes
+            if p.posicao.rack_nome == "Rack Porta-Paletes"]
+    partilhada = any(a[0] < b[1] - 1e-6 and b[0] < a[1] - 1e-6 for a in ys_pl for b in ys_pp)
+    assert partilhada, "as duas tipologias nunca partilham a mesma faixa Y"
+
+
+def test_picking_manual_nunca_fica_fragmentado():
+    """Decisão fechada: tipologias de picking manual (Config.picking_manual_racks,
+    default ("prateleira",)) podem partilhar prateleira com outras -- mas as
+    SUAS PRÓPRIAS posições nunca podem ficar espalhadas por bandas do bloco
+    não-adjacentes (só o operador a pé perde tempo a atravessar o armazém).
+
+    Sem tratamento especial, o shelf packing normal (uma fiada de cada vez,
+    _fiadas_tipologia) podia deixar a fiada "resto" da Prateleira Leve (mais
+    rasa) presa a uma prateleira de Rack Porta-Paletes, enquanto as fiadas
+    cheias ficavam noutra -- caso confirmado com 7 Prateleira Leve + 8
+    Porta-Paletes + 10 Rack C: sem correção dava dois grupos em Y = (0.0,1.2)
+    e (5.4,6.6), com Porta-Paletes/Rack C no meio."""
+    from warehouse import layout as layout_mod
+    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+                  niveis=3, corredor_m=1.2)
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
+                  niveis=4, corredor_m=3.0)
+    rc = RackType("Rack C", larg_m=1.5, prof_m=0.9, alt_nivel_m=1.0,
+                  niveis=3, corredor_m=2.0)
+    pos = (_posicoes_para_layout("Prateleira Leve", 7)
+          + _posicoes_para_layout("Rack Porta-Paletes", 8)
+          + _posicoes_para_layout("Rack C", 10))
+    rack_types = {"Prateleira Leve": pl, "Rack Porta-Paletes": pp, "Rack C": rc}
+
+    wl = layout_mod.gerar_layout(pos, rack_types)
+    assert len(wl.posicoes) == len(pos)
+    _sem_sobreposicoes(wl.posicoes)
+
+    # todas as posições de Prateleira Leve, ordenadas por Y, formam UM SÓ
+    # cluster contíguo -- só se pode "saltar" pelo próprio corredor de
+    # serviço dela (1.2m), nunca por uma fiada de outra tipologia no meio.
+    ys_pl = sorted((p.y_m, p.y_m + p.profundidade_m) for p in wl.posicoes
+                  if p.posicao.rack_nome == "Prateleira Leve")
+    clusters = []
+    tol = pl.corredor_m + 1e-3
+    for s, e in ys_pl:
+        if clusters and s <= clusters[-1][1] + tol:
+            clusters[-1] = (clusters[-1][0], max(clusters[-1][1], e))
+        else:
+            clusters.append((s, e))
+    assert len(clusters) == 1, f"Prateleira Leve fragmentada em {len(clusters)} clusters: {clusters}"
+
+    # confirma que o cenário SEM a proteção fragmentava mesmo (não é um teste vazio)
+    sem_protecao = layout_mod.gerar_layout(pos, rack_types, picking_manual_racks=())
+    ys_sem = sorted((p.y_m, p.y_m + p.profundidade_m) for p in sem_protecao.posicoes
+                    if p.posicao.rack_nome == "Prateleira Leve")
+    clusters_sem = []
+    for s, e in ys_sem:
+        if clusters_sem and s <= clusters_sem[-1][1] + tol:
+            clusters_sem[-1] = (clusters_sem[-1][0], max(clusters_sem[-1][1], e))
+        else:
+            clusters_sem.append((s, e))
+    assert len(clusters_sem) > 1, "cenario de teste deixou de fragmentar sem a proteção -- rever"
+
+
+def test_nao_forca_mistura_quando_piora_o_perimetro():
+    """O perímetro mínimo continua a decidir: nunca aceita uma combinação que
+    piore o bloco, mesmo quando `_ajustar_decomposicoes` testa formas mais
+    fragmentadas de cada tipologia à procura de um encaixe melhor -- só troca
+    se genuinamente reduzir o perímetro (nunca agrava; ver
+    test_teto_com_multiplas_tipologias_nao_agrava_quando_nao_viola)."""
+    from warehouse import layout as layout_mod
+    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+                  niveis=3, corredor_m=1.2)
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
+                  niveis=4, corredor_m=3.0)
+    pos = _posicoes_para_layout("Prateleira Leve", 12) + _posicoes_para_layout("Rack Porta-Paletes", 21)
+    rack_types = {"Prateleira Leve": pl, "Rack Porta-Paletes": pp}
+
+    wl = layout_mod.gerar_layout(pos, rack_types)
+    assert len(wl.posicoes) == len(pos)
+    _sem_sobreposicoes(wl.posicoes)
+    # nunca pior que a forma "cada tipologia na sua fiada, sem ajuste fino"
+    # (16.2 x 12.0, perímetro 56.4) nem que "tudo misturado numa só
+    # prateleira" (21.69 x 7.8, perímetro 58.98) -- verificado manualmente.
+    perimetro = 2 * (wl.largura_total_m + wl.profundidade_total_m)
+    assert perimetro <= 56.4 + 1e-6
+
+
+def test_teto_com_multiplas_tipologias_nao_agrava_quando_nao_viola():
+    """Mesma doutrina de largura_max_m (TETO, não alvo) já validada para uma
+    só tipologia (test_largura_max_acima_do_otimo_nao_muda_nada), agora com
+    várias: um teto acima do ótimo livre não pode piorar o resultado."""
+    from warehouse import layout as layout_mod
+    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+                  niveis=3, corredor_m=1.2)
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
+                  niveis=4, corredor_m=3.0)
+    pos = _posicoes_para_layout("Prateleira Leve", 12) + _posicoes_para_layout("Rack Porta-Paletes", 21)
+    rack_types = {"Prateleira Leve": pl, "Rack Porta-Paletes": pp}
+
+    livre = layout_mod.gerar_layout(pos, rack_types)
+    folgado = layout_mod.gerar_layout(pos, rack_types, largura_max_m=livre.largura_total_m * 2)
+    assert (folgado.largura_total_m, folgado.profundidade_total_m) == \
+           (livre.largura_total_m, livre.profundidade_total_m)
+    assert not folgado.avisos
+
+    apertado = layout_mod.gerar_layout(pos, rack_types, largura_max_m=10.0)
+    assert apertado.largura_total_m <= 10.0 + 1e-6
+    assert len(apertado.posicoes) == len(pos)
+    assert not apertado.avisos
+
+
 def test_sem_envelope_mantem_comportamento():
     from warehouse import layout as layout_mod
     r = RackType("A", larg_m=2.0, prof_m=1.0, alt_nivel_m=1.5, niveis=4, corredor_m=2.5)
@@ -545,7 +658,7 @@ def test_limite_modulos_case_insensitive():
 
 # ------------------------------------------------ OVERSIZE em rack wide-span
 # Peças que não assentam na palete ficam POUSADAS no nível de uma wide-span
-# (bulk rack), sem palete nem caixa -- como o LONGO na cantilever.
+# (bulk rack), sem palete nem caixa.
 
 def _ws() -> RackType:
     """Wide-span proposta: vão 2.7 x prof 1.5 m, 4 níveis de 1.6 m."""
@@ -569,15 +682,23 @@ def test_oversize_assenta_deitado_nao_ao_alto():
 
 
 def test_oversize_peso_trava_antes_da_altura():
-    """Peça fina (0.17 m) e pesada (215.8 kg): por altura empilharia 9 em 1.55 m
-    úteis, mas 1000 kg/nível só permitem 4. É o peso que manda."""
+    """Peça fina (0.17 m), orientação Livre: deitada dá 1 por nível (plano
+    1.75x1.37 não cabe repetido no vão 2.7x1.5) mas empilha 9 em 1.55 m úteis
+    -- 9 no total. De pé (vertical=1.37, plano 1.75x0.17) cabem 8 lado a lado
+    mas só 1 de altura (1.37 já quase esgota o nível) -- 8 no total. Sem
+    limite de peso, a orientação deitada vence (9 > 8): sem_peso = 9x4 = 36.
+    Com 1000 kg/nível, a deitada cai para 4 (1000/215.8=4) = 4x4=16, enquanto
+    a de pé nem chega a cortar (1 já cabe no peso) = 8x4=32 -- a orientação
+    de pé passa a vencer. É o peso que manda a troca de orientação, não só
+    a contagem dentro da mesma orientação."""
     ws = _ws()
     sem_peso = racking.rack_capacity_oversize(ws, _art("B", 1.75, 1.37, 0.17, 215.8),
                                              peso_max_nivel_kg=0.0, folga_altura_m=0.05)
     com_peso = racking.rack_capacity_oversize(ws, _art("B", 1.75, 1.37, 0.17, 215.8),
                                              peso_max_nivel_kg=1000.0, folga_altura_m=0.05)
+    assert sem_peso == 9 * 4          # deitada: 1 por nível x 9 de altura x 4 níveis
+    assert com_peso == 8 * 4          # de pé: 8 por nível x 1 de altura x 4 níveis
     assert sem_peso > com_peso
-    assert com_peso == 4 * 4          # 4 por nível x 4 níveis
 
 
 def test_oversize_que_nao_assenta_no_nivel_da_zero():
@@ -614,8 +735,94 @@ def test_oversize_sem_widespan_continua_em_aviso():
     assert any("OVERSIZE" in a for a in avisos)
 
 
+# -------------------------------------------------- avisos de chave sem match
+# racking.verificar_chaves_substring_sem_correspondencia: o modo de falha mais
+# perigoso (uma chave de substring configurada -- oversize_racks/
+# oversize_par_racks/max_modulos_por_tipologia/empilhamento_por_nivel/
+# picking_manual_racks -- que não corresponde a NENHUMA tipologia real) nunca
+# pode passar por um sucesso limpo e silencioso.
+
+def test_chave_sem_correspondencia_gera_aviso():
+    from warehouse.config import Config
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=4)
+    cfg = Config(oversize_racks=("wide", "bulk"), oversize_par_racks=(),
+                 max_modulos_por_tipologia={}, empilhamento_por_nivel=(),
+                 picking_manual_racks=())
+    avisos = racking.verificar_chaves_substring_sem_correspondencia([pp], cfg)
+    assert len(avisos) == 1
+    assert "oversize_racks" in avisos[0]
+    assert "Rack Porta-Paletes" in avisos[0]   # nomeia a tipologia real disponível
+
+
+def test_chave_que_corresponde_nao_gera_aviso():
+    from warehouse.config import Config
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=4)
+    cfg = Config(oversize_racks=(), oversize_par_racks=("porta-paletes",),
+                 max_modulos_por_tipologia={}, empilhamento_por_nivel=(),
+                 picking_manual_racks=())
+    assert racking.verificar_chaves_substring_sem_correspondencia([pp], cfg) == []
+
+
+def test_chave_vazia_nunca_gera_aviso():
+    """Cliente que simplesmente não usa a regra (chave vazia) não é um erro."""
+    from warehouse.config import Config
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=4)
+    cfg = Config(oversize_racks=(), oversize_par_racks=(), max_modulos_por_tipologia={},
+                 empilhamento_por_nivel=(), picking_manual_racks=())
+    assert racking.verificar_chaves_substring_sem_correspondencia([pp], cfg) == []
+
+
+def test_max_modulos_por_tipologia_usa_as_chaves_do_dict():
+    """max_modulos_por_tipologia é um dict (chave = substring, valor = teto) --
+    o aviso tem de olhar para as CHAVES, não tentar tratar o dict como tuple."""
+    from warehouse.config import Config
+    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
+    cfg = Config(oversize_racks=(), oversize_par_racks=(),
+                 max_modulos_por_tipologia={"tipologia inexistente": 2},
+                 empilhamento_por_nivel=(), picking_manual_racks=())
+    avisos = racking.verificar_chaves_substring_sem_correspondencia([pl], cfg)
+    assert len(avisos) == 1 and "max_modulos_por_tipologia" in avisos[0]
+
+
+# ------------------------------------------------- io_excel: tokens desconhecidos
+# Um token na coluna "Aceita" que não bate com nenhum LoadType (ex.: "LONGO",
+# removido do enum) não pode voltar a ser ignorado em silêncio -- ver
+# io_excel.load_rack_types e a limpeza da linha "Rack Cantilever" stale no
+# master data real (CLAUDE.md "cantilever/LONGO removida").
+
+def _wb_racks(path, aceita_str: str):
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Racks"
+    ws.append(["Nome", "Larg_m", "Prof_m", "Alt_nivel_m", "Níveis", "Aceita", "Footprint_m2"])
+    ws.append(["Rack X", 3.0, 0.6, 0.6, 4, aceita_str, 1.8])
+    wb.save(path)
+
+
+def test_token_desconhecido_na_coluna_aceita_avisa(tmp_path, capsys):
+    from warehouse import io_excel
+    path = tmp_path / "racks_longo.xlsx"
+    _wb_racks(path, "LONGO")
+    racks = io_excel.load_rack_types(path)
+    assert racks[0].aceita == []          # token desconhecido continua a ser ignorado...
+    out = capsys.readouterr().out
+    assert "AVISO" in out and "Rack X" in out and "LONGO" in out   # ...mas agora avisa
+    assert "aceita" in out.lower() and "VAZIO" in out   # sinaliza a tipologia morta
+
+
+def test_token_conhecido_nao_avisa(tmp_path, capsys):
+    from warehouse import io_excel
+    path = tmp_path / "racks_ok.xlsx"
+    _wb_racks(path, "PALLET, L")
+    racks = io_excel.load_rack_types(path)
+    assert [lt.value for lt in racks[0].aceita] == ["PALLET", "L"]
+    out = capsys.readouterr().out
+    assert "AVISO" not in out
+
+
 if __name__ == "__main__":
-    test_longo_existe(); test_footprint(); test_floor_area()
+    test_footprint(); test_floor_area()
     test_zona_area(); test_resumo_area_total()
     test_picking_nivel_pelo_topo(); test_sem_modulo_fantasma_picking()
     test_pode_deitar(); test_orientacao_livre_deita_peca()

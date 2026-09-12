@@ -3,19 +3,16 @@
 IN : artigos (geometria + stock máximo), catálogo de unidades (S/M/L + PALLET).
 OUT: BoxAssignment por SKU (tipo de carga, peças por unidade, nº de unidades).
 
-Regra de encaminhamento:
-  - artigos de geometria em cfg.long_geometrias, EXCETO os marcados como
-    painel largo/volumoso (subtipo_longo em cfg.long_subtipos_excluidos)
-    -> LONGO (cantilever), sem caixa: pecas_por_unidade = 1,
-    num_unidades = stock máximo.
-  - restantes (incluindo painéis/volumosos, que não são material 1D de
-    cantilever) -> best-fit entre S/M/L/PALLET: escolhe a caixa que
-    minimiza o nº de unidades de carga necessárias para o stock máximo.
+Regra de encaminhamento: best-fit entre S/M/L/MEIA/PALLET -- escolhe a caixa
+que minimiza o nº de unidades de carga necessárias para o stock máximo. O que
+não assenta em nenhuma delas (nem na footprint da palete) vai a OVERSIZE.
 """
 from __future__ import annotations
+import dataclasses
 import math
 
-from .models import Article, BoxType, LoadType, Empilhamento, BoxAssignment
+from .models import (Article, BoxType, LoadType, Empilhamento, BoxAssignment,
+                     BoxJustificacao, AutonomiaResultado)
 from .config import Config
 
 # Caixas normais, por ordem crescente de tamanho (usada para desempate)
@@ -118,50 +115,98 @@ def pieces_per_box(article: Article, box: BoxType,
     return min(por_geometria, por_peso)
 
 
-def cabe_em_cantilever(article: Article, cfg: Config) -> bool:
-    """True se o artigo é MESMO material de cantilever.
+def capacidade_reportada(load_type: LoadType, pecas_por_unidade: int,
+                         sku: str, cfg: Config) -> int:
+    """Peças por caixa a REPORTAR nos resultados (capacidade prática).
 
-    Ser "Comprida" na folha não chega: a cantilever guarda material 1D
-    (perfis, tubos, vedantes) que assenta atravessado nos braços. Peças
-    volumosas -- altas ou largas -- nao cabem no nivel nem se apoiam bem, e
-    antes eram aceites na mesma, ficando com capacidade 0 (nao dimensionadas)
-    ou a ocupar um nivel inteiro cada.
-
-    Criterio geometrico, com as cotas ordenadas:
-      - a MENOR cota tem de caber na altura util do nivel (senao nao entra);
-      - a cota MEDIA tem de caber na profundidade do braco (apoio);
-      - e a peca tem de ser esbelta: a maior cota bastante maior que a media
-        (razao de esbelteza), senao e um volume, nao um perfil.
+    `pecas_por_unidade` é o máximo geométrico à ocupação definida
+    (cfg.fill_factor_plano) e continua a ser o valor que dimensiona o armazém
+    (nº de caixas -> racks -> área). Esta função só afeta a QUANTIDADE
+    reportada dentro de cada caixa, aplicando limites de manuseio real:
+    teto por tipo de caixa e arredondamento à centena inferior acima de 100
+    peças (ver cfg.capacidade_*). Abaixo de 100 mantém o valor exato --
+    arredondar daria 0, que não é uma capacidade.
     """
-    d = sorted((article.comp_m, article.larg_m, article.alt_m))
-    curta, media, longa = d
-    if longa <= 0:
-        return False
-    if curta > cfg.cantilever_alt_nivel_m + 1e-9:
-        return False
-    if media > cfg.cantilever_braco_m + 1e-9:
-        return False
-    return (longa / media) >= cfg.cantilever_esbelteza_min if media > 0 else True
+    override = cfg.capacidade_override_sku.get(sku)
+    if override is not None:
+        return max(int(override), 1)
+
+    n = pecas_por_unidade
+    teto = cfg.capacidade_teto_por_caixa.get(load_type)
+    if teto:
+        n = min(n, int(teto))
+    if load_type in cfg.capacidade_arredonda_centena and n >= 100:
+        n = (n // 100) * 100
+    return max(n, 1)
+
+
+def stock_para_autonomia(article: Article, catalogo: list[BoxType],
+                         cfg: Config) -> AutonomiaResultado:
+    """Passo 0 — decide o stock a usar no dimensionamento (stock_max_un) a
+    partir da autonomia mínima em carros (cfg.autonomia_minima_carros), em vez
+    de o ler já decidido do master data.
+
+    stock_teorico = ceil(autonomia_minima_carros x pecas_por_carro) -- peças
+    para cobrir essa autonomia. Escolhe-se a unidade de carga para ESSE alvo
+    (mesmo best-fit de choose_load) e arredonda-se para cima para encher por
+    completo a capacidade PRÁTICA reportada (capacidade_reportada: teto por
+    caixa + arredondamento à centena) -- não a capacidade geométrica bruta,
+    que dava números impraticáveis de manusear. O resultado pode por isso
+    exceder a autonomia mínima (não desperdiça a última caixa a meio).
+
+    `cfg.stock_autonomia_override_sku` preserva ajustes manuais que não seguem
+    a fórmula (decisão de negócio, prevalece)."""
+    stock_teorico = math.ceil(cfg.autonomia_minima_carros * article.pecas_por_carro)
+    override = cfg.stock_autonomia_override_sku.get(article.sku)
+
+    if stock_teorico <= 0:
+        stock_final = int(override) if override is not None else 0
+        return AutonomiaResultado(
+            sku=article.sku, stock_atual_un=article.stock_atual_un,
+            stock_teorico_un=stock_teorico, load_type=None,
+            pecas_por_unidade_pratico=0, num_unidades=0,
+            stock_ajustado_un=stock_final, override_manual=override is not None,
+        )
+
+    alvo = dataclasses.replace(article, stock_max_un=stock_teorico)
+    load_type, ppu_geometrico = choose_load(alvo, catalogo, cfg)
+    ppu_pratico = capacidade_reportada(load_type, ppu_geometrico, article.sku, cfg)
+    num_unidades = math.ceil(stock_teorico / ppu_pratico) if ppu_pratico else 0
+    stock_final = ppu_pratico * num_unidades if ppu_pratico else stock_teorico
+
+    if override is not None:
+        stock_final = int(override)
+
+    return AutonomiaResultado(
+        sku=article.sku, stock_atual_un=article.stock_atual_un,
+        stock_teorico_un=stock_teorico, load_type=load_type,
+        pecas_por_unidade_pratico=ppu_pratico, num_unidades=num_unidades,
+        stock_ajustado_un=stock_final, override_manual=override is not None,
+    )
+
+
+def aplicar_stock_autonomia(articles: list[Article], catalogo: list[BoxType],
+                            cfg: Config) -> tuple[list[Article], list[AutonomiaResultado]]:
+    """Aplica `stock_para_autonomia` a todos os artigos: devolve cópias com
+    `stock_max_un` já ajustado ao Passo 0 (autonomia mínima), mais o rasto de
+    cálculo por SKU para reportar nos resultados (sheet Autonomia)."""
+    resultados = [stock_para_autonomia(a, catalogo, cfg) for a in articles]
+    idx = {r.sku: r for r in resultados}
+    ajustados = [dataclasses.replace(a, stock_max_un=idx[a.sku].stock_ajustado_un)
+                for a in articles]
+    return ajustados, resultados
 
 
 def choose_load(article: Article, catalogo: list[BoxType],
                 cfg: Config) -> tuple[LoadType, int]:
     """Decide o tipo de carga e devolve (LoadType, peças_por_unidade).
 
-    1) Geometria LONGO e não é painel/volumoso (subtipo_longo) -> (LONGO, 1).
-       Painéis largos e volumosos não são material 1D de cantilever (não se
-       apoiam em braços) -> caem para o best-fit normal (passo 2).
-    2) Best-fit entre S/M/L/PALLET: testa todas as candidatas onde caiba pelo
-       menos 1 peça e escolhe a que minimiza nº de unidades de carga para o
-       stock máximo (ceil(stock_max_un / peças_por_unidade)). Em empate,
-       fica com a caixa fisicamente mais pequena (S < M < L < PALLET).
-       Se não couber em nenhuma -> PALLET (1 peça/palete, mesmo a 0).
+    Best-fit entre S/M/L/PALLET: testa todas as candidatas onde caiba pelo
+    menos 1 peça e escolhe a que minimiza nº de unidades de carga para o
+    stock máximo (ceil(stock_max_un / peças_por_unidade)). Em empate,
+    fica com a caixa fisicamente mais pequena (S < M < L < PALLET).
+    Se não couber em nenhuma -> OVERSIZE ou PALLET (ver fallback abaixo).
     """
-    if (article.geometria in cfg.long_geometrias
-            and article.subtipo_longo not in cfg.long_subtipos_excluidos
-            and cabe_em_cantilever(article, cfg)):
-        return LoadType.LONGO, 1
-
     catalogo_idx = {b.nome: b for b in catalogo}
     # ordem crescente de tamanho: em empate no nº de unidades ganha a menor
     candidatas = _CAIXAS + [LoadType.MEIA, LoadType.PALLET]
@@ -258,26 +303,127 @@ def plan_all(articles: list[Article], catalogo: list[BoxType],
     return [plan_box(a, catalogo, cfg) for a in articles]
 
 
-def avisos_cantilever(articles: list[Article], cfg: Config) -> list[str]:
-    """SKUs marcados «Comprida» que o filtro geométrico recusou na cantilever.
+_NOMES_EIXO = ("Comprimento", "Largura", "Altura")
 
-    Não é um erro do cálculo: é classificação da folha que não bate certo com
-    a geometria (peças volumosas marcadas como compridas). Ficam no best-fit
-    normal, mas convém serem revistos no master data.
-    """
-    recusados = [
-        a for a in articles
-        if a.geometria in cfg.long_geometrias
-        and a.subtipo_longo not in cfg.long_subtipos_excluidos
-        and not cabe_em_cantilever(a, cfg)
-    ]
-    if not recusados:
-        return []
-    amostra = ", ".join(f"{a.sku} ({a.comp_m:.2f}x{a.larg_m:.2f}x{a.alt_m:.2f})"
-                        for a in recusados[:4])
-    return [
-        f"{len(recusados)} SKU(s) marcados 'Comprida' NAO sao material de "
-        f"cantilever (nao cabem no nivel/braco ou nao sao esbeltos) -- "
-        f"encaminhados para o best-fit normal. Rever Geometria/Subtipo_LONGO "
-        f"no master data: {amostra}{' ...' if len(recusados) > 4 else ''}"
-    ]
+
+def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
+                       assignment: BoxAssignment) -> BoxJustificacao:
+    """PROVA de que `assignment` é a unidade de carga correta para `article`.
+
+    Não decide nada (a decisão já foi tomada em `choose_load`/`plan_box`):
+    reconstrói, para a escolha já feita, os números do cálculo geométrico
+    (orientação vencedora, peças/plano, peças/altura, corte por peso) ou o
+    critério de admissão (OVERSIZE), para dar rasto auditável a quem olha
+    para a sheet 'Detalhe' e pergunta "porque é que está ali?"."""
+    catalogo_idx = {b.nome: b for b in catalogo}
+    load_type = assignment.load_type
+    base = dict(
+        sku=article.sku, descricao=article.descricao,
+        comp_m=article.comp_m, larg_m=article.larg_m, alt_m=article.alt_m,
+        peso_kg=article.peso_kg, load_type=load_type,
+        pecas_por_unidade=assignment.pecas_por_unidade,
+        stock_max_un=article.stock_max_un, num_unidades=assignment.num_unidades,
+    )
+
+    if load_type == LoadType.OVERSIZE:
+        pallet = catalogo_idx.get(LoadType.PALLET)
+        if pallet is not None:
+            lado_maior = max(pallet.int_comp_m, pallet.int_larg_m)
+            lado_menor = min(pallet.int_comp_m, pallet.int_larg_m)
+            tol = lado_maior * (1.0 + cfg.pallet_transbordo_max_pct)
+            criterio = (
+                f"Não assenta em nenhuma unidade de carga do catálogo. Testada a footprint "
+                f"da palete ({pallet.int_comp_m:.2f} x {pallet.int_larg_m:.2f} x "
+                f"{pallet.int_alt_m:.2f}m): em nenhuma das 3 orientações a cota vertical cabe "
+                f"na altura útil e o plano cabe em {lado_menor:.2f} x {tol:.2f}m "
+                f"(lado menor x lado maior + transbordo {cfg.pallet_transbordo_max_pct:.0%}). "
+                f"Vai para armazenagem OVERSIZE dedicada (rack wide-span/emparelhado ou chão)."
+            )
+        else:
+            criterio = "Não assenta em nenhuma unidade de carga do catálogo (sem PALLET definida para testar)."
+        return BoxJustificacao(
+            **base, orientacao_usada="Pousada (sem palete/caixa)",
+            caixa_int_comp_m=None, caixa_int_larg_m=None, caixa_int_alt_m=None,
+            pecas_por_plano_teorico=None, pecas_por_plano=None,
+            pecas_por_altura=None, pecas_por_peso=None,
+            fator_limitante="N/A (armazenagem OVERSIZE)", criterio=criterio,
+        )
+
+    # Caixa normal (XS/S/M/L/MEIA/PALLET): reconstrói a orientação vencedora
+    # com a MESMA fórmula de pieces_per_box/_pecas_no_envelope, desta vez
+    # guardando o detalhe em vez de só o total.
+    box = catalogo_idx.get(load_type)
+    if box is None:
+        return BoxJustificacao(
+            **base, orientacao_usada="-", caixa_int_comp_m=None, caixa_int_larg_m=None,
+            caixa_int_alt_m=None, pecas_por_plano_teorico=None, pecas_por_plano=None,
+            pecas_por_altura=None, pecas_por_peso=None, fator_limitante="N/A",
+            criterio=f"Tipo de carga '{load_type}' sem entrada correspondente no catálogo.",
+        )
+
+    dims = (article.comp_m, article.larg_m, article.alt_m)
+    eixos = range(3) if pode_deitar(article.orientacao) else (2,)  # travada: Z medido = altura
+    Dc, Dl, Da = box.int_comp_m, box.int_larg_m, box.int_alt_m
+    melhor = None  # (total, iv, por_plano_teorico, por_plano, n_altura)
+    for iv in eixos:
+        vert = dims[iv]
+        a, b = tuple(dims[j] for j in range(3) if j != iv)
+        n_altura = pieces_in_stack(Da, vert, article.empilhamento, cfg.fator_empilhamento)
+        if n_altura == 0:
+            continue
+        op1 = math.floor(Dc / a) * math.floor(Dl / b) if a <= Dc and b <= Dl else 0
+        op2 = math.floor(Dc / b) * math.floor(Dl / a) if b <= Dc and a <= Dl else 0
+        por_plano_teorico = max(op1, op2)
+        if por_plano_teorico == 0:
+            continue
+        por_plano = max(math.floor(por_plano_teorico * cfg.fill_factor_plano), 1)
+        total = por_plano * n_altura
+        if melhor is None or total > melhor[0]:
+            melhor = (total, iv, por_plano_teorico, por_plano, n_altura)
+
+    if melhor is None:
+        # Defensivo: não deveria acontecer com um assignment já ppu>0.
+        return BoxJustificacao(
+            **base, orientacao_usada="-",
+            caixa_int_comp_m=box.int_comp_m, caixa_int_larg_m=box.int_larg_m,
+            caixa_int_alt_m=box.int_alt_m, pecas_por_plano_teorico=None, pecas_por_plano=None,
+            pecas_por_altura=None, pecas_por_peso=None, fator_limitante="N/A",
+            criterio="Não foi possível reconstruir o encaixe geométrico (verificar dados).",
+        )
+
+    por_geometria, iv, por_plano_teorico, por_plano, n_altura = melhor
+    orientacao_usada = f"{_NOMES_EIXO[iv]} na vertical ({dims[iv]:.2f}m)"
+
+    por_peso = math.floor(box.peso_max_kg / article.peso_kg) if article.peso_kg > 0 else None
+    if por_peso is not None and por_peso < por_geometria:
+        fator_limitante = f"Peso (corta de {por_geometria} para {por_peso} peças)"
+    else:
+        fator_limitante = "Geometria (plano x altura)"
+
+    criterio = (
+        f"{por_plano_teorico} peças/plano (encaixe geométrico) x {cfg.fill_factor_plano:.0%} "
+        f"fator de enchimento = {por_plano} peças/plano; x {n_altura} peças em altura "
+        f"({article.empilhamento.value}) = {por_geometria} peças/unidade teórico"
+        + (f"; peso ({article.peso_kg:.1f}kg) corta para {por_peso}" if por_peso is not None and por_peso < por_geometria else "")
+        + f". Nº de unidades = ceil({article.stock_max_un} / {assignment.pecas_por_unidade}) = {assignment.num_unidades}."
+    )
+
+    return BoxJustificacao(
+        **base, orientacao_usada=orientacao_usada,
+        caixa_int_comp_m=box.int_comp_m, caixa_int_larg_m=box.int_larg_m, caixa_int_alt_m=box.int_alt_m,
+        pecas_por_plano_teorico=por_plano_teorico, pecas_por_plano=por_plano,
+        pecas_por_altura=n_altura, pecas_por_peso=por_peso,
+        fator_limitante=fator_limitante, criterio=criterio,
+    )
+
+
+def justificar_all(articles: list[Article], catalogo: list[BoxType], cfg: Config,
+                   assignments: list[BoxAssignment]) -> list[BoxJustificacao]:
+    assign_idx = {a.sku: a for a in assignments}
+    out = []
+    for art in articles:
+        assignment = assign_idx.get(art.sku)
+        if assignment is None:
+            continue
+        out.append(justificar_escolha(art, catalogo, cfg, assignment))
+    return out

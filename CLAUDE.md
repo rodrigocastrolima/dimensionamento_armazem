@@ -10,6 +10,9 @@ racks e a área de chão necessária.
 `_m2` / `_m3`. Não introduzir milímetros.
 
 ## Pipeline (3 passos)
+0. **Autonomia mínima (`boxing.stock_para_autonomia`)** — decide `stock_max_un`
+   a partir de `Peças_por_carro` e `Config.autonomia_minima_carros` (10 carros).
+   Ver "Decisão fechada: stock de autonomia mínima é algorítmico" abaixo.
 1. **Repacking (`boxing.py`)** — por SKU, escolher a unidade de carga e contar a
    partir de `stock_max_un`. Catálogo de unidades = **dado**; escolha/contagem =
    **output**.
@@ -27,11 +30,9 @@ racks e a área de chão necessária.
 - **PALLET** — a palete é **mais uma entrada do catálogo** (BoxType): para o
   packer é um bin (footprint × altura de empilhamento + peso). Não há dataclass
   `Pallet` nem `load_pallet` separados.
-- **LONGO** — material comprido (perfis, tubos, vedantes). **Não é caixa**: vai
-  direto para cantilever. O boxing encaminha para LONGO os artigos cuja
-  geometria está em `cfg.long_geometrias` (por defeito "Comprida"), com
-  `pecas_por_unidade = 1`. A capacidade da cantilever (`rack_capacity_long`) é de
-  outro tipo: metros lineares / itens por braço, não footprint.
+- **OVERSIZE** — não assenta em nenhuma unidade de carga do catálogo (nem na
+  footprint da palete). Ver "Decisão fechada: OVERSIZE ao CHÃO" e "... em rack
+  wide-span" abaixo.
 
 ## Altura dos racks
 `RackType.alt_nivel_m` é a **altura útil POR NÍVEL** (não o total do prumo). O
@@ -39,16 +40,16 @@ teste vertical em `rack_capacity` compara a altura exterior da caixa com
 `alt_nivel_m`. Total do prumo = `alt_nivel_m × niveis`.
 
 ## Fronteira INPUT vs OUTPUT
-- INPUT : geometria do artigo (m), stock máximo, catálogo «Caixas» (S/M/L+PALLET),
-  tipologias «Racks».
-- OUTPUT: tipo de carga por SKU, nº de unidades, nº de racks, área.
+- INPUT : geometria do artigo (m), `Peças_por_carro`, `Stock_máx_un` (só
+  referência, ver Passo 0), catálogo «Caixas» (S/M/L+PALLET), tipologias «Racks».
+- OUTPUT: `stock_max_un` decidido (Passo 0), tipo de carga por SKU, nº de
+  unidades, nº de racks, área.
 
 ## FORA de âmbito
 Slotting, COI/ABC, otimização de picking, desenho de níveis de rack (os racks já
 vêm com níveis e altura por nível definidos). Não reintroduzir.
 
 ## Decisões já fechadas
-- Tipo LONGO criado; "Comprida" → cantilever, sem caixa.
 - PALLET é entrada do catálogo «Caixas» (não dataclass separado).
 - `alt_nivel_m` = altura por nível.
 - Convenção de unidades: metros / m³.
@@ -77,6 +78,20 @@ vêm com níveis e altura por nível definidos). Não reintroduzir.
   nunca implementados) e o `min_fill_ratio` foram removidos do `config.py` —
   eram código morto que parecia configurável. Não reintroduzir.
 - Capacidade do rack: calculada a partir das dimensões (não dada em posições).
+
+## Decisão fechada: cantilever/LONGO removida (2026-09)
+O tipo de carga LONGO e a cantilever (`racking.rack_capacity_long`,
+`boxing.cabe_em_cantilever`, `Config.long_geometrias`/`long_subtipos_excluidos`/
+`cantilever_*`, `RackType.comp_braco_m`, `Article.subtipo_longo`) foram
+**removidos por completo** do código — decisão de negócio: já não se usa
+cantilever no armazém. Não reintroduzir sem pedido explícito.
+
+Artigos com `geometria = "Comprida"` seguem agora sempre o best-fit normal
+(S/M/L/MEIA/PALLET/OVERSIZE), como já acontecia de facto com os dados reais:
+os 16 SKUs assim marcados já falhavam o filtro geométrico da cantilever
+(`cabe_em_cantilever`) e caíam no best-fit — a remoção não muda nenhum
+resultado nos dados atuais, só o código morto que já não era exercitado.
+`Article.geometria` mantém-se (é só informativo agora, mostrado na UI).
 
 ## Decisão fechada: transbordo máximo ao pousar em palete
 `Config.pallet_transbordo_max_pct` (0.25) limita quanto uma peça pode pender da
@@ -155,8 +170,7 @@ serve**: só vai a 48″ (1219 mm) de profundidade e as peças precisam de ~1.38
 Tipologia proposta (a acrescentar à folha «Racks»): **vão 2.70 × prof 1.50 m,
 4 níveis de 1.60 m** (prumo 6.4 m). Dá 4 racks para as 35 unidades.
 
-Como funciona (mesmo padrão do LONGO/cantilever — «a própria rack é a
-superfície», sem palete nem caixa):
+Como funciona («a própria rack é a superfície», sem palete nem caixa):
 - `racking.rack_capacity_oversize` — a peça assenta **DEITADA** (menor cota = a
   altura; painéis não se põem ao alto), as duas maiores no plano nas 2
   orientações. Empilha peças **do mesmo SKU** dentro do nível.
@@ -165,8 +179,6 @@ superfície», sem palete nem caixa):
 - Admissão por **substring do nome** da tipologia (`Config.oversize_racks =
   ("wide","bulk")`) ou `OVERSIZE` na coluna «Aceita» — evitou-se inventar coluna
   nova. Sem wide-span na folha, volta ao aviso de antes (nunca conta 1/palete).
-- **Coexiste com a cantilever**: LONGO (1D esbelto, apoiado em braços) e OVERSIZE
-  (volume plano pousado) são problemas geométricos distintos.
 
 Cuidado ao ler os resultados: um item colocado é um **stack**, não uma peça —
 contar `len(caixas)` dá 16, mas `sum(pecas_nesta_caixa)` dá as 35 reais.
@@ -229,6 +241,132 @@ Duas razões para a mudança:
 Custa área (+21% no exemplo). Quem quiser a forma alongada impõe-na com
 `Config.largura_max_m`.
 
+## Decisão fechada: tipologias diferentes podem partilhar a mesma banda (shelf packing) -- SÓ quando o perímetro melhora
+`layout._larguras_alinhadas`/`_ks_com_teto` (alinhar TODAS as tipologias a uma
+única largura-alvo comum, cada uma sempre numa banda inteira só sua, empilhadas
+em profundidade) foram **substituídos** por `_fiadas_tipologia` +
+`_empacotar_tipologias` (shelf packing entre FIADAS de tipologias diferentes).
+
+Antes, uma tipologia mais estreita (ex.: Prateleira Leve, 1.83 m) alinhada a
+uma mais larga (ex.: Rack Porta-Paletes, 2.7 m) desperdiçava a diferença de
+largura ao longo de **toda a profundidade** da tipologia estreita — chão vazio
+ao lado, nunca aproveitado por outra tipologia.
+
+**Decisão explícita (perguntado ao utilizador)**: o critério continua a ser o
+PERÍMETRO mínimo do bloco (bloco compacto, perto do quadrado — ver "forma do
+bloco = perímetro mínimo" abaixo), não "misturar sempre que dá para encaixar".
+Testámos os dois: para 12 Prateleira Leve + 21 Rack Porta-Paletes, "encostar
+tudo" dá 21.69 x 7.8 m = 169 m² (MENOS área) mas 58.98 m de perímetro (forma
+mais alongada); manter cada tipologia na sua fiada dá 16.2 x 12.0 m = 194 m²
+(mais área) mas só 56.4 m de perímetro (mais compacto). O utilizador escolheu
+explicitamente manter o perímetro mínimo — não forçar a mistura só porque
+"encaixa". A mistura acontece, mas só quando reduz mesmo o perímetro.
+
+Como funciona:
+1. **Cada tipologia decompõe-se nas suas FIADAS DUPLAS** (`_fiadas_tipologia`):
+   o k (posições por fiada) continua a ser o perímetro-mínimo da tipologia
+   INTEIRA de sempre (`_melhor_num_por_fiada`, agora com `k_max` opcional para
+   capar por `largura_max_m`), mas cada fiada vira um item PRÓPRIO com a sua
+   largura REAL (a última fiada de uma tipologia tipicamente usa menos que k)
+   -- é decompor ao nível da FIADA, não da tipologia inteira, que permite
+   testar misturas como "1 fiada larga + 1 fiada estreita de outra tipologia".
+2. **Essas fiadas são arrumadas em "prateleiras" por First-Fit Decreasing
+   Height (FFDH)**: ordena por profundidade decrescente e cada fiada tenta a
+   PRIMEIRA prateleira já aberta onde ainda caiba (não só a última) — sem
+   isto, uma prateleira que abre com uma fiada larga e não enche nunca mais
+   recebia nada, mesmo que uma fiada mais estreita (de outra tipologia, mais
+   à frente na lista) coubesse na sobra.
+3. A largura-alvo das prateleiras (`_largura_alvo_shelf`) testa como
+   candidatos TODAS as somas de subconjuntos das larguras das fiadas (não só
+   somas cumulativas por profundidade decrescente, que perdem combinações
+   tipo "1 fiada larga + 1 estreita" quando não são adjacentes nessa ordem)
+   e escolhe por PERÍMETRO mínimo do envolvente resultante (empate por área
+   menor). Nº de fiadas é sempre pequeno, 2^n é barato; acima de 16 cai para
+   as somas cumulativas. `largura_max_m` continua TETO (nunca agrava o livre).
+4. O corredor de transição entre prateleiras consecutivas usa o MAIOR
+   corredor entre as duas (mesmo critério que já existia entre tipologias).
+
+**Refinamento: ajuste fino ENTRE tipologias (`_ajustar_decomposicoes`).** Cada
+tipologia começa na sua forma perímetro-mínimo sozinha, mas testa-se também
+trocar por formas mais fragmentadas (`_candidatos_decomposicao`: k=1 máxima
+fragmentação, k=n uma única fila) SE isso reduzir o perímetro GLOBAL do
+bloco — às vezes uma tipologia pior sozinha encaixa nos buracos deixados por
+outra. Busca gulosa (troca uma tipologia de cada vez, 2 passagens); nunca
+piora, a forma sozinha é sempre uma das opções testadas. Caso real: com
+`altura_armazem_m` a reduzir a Prateleira Leve a poucas posições de chão,
+esta troca encaixa-as nos espaços-fantasma deixados pela Rack Porta-Paletes
+(k=4, sobra 1 posição de largura), eliminando a fiada própria da Prateleira
+Leve por completo.
+
+**Efeito medido** (dados atuais, com o critério de perímetro a decidir se
+compensa misturar): área bruta total v2 264 → **238 m² (−10%)**, v3 332 →
+**244 m² (−26%)** — o nº de racks não muda (vem do stock, intocado); o ganho
+vem de fiadas (inteiras ou fragmentadas) que preenchem a sobra de outra
+tipologia SEM alongar o bloco. Com `altura_armazem_m` ligado (empilhamento de
+módulos) o ganho é maior ainda — ver "Empilhamento de módulos de rack".
+
+**Refinamento: a fiada FINAL (resto) escolhe o seu próprio k.** As fiadas
+CHEIAS de uma tipologia usam o k perímetro-mínimo da tipologia inteira, mas a
+última fiada -- quando sobra menos que uma fiada cheia (2k, ou k nas
+emparelhadas) -- reotimiza-se sozinha (`_melhor_num_por_fiada` sobre só esse
+resto). Herdar o k da maioria distorcia essa sobra: 9 posições sobrantes com
+k=6 davam sempre "6 à frente, 3 atrás"; sozinhas, preferem "5 à frente, 4
+atrás" (mais equilibrado, perímetro menor). Nunca piora — é só mais uma forma
+testada para o resto, nunca imposta às fiadas cheias.
+
+**Bug corrigido**: `_melhor_num_por_fiada` assumia sempre frente+trás (2×k por
+fiada), mesmo para tipologias emparelhadas (`profundidade_inclui_par=True`,
+só têm o lado "único", k por fiada — ver `racking.com_par_oversize`). Estava
+"adormecido" no código antigo (`_larguras_alinhadas` já tratava isto à parte,
+e `_melhor_num_por_fiada` só era chamada com k já escolhido); ativou-se agora
+que esta função escolhe o k diretamente para TODAS as tipologias, incluindo
+emparelhadas — sem o parâmetro `par_incluido`, uma emparelhada de 2 unidades
+partia-se em 2 fiadas de 1 (pior) em vez de ficar 1 fiada de 2 (melhor).
+
+**Espaços livres / racks fantasma (Passo 4)**: `EspacoLivre` só tem uma
+origem agora — o resto de uma prateleira que nenhuma fiada ocupou (`fila_idx`
+negativo sintético, `lado="prateleira"`), atribuído à tipologia que fecha essa
+prateleira. `gerar_racks_fantasma` não mudou: continua a estender a MESMA
+tipologia do espaço. Não reintroduzir a antiga `_espacos_livres_por_fiada`
+(removida): essa via media o "livre" contra a largura TOTAL do bloco, o que
+deixou de fazer sentido quando o chão ao lado já pode pertencer a outra
+tipologia.
+
+## Decisão fechada: picking manual nunca fica fragmentado (Config.picking_manual_racks)
+Pedido explícito do utilizador: tipologias de picking MANUAL (operador a pé --
+default `("prateleira",)`, substring case-insensitive no nome, mesmo padrão de
+`oversize_racks`/`max_modulos_por_tipologia`) continuam livres para
+**partilhar prateleira** (shelf packing) com outras tipologias -- isso não
+muda -- mas as SUAS PRÓPRIAS posições nunca podem ficar espalhadas por bandas
+do bloco não-adjacentes. Picking manual e movimentação de paletes são
+operações servidas por pessoas/equipamento diferentes; um operador a pé não
+deve ter de atravessar o armazém para chegar à "outra metade" da sua zona.
+
+**Porquê era preciso**: o shelf packing normal decompõe cada tipologia em
+FIADAS soltas (`_fiadas_tipologia`) e deixa o FFDH (`_empacotar_por_shelf`)
+distribuí-las livremente por "prateleiras" (bandas Y) -- incluindo a fiada
+"resto" (mais rasa, com o seu próprio k) de uma tipologia, que podia acabar
+numa prateleira DIFERENTE das fiadas cheias da mesma tipologia, com fiadas de
+outra tipologia entaladas no meio. Confirmado com dados sintéticos (7
+Prateleira Leve + 8 Porta-Paletes + 10 Rack C): sem correção, a Prateleira
+Leve aparecia em dois grupos Y desconexos.
+
+**Como funciona** (`layout._bloco_tipologia_unico`): para as tipologias que
+casam `picking_manual_racks`, decompõe-se nas suas fiadas (mesma lógica de
+sempre, incl. o resto com o seu próprio k) mas depois EMPILHAM-SE dentro de
+UM SÓ chunk atómico (com os corredores internos entre as suas próprias fiadas
+preservados) antes de entrar no shelf packing global -- o FFDH já não pode
+espalhar esse chunk por prateleiras diferentes, só decidir com quem o
+partilha (ou não) na prateleira onde calhar. As restantes tipologias
+continuam a decompor-se em fiadas soltas e a ir a `_ajustar_decomposicoes`
+normalmente. `_largura_alvo_shelf`/`_empacotar_tipologias` não mudaram --
+recebem só mais um chunk na lista.
+
+Efeito colateral aceite: uma tipologia de picking manual perde a otimização
+"a fiada resto encaixa numa sobra de outra tipologia" -- fica sempre um
+retângulo próprio, o que pode custar uma fração de compactação face ao ótimo
+absoluto sem a restrição. É o trade-off pedido (operação > alguns m²).
+
 ## Decisão fechada: envelope do bloco de racks
 `Config.largura_max_m` / `profundidade_max_m` (0 = sem limite) limitam o bloco de
 **racks + corredores** — não as zonas funcionais, que continuam à parte.
@@ -255,6 +393,41 @@ canvas (`_roda_rect`), espremendo as posições num retângulo que não era o de
 
 Não confundir com `altura_armazem_m`, que é benigno (só reduz empilhamento);
 largura/comprimento podem tornar o stock inarmazenável.
+
+## Decisão fechada: stock de autonomia mínima é algorítmico (Passo 0)
+`Stock_máx_10un_a_utilizar` (master data v2) era calculado à MÃO fora do código
+(autonomia mínima de 10 carros, arredondado para cima para encher a caixa/palete
+escolhida) e colado como INPUT — o pipeline não sabia que essa decisão tinha sido
+tomada, só consumia o número já pronto. Passou a ser **Passo 0**
+(`boxing.stock_para_autonomia`, chamado por `main.run` antes do Passo 1):
+
+```
+stock_teórico = ceil(Config.autonomia_minima_carros × Peças_por_carro)   # 10 carros
+(load_type, ppu) = escolha_de_caixa(stock_teórico)                       # mesmo best-fit do Passo 1
+capacidade_prática = capacidade_reportada(load_type, ppu)                # teto + arredonda à centena
+nº_unidades = ceil(stock_teórico / capacidade_prática)
+stock_max_un = capacidade_prática × nº_unidades                          # arredonda p/ cima, enche a última caixa
+```
+
+`Article.stock_max_un` deixa de vir do master data: é sempre decidido por este
+passo. `Article.stock_atual_un` (`Stock_máx_un` bruto) fica só como referência
+nos resultados (sheet Autonomia) — **não** entra na fórmula nem é feito
+`max(atual, teórico)`: o stock atual pode ser MAIOR que o teórico e mesmo assim
+o stock usado vem do teórico (ex.: SKT01.BBA231 tem 100 un. atuais mas usa 98,
+porque a autonomia de 10 carros só precisa de 40 e a caixa M enche a 98).
+
+Reverse-engenheirado e validado por comparação byte-a-byte com o comportamento
+antigo: os `stock_max_un` resultantes batem **735/735** com a antiga
+`Stock_máx_10un_a_utilizar` da v2 (716 pela fórmula + 19 por
+`Config.stock_autonomia_override_sku`, ajustes manuais que não seguiam a
+fórmula e foram preservados explicitamente em vez de perdidos na migração).
+
+`warehouse/cenario_autonomia.py` (escala o stock para outra autonomia-alvo,
+sem tocar no Excel) e as três rotas de `web.py` que chamam `load_articles`
+(`/api/articles`, `/api/gerar`, `/api/render-layout`) chamam
+`boxing.aplicar_stock_autonomia` logo a seguir a `load_articles`, antes de
+qualquer escala por `carros_alvo` — sem isso ficariam a dimensionar a partir do
+`Stock_máx_un` bruto (placeholder que `load_articles` agora devolve).
 
 ## Em aberto
 - 16 SKUs sem `Peso_kg` no master data (#N/A) — lidos como 0.0 na leitura

@@ -1,0 +1,41 @@
+{
+  "_comment": "Valores CLIENT-SPECIFIC para o cliente SIA (linha de montagem BEN, EV). Extraidos do warehouse/config.py hardcoded anterior -- ver auditoria CORE vs CLIENT-SPECIFIC. Carregado via Config.for_client('sia').",
+
+  "data_source": "excel",
+  "master_data": "dados/master_data_classificado_v3.xlsx",
+  "output": "dados/resultados.xlsx",
+
+  "autonomia_minima_carros": 10.0,
+
+  "capacidade_override_sku": {
+    "BEN00.FHG111": 100
+  },
+
+  "stock_autonomia_override_sku": {
+    "BOL00050": 100,
+    "BOL00206": 300,
+    "BOL00220": 300,
+    "BOL00238": 100,
+    "BOL00295": 100,
+    "BOL00319": 400,
+    "CLI00008": 1000,
+    "CLI00013": 700,
+    "CLI00017": 900,
+    "CLI00039": 1000,
+    "GRM00001": 500,
+    "GRM00002": 300,
+    "RBC00001": 700,
+    "RBM00010": 800,
+    "WAS00034": 1000,
+    "WAS00040": 1000,
+    "WAS00045": 1000,
+    "WAS00052": 1000,
+    "WAS00061": 500
+  },
+
+  "oversize_racks": ["wide", "bulk"],
+  "oversize_par_racks": ["porta-paletes"],
+  "max_modulos_por_tipologia": {},
+  "empilhamento_por_nivel": ["porta-paletes"],
+  "picking_manual_racks": ["prateleira"]
+}

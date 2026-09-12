@@ -1,12 +1,31 @@
 __pycache__/
 *.pyc
 .venv/
-dados/resultados.xlsx
-# outputs do pipeline (regerados a cada execucao)
-dados/pecas_tipo_caixa.xlsx
-# backups locais do master data
-dados/*_antigo.xlsx
+
+# dados/ é dados REAIS de cliente (o master data de cada cliente e os
+# outputs do pipeline sobre esses dados) -- nunca commitar como blob binário,
+# ficam locais ou migram para o Supabase (ver Phase 3/4 do MIGRATION_LOG.md
+# e supabase/README.md). dados/clients/*.json fica de fora: é configuração
+# (não dados), pequena, sem SKUs/segredos -- ver Config.for_client.
+dados/*.xlsx
+dados/*.xlsm
+dados/*.xls
+dados/*.csv
+dados/*.bak
+dados/cenarios/
+!dados/clients/*.json
+# histórico (versões antigas do master data, estudos exploratórios) -- ver
+# dados/archive/README.md. O próprio manifesto fica versionado (é
+# documentação, não dados); o resto do conteúdo do folder, não (o padrão
+# dados/*.xlsx acima não é recursivo, por isso precisa de regra própria).
+dados/archive/*
+!dados/archive/README.md
 ~$*
+
+# credenciais/ligação (Supabase, etc.) -- nunca commitar
+.env
+.env.*
+!.env.example
 
 # Fontes 3D pesadas (CAD/render) — não versionar; só o GLB otimizado entra
 BEN 3D/

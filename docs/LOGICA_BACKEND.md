@@ -54,9 +54,8 @@ encoding, por isso não se procura por nome):
 | 8 | Orientação_permitida | `orientacao` | |
 | 9 | Empilhável | `empilhamento` | NAO_EMPILHAVEL / EMPILHAVEL / ANINHAVEL |
 | 10 | Fragilidade | `fragilidade` | |
-| 11 | Geometria | `geometria` | "Comprida" → candidato a LONGO |
+| 11 | Geometria | `geometria` | informativo (sem uso no cálculo) |
 | 12 | Volume_unit_m³ | (não lido) | |
-| 13 | Subtipo_LONGO | `subtipo_longo` | PAINEL_GRANDE / VOLUMOSO_OVERSIZE |
 | 14 | Classe | `classe` | RIGIDO / FLEXIVEL_CONTENTOR |
 
 ### Folha «Caixas» → `BoxType` (catálogo de unidades de carga)
@@ -73,7 +72,6 @@ PALLET (1.2×0.8)**. A palete e a meia-palete são entradas normais do catálogo
   Altura total do prumo = `alt_nivel_m × niveis`.
 - `niveis`: nº de prateleiras/níveis do módulo.
 - `aceita`: tipos de carga compatíveis (ex.: "PALLET, L, MEIA").
-- `comp_braco_m`: comprimento do braço (só cantilever; 0 = N/A).
 - `corredor_m`: largura do corredor de serviço desta tipologia (0 → 2.5 m).
 
 ### Folha «Zonas» → `Zona`
@@ -88,11 +86,10 @@ algoritmo; somam-se à área no fim e posicionam-se manualmente no canvas.
 Para cada SKU decide **uma** unidade de carga e conta quantas são precisas
 para o stock máximo.
 
-### 3.1 Encaminhamento para LONGO (cantilever)
-Se `geometria ∈ cfg.long_geometrias` (por defeito "Comprida") **e** o
-`subtipo_longo` não está excluído (`PAINEL_GRANDE`, `VOLUMOSO_OVERSIZE` não
-são material 1D de braços) → `LoadType.LONGO`, com `pecas_por_unidade = 1` e
-`num_unidades = stock_max_un`. Não há caixa.
+### 3.1 (removido) Encaminhamento para LONGO/cantilever
+O tipo de carga LONGO e a cantilever foram removidos (2026-09, decisão de
+negócio — ver `CLAUDE.md`). Todos os artigos seguem agora o best-fit normal
+(3.2), independentemente da `geometria`.
 
 ### 3.2 Peças por unidade de carga — `pieces_per_box()`
 Modelo de envelope 3D com três cortes:
@@ -143,9 +140,6 @@ original + coluna `Tipo_Caixa`.
   `floor(larg_rack/dim1) × floor(prof_rack/dim2)` na melhor das 2 orientações
   da caixa (dimensões EXT); valida `ext_alt ≤ alt_nivel_m`.
   Total = por_nível × níveis.
-- **LONGO** — `rack_capacity_long(rack, comp_artigo)`: cantilever,
-  `floor(comp_braço / comp_artigo) × níveis` (metros lineares por braço, não
-  footprint).
 
 ### 4.2 Estimativa agregada — `racks_needed()`
 Resumo rápido (para UI/relatório; **não** é a verdade da alocação): agrupa as
@@ -274,8 +268,6 @@ Excel.
 |---|---|---|
 | `fator_empilhamento` | 0.3 | altura extra por peça ANINHAVEL |
 | `fill_factor_plano` | 0.7 | fator de enchimento no plano (todas as classes) |
-| `long_geometrias` | ("Comprida",) | encaminhamento para LONGO |
-| `long_subtipos_excluidos` | PAINEL_GRANDE, VOLUMOSO_OVERSIZE | não vão a cantilever |
 | `altura_armazem_m` | 0 | pé-direito p/ empilhar módulos (0 = desligado) |
 | `altura_picking_m` | 0 | teto da zona de picking (0 = desligado) |
 | `margem_estrutural_pct` | 0 | paredes/pilares sobre a área útil |

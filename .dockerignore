@@ -1,0 +1,25 @@
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# real client data: baked into the image only if you deliberately want an
+# Excel client's workbook there -- see DEPLOYMENT.md. Never accidental.
+dados/archive/
+dados/cenarios/
+dados/*.xlsx
+dados/*.xlsm
+dados/*.xls
+dados/*.csv
+dados/*.bak
+!dados/clients/*.json
+
+# credentials, never in an image layer
+.env
+.env.*
+!.env.example
+
+# heavy 3D source assets, not needed to run the server
+BEN 3D/
+*.fbx

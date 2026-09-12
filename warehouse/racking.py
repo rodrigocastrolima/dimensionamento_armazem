@@ -18,7 +18,7 @@ from rectpack import newPacker, PackingMode
 from .models import (RackType, BoxType, LoadType,
                      BoxAssignment, RackRequirement, Article,
                      PosicaoChao, BlocoRack, NivelRack, CaixaColocada)
-from .boxing import pieces_in_stack
+from .boxing import capacidade_reportada, pode_deitar
 from .config import Config
 
 
@@ -41,57 +41,69 @@ def rack_capacity(rack: RackType, box: BoxType) -> int:
     return por_nivel * rack.niveis
 
 
-def rack_capacity_long(rack: RackType, comp_artigo_m: float,
-                       larg_artigo_m: float = 0.0, alt_artigo_m: float = 0.0,
-                       empilhamento=None, fator_empilhamento: float = 0.3,
-                       fill_factor: float = 1.0) -> int:
-    """Capacidade de uma cantilever para material LONGO, por SKU.
+def _oversize_plano_altura(rack: RackType, art: Article,
+                           peso_max_nivel_kg: float = 0.0,
+                           folga_altura_m: float = 0.0
+                           ) -> tuple[int, int, float, float, float]:
+    """(por_plano, por_altura, plano_a, plano_b, altura_peca) para UM nível de
+    OVERSIZE: quantas colunas (peças) cabem lado a lado no plano, quantas peças
+    empilha CADA coluna na vertical (já cortado pelo peso), e as dimensões da
+    orientação escolhida (plano_a x plano_b no chão, altura_peca na vertical).
+    Ver rack_capacity_oversize para o modelo completo -- extraído para
+    partilhar exatamente este cálculo (incluindo a orientação) com
+    allocate_to_racks, que usa plano_a/plano_b/altura_peca para desenhar o
+    item no packer 2D com a MESMA orientação usada na estimativa de
+    capacidade (ver nota no bug de boxes_per_stack, corrigido nesta função).
 
-    O nível da cantilever é tratado como um VOLUME de arrumação -- "a própria
-    rack é a caixa", sem caixa física:
+    Orientação (ver `boxing.pode_deitar`): se a peça permite deitar (tudo
+    menos «Base fixa»/«Não deitar»), testam-se as 3 escolhas de cota vertical
+    e fica a que MAXIMIZA a capacidade do nível (por_plano x por_altura) --
+    não se força sempre a menor cota como altura. "Painéis não se põem ao
+    alto" é o caso comum, mas uma peça com orientação Livre já diz que é
+    segura de reorientar; forçar sempre a maior footprint desperdiçava
+    capacidade nesses SKUs. Orientação travada mantém o Z medido como altura,
+    como em `boxing.pieces_per_box`."""
+    if art.comp_m <= 0 or art.larg_m <= 0 or art.alt_m <= 0:
+        return 0, 0, 0.0, 0.0, 0.0
 
-        por_nivel = floor(braco / comp) x floor(prof / larg) x n_empilhado
-        capacidade = por_nivel x niveis
+    dims = (art.comp_m, art.larg_m, art.alt_m)
+    eixos = range(3) if pode_deitar(art.orientacao) else (2,)  # travada: Z medido = altura
 
-    Antes contava-se 1 peça por braço (floor(braco/comp) x niveis), ignorando
-    largura e altura: uma peça de 0.13 m ocupava o mesmo que um perfil de
-    2.47 m, e o material nunca era arrumado lado a lado nem empilhado.
+    melhor_plano, melhor_altura, melhor_cap = 0, 0, 0
+    melhor_plano_a, melhor_plano_b, melhor_vertical = 0.0, 0.0, 0.0
+    for iv in eixos:
+        vertical = dims[iv]
+        plano_a, plano_b = (dims[j] for j in range(3) if j != iv)
+        if vertical <= 0:
+            continue
 
-    larg/alt a 0 (ou empilhamento None) degradam para o comportamento antigo,
-    para nao partir chamadas que so tenham o comprimento.
-    """
-    if rack.comp_braco_m <= 0 or comp_artigo_m <= 0:
-        return 0
-    # O material assenta ATRAVESSADO sobre varios bracos: o comprimento da peca
-    # corre ao longo da LARGURA do rack (o vao), nao do braco. O comp_braco_m e
-    # a profundidade do apoio -- limita a largura do que se pousa, nao o
-    # comprimento. Comparar o comprimento da peca com o braco (como se fazia)
-    # dava 0 para tudo o que fosse mais largo que 0.6 m.
-    vao = rack.larg_m if rack.larg_m > 0 else rack.comp_braco_m
-    por_comprimento = math.floor(vao / comp_artigo_m)
-    if por_comprimento <= 0:
-        return 0
+        # no plano: as duas cotas restantes, na orientação que render mais
+        por_plano = 0
+        for base_c, base_l in ((plano_a, plano_b), (plano_b, plano_a)):
+            if base_c <= rack.larg_m and base_l <= rack.prof_m:
+                por_plano = max(por_plano,
+                                math.floor(rack.larg_m / base_c) * math.floor(rack.prof_m / base_l))
+        if por_plano <= 0:
+            continue                      # não assenta no nível nesta orientação
 
-    # lado a lado, na profundidade util do braco
-    if larg_artigo_m > 0 and rack.comp_braco_m > 0:
-        por_profundidade = math.floor(rack.comp_braco_m / larg_artigo_m)
-        if por_profundidade <= 0:
-            return 0
-    else:
-        por_profundidade = 1
+        # empilhamento em altura, dentro do nível
+        util = max(rack.alt_nivel_m - folga_altura_m, 0.0)
+        if vertical > util:
+            continue                      # a própria peça, de pé nesta orientação, não cabe no nível
+        por_altura = max(math.floor(util / vertical), 1)
 
-    # empilhado, na altura útil do nível
-    if alt_artigo_m > 0 and empilhamento is not None:
-        n_altura = pieces_in_stack(rack.alt_nivel_m, alt_artigo_m,
-                                   empilhamento, fator_empilhamento)
-        if n_altura <= 0:
-            return 0
-    else:
-        n_altura = 1
+        # corte por peso do nível
+        if peso_max_nivel_kg > 0 and art.peso_kg > 0:
+            cabem_peso = math.floor(peso_max_nivel_kg / (art.peso_kg * por_plano)) \
+                if art.peso_kg * por_plano > 0 else por_altura
+            por_altura = max(min(por_altura, cabem_peso), 1)
 
-    por_nivel_teorico = por_comprimento * por_profundidade
-    por_nivel = max(math.floor(por_nivel_teorico * fill_factor), 1) * n_altura
-    return por_nivel * rack.niveis
+        cap = por_plano * por_altura
+        if cap > melhor_cap:
+            melhor_cap, melhor_plano, melhor_altura = cap, por_plano, por_altura
+            melhor_plano_a, melhor_plano_b, melhor_vertical = plano_a, plano_b, vertical
+
+    return melhor_plano, melhor_altura, melhor_plano_a, melhor_plano_b, melhor_vertical
 
 
 def rack_capacity_oversize(rack: RackType, art: Article,
@@ -99,46 +111,27 @@ def rack_capacity_oversize(rack: RackType, art: Article,
                            folga_altura_m: float = 0.0) -> int:
     """Capacidade de uma wide-span (bulk rack) para UM SKU OVERSIZE.
 
-    Como no LONGO, "a própria rack é a superfície": a peça fica POUSADA no nível,
-    sem palete nem caixa. Por isso a capacidade não vem de unidades de carga --
+    "A própria rack é a superfície": a peça fica POUSADA no nível, sem palete
+    nem caixa. Por isso a capacidade não vem de unidades de carga --
     vem do footprint do nível mais o empilhamento de peças iguais:
 
         por_nivel = (peças no plano) x (peças empilhadas em altura)
         capacidade = por_nivel x niveis
 
-    A peça assenta DEITADA: a sua menor cota é a altura, as duas maiores ficam no
-    plano (não se põem painéis ao alto). Testam-se as duas orientações no plano.
+    A orientação da peça decide qual cota fica vertical (ver `_oversize_plano_
+    altura`/`boxing.pode_deitar`): deitada por omissão (menor cota = altura),
+    mas testam-se as 3 escolhas quando `Orientação_permitida` não está travada,
+    ficando a que maximiza peças por nível. Testam-se sempre as duas
+    orientações no plano.
 
     Dois limites independentes ao empilhamento, e vale o MENOR:
       - altura útil do nível (menos a folga de manuseio);
       - peso máximo do nível -- nas peças reais é este que morde primeiro (uma
         peça de 216 kg empilharia 8x por altura mas só 4x por peso).
     """
-    if art.comp_m <= 0 or art.larg_m <= 0 or art.alt_m <= 0:
-        return 0
-
-    cotas = sorted([art.comp_m, art.larg_m, art.alt_m], reverse=True)
-    maior, media, menor = cotas          # menor = altura (peça pousada)
-
-    # no plano: as duas maiores cotas, na orientação que render mais
-    por_plano = 0
-    for base_c, base_l in ((maior, media), (media, maior)):
-        if base_c <= rack.larg_m and base_l <= rack.prof_m:
-            por_plano = max(por_plano,
-                            math.floor(rack.larg_m / base_c) * math.floor(rack.prof_m / base_l))
+    por_plano, por_altura, *_ = _oversize_plano_altura(rack, art, peso_max_nivel_kg, folga_altura_m)
     if por_plano <= 0:
-        return 0                          # não assenta no nível em nenhuma orientação
-
-    # empilhamento em altura, dentro do nível
-    util = max(rack.alt_nivel_m - folga_altura_m, 0.0)
-    por_altura = max(math.floor(util / menor), 1) if menor > 0 else 1
-
-    # corte por peso do nível
-    if peso_max_nivel_kg > 0 and art.peso_kg > 0:
-        cabem_peso = math.floor(peso_max_nivel_kg / (art.peso_kg * por_plano)) \
-            if art.peso_kg * por_plano > 0 else por_altura
-        por_altura = max(min(por_altura, cabem_peso), 1)
-
+        return 0
     return por_plano * por_altura * rack.niveis
 
 
@@ -160,20 +153,64 @@ def _melhor_oversize(rack_types: list[RackType], chaves: tuple | None) -> RackTy
     return min(cands, key=_rack_footprint_m2) if cands else None
 
 
-def _melhor_cantilever(rack_types: list[RackType]) -> RackType | None:
-    """Cantilever compatível com LONGO e com braço definido, de menor footprint."""
+def com_par_oversize(rack_types: list[RackType], cfg: Config) -> list[RackType]:
+    """Acrescenta, se existir uma tipologia elegível (Config.oversize_par_racks),
+    uma tipologia SINTÉTICA "<nome base> (emparelhada)" com profundidade
+    dobrada -- representa um PAR dessa tipologia costas-com-costas (a
+    configuração de densidade máxima que layout.py já usa) como UMA superfície
+    contínua para peças OVERSIZE. Nunca escrita no Excel -- derivada em memória
+    a cada corrida, e devolvida numa lista NOVA (não muta rack_types).
+
+    Partilha o STOCK NORMAL da tipologia base (aceita = base.aceita + OVERSIZE):
+    o packer 2D por nível (rectpack) já mistura livremente tipos de carga
+    compatíveis no mesmo nível, sem nunca sobrepor footprints -- por isso uma
+    palete normal pode ocupar o espaço que uma peça OVERSIZE não enche num
+    nível já aberto, sem duplicar estrutura. `allocate_to_racks` tenta sempre
+    as posições já abertas de menor footprint primeiro (ver ordenação de
+    `candidatos_por_tipo`), por isso o stock normal só usa a emparelhada
+    (footprint maior) quando já está aberta e tem espaço livre -- nunca abre
+    uma emparelhada nova só para paletes.
+
+    NOTA (decisão tomada durante a implementação): a alternativa considerada
+    -- reaproveitar níveis vazios de um PAR já aberto de posições normais --
+    não é possível aqui: a adjacência física (que posição fica "frente"/"trás"
+    da mesma fiada) só é decidida no layout.py (Passo 3b), depois deste passo
+    já ter corrido. Não há como saber, durante a alocação, que duas posições
+    normais vão ficar costas-com-costas."""
+    # exclui sintéticas já existentes: o NOME delas ("<base> (emparelhada)")
+    # também casa por substring com a chave da base -- sem isto, chamar esta
+    # função 2x (ou já ter uma sintética na lista) tentaria emparelhar a
+    # emparelhada.
     cands = [r for r in rack_types
-             if LoadType.LONGO in r.aceita and r.comp_braco_m > 0]
-    return min(cands, key=_rack_footprint_m2) if cands else None
+             if not r.profundidade_inclui_par and aceita_oversize(r, cfg.oversize_par_racks)]
+    if not cands:
+        return rack_types
+    base = min(cands, key=_rack_footprint_m2)
+    sintetico = RackType(
+        nome=f"{base.nome} (emparelhada)",
+        larg_m=base.larg_m, prof_m=base.prof_m * 2,
+        alt_nivel_m=base.alt_nivel_m, niveis=base.niveis,
+        aceita=[*base.aceita, LoadType.OVERSIZE], corredor_m=cfg.oversize_par_corredor_m,
+        profundidade_inclui_par=True,
+    )
+    return [*rack_types, sintetico]
 
 
-def _cap_longo_sku(rack: RackType, art: Article | None, cfg: Config) -> int:
-    """Capacidade da cantilever para UM SKU concreto (usa as suas 3 cotas)."""
-    if art is None or art.comp_m <= 0:
-        return 0
-    return rack_capacity_long(
-        rack, art.comp_m, art.larg_m, art.alt_m,
-        art.empilhamento, cfg.fator_empilhamento, cfg.fill_factor_plano)
+def _melhor_oversize_ativo(rack_types: list[RackType], cfg: Config) -> RackType | None:
+    """Prioridade para dimensionar OVERSIZE em rack: 1) wide-span dedicada
+    (Config.oversize_racks) se a folha «Racks» já tiver uma; 2) par emparelhado
+    sintético (ver com_par_oversize). None = nenhuma das duas -- cai para o
+    chão (Config.oversize_ao_chao).
+
+    A sintética identifica-se pela flag `profundidade_inclui_par`, NÃO por
+    substring do nome: o nome dela ("<base> (emparelhada)") também contém a
+    chave de Config.oversize_par_racks, por isso casar por nome apanhava a
+    rack BASE (footprint menor, 2.7x1.2) em vez da sintética (2.7x2.4)."""
+    wide_span = _melhor_oversize(rack_types, cfg.oversize_racks)
+    if wide_span is not None:
+        return wide_span
+    pares = [r for r in rack_types if r.profundidade_inclui_par]
+    return min(pares, key=_rack_footprint_m2) if pares else None
 
 
 def _rack_footprint_m2(rack: RackType) -> float:
@@ -194,8 +231,71 @@ def limite_modulos(rack: RackType, max_por_tipologia: dict | None) -> int | None
     return min(limites) if limites else None
 
 
+def _nome_bate(rack: RackType, chaves: tuple | None) -> bool:
+    """Substring do nome da tipologia (case-insensitive) -- mesmo padrão de
+    `aceita_oversize`/`limite_modulos`, generalizado para outros usos
+    (ver `empilhamento_por_nivel`)."""
+    if not chaves:
+        return False
+    nome = (rack.nome or "").lower()
+    return any(k.lower() in nome for k in chaves)
+
+
+# Config fields whose value is a substring-match key against RackType.nome
+# (ver `_nome_bate`/`aceita_oversize`): nome do campo -> como extrair as
+# chaves desse campo (a maioria já é uma tuple; max_modulos_por_tipologia é
+# um dict, as chaves de negócio são as SUAS chaves, não os valores).
+_CAMPOS_SUBSTRING_RACK = {
+    "oversize_racks": lambda cfg: cfg.oversize_racks,
+    "oversize_par_racks": lambda cfg: cfg.oversize_par_racks,
+    "max_modulos_por_tipologia": lambda cfg: tuple(cfg.max_modulos_por_tipologia),
+    "empilhamento_por_nivel": lambda cfg: cfg.empilhamento_por_nivel,
+    "picking_manual_racks": lambda cfg: cfg.picking_manual_racks,
+}
+
+
+def verificar_chaves_substring_sem_correspondencia(
+        rack_types: list[RackType], cfg: "Config") -> list[str]:
+    """Deteta o modo de falha mais perigoso das chaves de substring do cliente
+    (`Config.oversize_racks`/`oversize_par_racks`/`max_modulos_por_tipologia`/
+    `empilhamento_por_nivel`/`picking_manual_racks`): uma chave CONFIGURADA
+    que não casa NENHUMA tipologia real da folha «Racks» deste cliente.
+
+    Sem este aviso, esse caso é indistinguível de um sucesso limpo -- o
+    pipeline continua a correr e a produzir uma área plausível, só que a
+    regra de negócio correspondente (OVERSIZE em rack dedicado, par
+    emparelhado, limite de módulos, empilhamento nível-a-nível, ou picking
+    manual nunca fragmentado) fica silenciosamente inativa, tipicamente
+    porque o nome da tipologia mudou na folha «Racks» ou a chave foi copiada
+    de outro cliente sem ajustar. Chamar ANTES de `com_par_oversize` (que
+    acrescenta uma tipologia sintética cujo nome também casaria a própria
+    chave, mascarando exatamente o caso que este aviso existe para apanhar).
+
+    Uma chave vazia (`()`/`{}`, cliente que não usa a regra) nunca gera
+    aviso -- só uma chave configurada e sem correspondência é sinal de
+    problema."""
+    nomes = [r.nome for r in rack_types]
+    avisos: list[str] = []
+    for campo, extrator in _CAMPOS_SUBSTRING_RACK.items():
+        chaves = extrator(cfg)
+        if not chaves:
+            continue
+        if any(_nome_bate(r, chaves) for r in rack_types):
+            continue
+        lista_nomes = ", ".join(f"'{n}'" for n in nomes) if nomes else "(nenhuma tipologia na folha «Racks»)"
+        avisos.append(
+            f"Config.{campo}={list(chaves)} (cliente '{cfg.client_name or '?'}') não "
+            f"corresponde a NENHUMA tipologia da folha «Racks» -- {lista_nomes}. "
+            f"Esta regra de negócio está configurada mas NUNCA vai disparar: "
+            f"verifica se o nome da tipologia mudou no Excel, ou corrige "
+            f"'{campo}' em dados/clients/{cfg.client_name or '<cliente>'}.json."
+        )
+    return avisos
+
+
 def blocos_empilhados(rack: RackType, altura_armazem_m: float,
-                      max_por_tipologia: dict | None = None) -> int:
+                      max_por_tipologia: dict | None = None,
+                      empilhamento_por_nivel: tuple | None = None) -> int:
     """Quantos módulos físicos deste RackType cabem empilhados, na mesma
     posição de chão, até à altura do armazém (TETO, não um valor imposto:
     cada posição decide quantos módulos USA, até este máximo).
@@ -209,7 +309,16 @@ def blocos_empilhados(rack: RackType, altura_armazem_m: float,
     passa a abrir MAIS posições de chão (ver _tentar_colocar_em_posicao: uma
     posição só empilha enquanto num_blocos < max_blocos), o que é o efeito
     pretendido: espalhar ao lado em vez de subir.
-    """
+
+    `empilhamento_por_nivel` (Config.empilhamento_por_nivel): tipologias cujo
+    nome bate são tratadas ao contrário -- NUNCA empilham módulos inteiros
+    (devolve sempre 1), o próprio módulo é que se ajusta ao pé-direito
+    disponível nível a nível (ver `niveis_efetivos`). Um módulo de Porta-
+    Paletes de 7.2 m não cabe todo num armazém de 5 m -- módulo a módulo isso
+    dava 0 módulos (corrigido para 1, ultrapassando o teto); nível a nível dá
+    1 módulo mais baixo (2 dos 4 níveis), que cabe mesmo."""
+    if _nome_bate(rack, empilhamento_por_nivel):
+        return 1
     altura_modulo = rack.alt_nivel_m * rack.niveis
     if altura_armazem_m <= 0 or altura_modulo <= 0:
         cabem = 1
@@ -219,11 +328,27 @@ def blocos_empilhados(rack: RackType, altura_armazem_m: float,
     return min(cabem, teto) if teto is not None else cabem
 
 
+def niveis_efetivos(rack: RackType, altura_armazem_m: float,
+                    empilhamento_por_nivel: tuple | None = None) -> int:
+    """Nº de níveis do ÚNICO módulo de uma tipologia de empilhamento NÍVEL A
+    NÍVEL (ver `blocos_empilhados`) -- nunca mais do que `rack.niveis` (o
+    desenho do catálogo, não se inventam níveis que a folha «Racks» não deu),
+    nunca menos de 1. Tipologias fora de `empilhamento_por_nivel` devolvem
+    sempre `rack.niveis` (módulo completo -- é `_abrir_bloco` sem override,
+    comportamento de sempre)."""
+    if altura_armazem_m <= 0 or rack.alt_nivel_m <= 0:
+        return rack.niveis
+    if not _nome_bate(rack, empilhamento_por_nivel):
+        return rack.niveis
+    cabem = max(math.floor(altura_armazem_m / rack.alt_nivel_m), 1)
+    return min(cabem, rack.niveis)
+
+
 def best_rack_for_load(load_type: LoadType, rack_types: list[RackType],
                        catalogo: dict[LoadType, BoxType],
-                       comp_max_longo: float = 0.0,
                        altura_armazem_m: float = 0.0,
-                       max_modulos: dict | None = None) -> tuple[RackType, int, int] | None:
+                       max_modulos: dict | None = None,
+                       empilhamento_por_nivel: tuple | None = None) -> tuple[RackType, int, int] | None:
     """Escolhe, entre os racks compatíveis com este tipo de carga, o que tem
     menor footprint de chão por unidade (footprint_rack / capacidade_efetiva).
 
@@ -240,16 +365,13 @@ def best_rack_for_load(load_type: LoadType, rack_types: list[RackType],
         if load_type not in rack.aceita:
             continue
 
-        if load_type == LoadType.LONGO:
-            cap = rack_capacity_long(rack, comp_max_longo) if rack.comp_braco_m > 0 else 0
-        else:
-            box = catalogo.get(load_type)
-            cap = rack_capacity(rack, box) if box else 0
+        box = catalogo.get(load_type)
+        cap = rack_capacity(rack, box) if box else 0
 
         if cap <= 0:
             continue
 
-        blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos)
+        blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, empilhamento_por_nivel)
         cap_efetiva = cap * blocos
 
         m2_por_unidade = _rack_footprint_m2(rack) / cap_efetiva
@@ -264,7 +386,6 @@ def racks_needed(assignments: list[BoxAssignment],
                  rack_types: list[RackType],
                  catalogo: dict[LoadType, BoxType],
                  cfg: Config,
-                 comp_max_longo: float = 0.0,
                  altura_picking_m: float = 0.0,
                  articles: list[Article] | None = None) -> tuple[list[RackRequirement], list[str]]:
     """Resumo agregado por tipologia (informativo, usado para a área e o
@@ -290,49 +411,16 @@ def racks_needed(assignments: list[BoxAssignment],
     avisos: list[str] = []
     por_tipologia: dict[str, dict[LoadType, int]] = {}
 
-    # LONGO: a capacidade depende das cotas DE CADA SKU, por isso não pode ser
-    # estimada com um comprimento único (antes usava-se comp_max_longo, o maior
-    # de todos, o que fazia uma peça de 0.13 m ocupar o mesmo que um perfil de
-    # 2.47 m). Calcula-se módulo a módulo por SKU e soma-se.
-    if LoadType.LONGO in totais:
-        rack_c = _melhor_cantilever(rack_types)
-        if rack_c is None:
-            avisos.append(
-                f"Sem cantilever compativel para LONGO "
-                f"({totais[LoadType.LONGO]} unidades) -- EXCLUIDO do resultado.")
-        else:
-            blocos = blocos_empilhados(rack_c, cfg.altura_armazem_m,
-                                       cfg.max_modulos_por_tipologia)
-            modulos = 0.0
-            sem_cap = []
-            for a in assignments:
-                if a.load_type != LoadType.LONGO:
-                    continue
-                art = article_idx.get(a.sku) if article_idx else None
-                cap = _cap_longo_sku(rack_c, art, cfg)
-                if cap <= 0:
-                    sem_cap.append(a.sku)
-                    continue
-                modulos += a.num_unidades / (cap * blocos)
-            if sem_cap:
-                avisos.append(
-                    f"{len(sem_cap)} SKU(s) LONGO sem capacidade na cantilever "
-                    f"(nao cabem no braco/nivel): {', '.join(sem_cap[:5])}"
-                    f"{' ...' if len(sem_cap) > 5 else ''}")
-            if modulos > 0:
-                por_tipologia.setdefault(rack_c.nome, {})[LoadType.LONGO] = \
-                    max(math.ceil(modulos * blocos), 1)
-
     for lt, total_unidades in totais.items():
-        if lt == LoadType.LONGO:
-            continue          # já tratado acima, por SKU
         if lt == LoadType.OVERSIZE:
             # Peças que não assentam em nenhuma unidade de carga do catálogo.
-            # Se houver uma wide-span na folha «Racks» (ver Config.oversize_racks),
-            # são dimensionadas nela -- pousadas no nível, sem palete. Senão,
-            # ficam só em aviso (comportamento anterior): nunca se inventa
-            # capacidade contando-as como 1/palete.
-            rack_o = _melhor_oversize(rack_types, cfg.oversize_racks)
+            # Se houver uma wide-span na folha «Racks» (Config.oversize_racks) ou
+            # um par emparelhado sintético (Config.oversize_par_racks, ver
+            # com_par_oversize/_melhor_oversize_ativo), são dimensionadas nela --
+            # pousadas no nível, sem palete. Senão, ficam só em aviso
+            # (comportamento anterior): nunca se inventa capacidade contando-as
+            # como 1/palete.
+            rack_o = _melhor_oversize_ativo(rack_types, cfg)
             if rack_o is None:
                 if cfg.oversize_ao_chao:
                     # Sem tipologia wide-span: arruma-se EM PILHA NO CHÃO. A área
@@ -354,7 +442,7 @@ def racks_needed(assignments: list[BoxAssignment],
                         f"acrescente à folha «Racks» uma tipologia com 'wide' ou 'bulk' no nome.")
                 continue
             blocos_o = blocos_empilhados(rack_o, cfg.altura_armazem_m,
-                                        cfg.max_modulos_por_tipologia)
+                                        cfg.max_modulos_por_tipologia, cfg.empilhamento_por_nivel)
             modulos_o = 0.0
             sem_cap_o = []
             for a in assignments:
@@ -379,8 +467,8 @@ def racks_needed(assignments: list[BoxAssignment],
             num_racks_o = max(math.ceil(modulos_o), 1)
             por_tipologia.setdefault(rack_o.nome, {})[lt] = num_racks_o
             continue
-        escolha = best_rack_for_load(lt, rack_types, catalogo, comp_max_longo,
-                                     cfg.altura_armazem_m)
+        escolha = best_rack_for_load(lt, rack_types, catalogo, cfg.altura_armazem_m,
+                                     empilhamento_por_nivel=cfg.empilhamento_por_nivel)
         if escolha is None:
             avisos.append(
                 f"Sem rack compativel para tipo de carga {lt.value} "
@@ -395,7 +483,7 @@ def racks_needed(assignments: list[BoxAssignment],
         num_racks = sum(por_tipo.values())
         rack = next(r for r in rack_types if r.nome == rack_nome)
         blocos_max = blocos_empilhados(rack, cfg.altura_armazem_m,
-                                       cfg.max_modulos_por_tipologia)
+                                       cfg.max_modulos_por_tipologia, cfg.empilhamento_por_nivel)
         posicoes = max(math.ceil(num_racks / blocos_max), 1)
         requirements.append(RackRequirement(
             rack_nome=rack_nome,
@@ -460,9 +548,16 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
     return colocados
 
 
-def _abrir_bloco(rack: RackType, bloco_idx: int, altura_picking_m: float) -> BlocoRack:
+def _abrir_bloco(rack: RackType, bloco_idx: int, altura_picking_m: float,
+                 niveis_override: int | None = None) -> BlocoRack:
+    """`niveis_override`: nº de níveis a construir NESTE módulo, em vez de
+    `rack.niveis` -- usado pelas tipologias de empilhamento nível a nível
+    (ver `niveis_efetivos`), cujo único módulo pode ter menos níveis do que o
+    catálogo prevê, quando o pé-direito não dá para todos. Sem override
+    (comportamento de sempre), o módulo continua completo."""
+    n_niveis = niveis_override if niveis_override is not None else rack.niveis
     niveis = []
-    for n in range(rack.niveis):
+    for n in range(n_niveis):
         base_nivel = bloco_idx * (rack.alt_nivel_m * rack.niveis) + n * rack.alt_nivel_m
         # altura_picking_m é a altura MÁXIMA até onde o operador faz picking, por
         # isso o nível inteiro tem de estar ao alcance: conta o LIMITE SUPERIOR
@@ -499,7 +594,8 @@ def _commit_nivel(nivel: NivelRack, item: _ItemParaColocar, solucao: dict) -> No
 
 def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemParaColocar,
                                 altura_picking_m: float, max_blocos: int,
-                                preferir_picking: bool, permitir_fallback: bool = True) -> bool:
+                                preferir_picking: bool, permitir_fallback: bool = True,
+                                niveis_override: int | None = None) -> bool:
     """Tenta colocar item na posição pos, abrindo um bloco novo se necessário
     (até max_blocos). Zona alvo: picking se preferir_picking, senão reserva.
 
@@ -524,7 +620,7 @@ def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemPara
             return True
 
     if pos.num_blocos < max_blocos:
-        novo_bloco = _abrir_bloco(rack, pos.num_blocos, altura_picking_m)
+        novo_bloco = _abrir_bloco(rack, pos.num_blocos, altura_picking_m, niveis_override)
         # O módulo novo só é agarrado à posição se ALGUMA caixa lá entrar --
         # senão ficava um módulo-fantasma vazio a "encher a altura". Isto
         # acontecia sobretudo com caixas de picking: um módulo empilhado
@@ -568,7 +664,6 @@ def allocate_to_racks(assignments: list[BoxAssignment],
                       rack_types: list[RackType],
                       catalogo: dict[LoadType, BoxType],
                       articles: list[Article],
-                      comp_max_longo: float = 1.0,
                       altura_picking_m: float = 0.0,
                       altura_armazem_m: float = 0.0,
                       cfg: Config | None = None) -> tuple[list[PosicaoChao], list[str]]:
@@ -604,13 +699,21 @@ def allocate_to_racks(assignments: list[BoxAssignment],
     # cfg é opcional nesta função: resolve-se uma vez aqui, em vez de a cada uso
     _cfg = cfg if cfg is not None else Config()
     max_modulos = _cfg.max_modulos_por_tipologia
+    # Tipologias de empilhamento NÍVEL A NÍVEL (ver blocos_empilhados/
+    # niveis_efetivos): o único módulo delas usa este nº de níveis em vez de
+    # rack.niveis -- calculado uma vez aqui (não muda durante a alocação,
+    # só depende da tipologia + pé-direito) e passado a _abrir_bloco em cada
+    # posição nova, para o packer nunca ver mais níveis do que os que cabem
+    # fisicamente (e por isso abrir mais posições em vez de perder stock).
+    niveis_ov_por_rack = {
+        r.nome: niveis_efetivos(r, altura_armazem_m, _cfg.empilhamento_por_nivel)
+        for r in rack_types
+    }
 
     candidatos_por_tipo: dict[LoadType, list[RackType]] = {}
     for lt in LoadType:
         compativeis = [r for r in rack_types if lt in r.aceita]
-        if lt == LoadType.LONGO:
-            compativeis = [r for r in compativeis if r.comp_braco_m > 0]
-        elif lt == LoadType.OVERSIZE:
+        if lt == LoadType.OVERSIZE:
             # Não há BoxType para OVERSIZE (a peça não vai a caixa): a
             # compatibilidade vem do NOME da tipologia, não do catálogo. Aceita-se
             # também quem declare OVERSIZE na coluna «Aceita» da folha «Racks».
@@ -627,25 +730,22 @@ def allocate_to_racks(assignments: list[BoxAssignment],
     # Pre-calculate stacking capacity per load type
     boxes_per_stack_per_type: dict[LoadType, int] = {}
     for load_type in LoadType:
-        if load_type == LoadType.LONGO:
-            boxes_per_stack_per_type[load_type] = 1
-        else:
-            box = catalogo.get(load_type)
-            if box:
-                box_height = box.ext_alt_m
-                # só racks onde a caixa CABE de facto (aceitar não chega: a
-                # Prateleira Leve "aceita" L mas não tem profundidade para ela,
-                # e o nível baixo dela matava o empilhamento de L nos porta-paletes)
-                compatible_racks = [r for r in rack_types
-                                    if load_type in r.aceita and rack_capacity(r, box) > 0]
-                if compatible_racks:
-                    min_level_height = min(r.alt_nivel_m for r in compatible_racks)
-                    boxes_per_stack = max(1, int(min_level_height / box_height))
-                    boxes_per_stack_per_type[load_type] = boxes_per_stack
-                else:
-                    boxes_per_stack_per_type[load_type] = 1
+        box = catalogo.get(load_type)
+        if box:
+            box_height = box.ext_alt_m
+            # só racks onde a caixa CABE de facto (aceitar não chega: a
+            # Prateleira Leve "aceita" L mas não tem profundidade para ela,
+            # e o nível baixo dela matava o empilhamento de L nos porta-paletes)
+            compatible_racks = [r for r in rack_types
+                                if load_type in r.aceita and rack_capacity(r, box) > 0]
+            if compatible_racks:
+                min_level_height = min(r.alt_nivel_m for r in compatible_racks)
+                boxes_per_stack = max(1, int(min_level_height / box_height))
+                boxes_per_stack_per_type[load_type] = boxes_per_stack
             else:
                 boxes_per_stack_per_type[load_type] = 1
+        else:
+            boxes_per_stack_per_type[load_type] = 1
 
     itens: list[_ItemParaColocar] = []
     for a in assignments:
@@ -653,34 +753,33 @@ def allocate_to_racks(assignments: list[BoxAssignment],
         desc = art.descricao if art else ""
 
         if a.load_type == LoadType.OVERSIZE:
-            # Wide-span: a peça fica POUSADA no nível, sem palete nem caixa --
-            # mesmo padrão do LONGO, o "item" é o conjunto que cabe num nível.
-            # A peça assenta deitada (menor cota = altura), por isso as dimensões
-            # do item são as duas maiores cotas no plano.
-            rack_o = _melhor_oversize(rack_types, _cfg.oversize_racks)
+            # Wide-span OU par emparelhado (ver _melhor_oversize_ativo): a peça
+            # fica POUSADA no nível, sem palete nem caixa -- o "item" é o
+            # conjunto que cabe num nível. As dimensões do item vêm da MESMA
+            # orientação escolhida por _oversize_plano_altura (deitada por
+            # omissão, de pé quando a orientação permite e rende mais
+            # capacidade) -- tem de ser a mesma usada na estimativa de
+            # capacidade, senão o packer real coloca a peça maior do que o
+            # nível "sabe" que cabe.
+            rack_o = _melhor_oversize_ativo(rack_types, _cfg)
             if rack_o is None or art is None:
-                continue      # sem wide-span na folha: fica em aviso (racks_needed)
-            cap_total = rack_capacity_oversize(
+                continue      # sem wide-span/par na folha: fica em aviso (racks_needed)
+            # boxes_per_stack tem de ser SÓ o empilhamento vertical de UMA
+            # coluna (por_altura) -- o "lado a lado" (por_plano) é resolvido
+            # pelo próprio packer 2D ao colocar várias stacks, tal como as
+            # outras cargas. Usar cap_total (que já inclui por_plano) aqui
+            # inflava a altura da stack por um fator de por_plano: uma peça
+            # com por_plano=2 e por_altura=11 ficava com UMA stack de 22 peças
+            # de altura em vez de 2 stacks de 11 -- quase sempre mais alta que
+            # o nível, falhando a colocação para TODA a peça, em silêncio
+            # (bug confirmado: 0 de 40 unidades colocadas num caso de teste).
+            por_plano, por_altura, plano_a, plano_b, altura_peca = _oversize_plano_altura(
                 rack_o, art, _cfg.oversize_peso_max_nivel_kg,
                 _cfg.oversize_folga_altura_m)
-            if cap_total <= 0:
+            if por_plano <= 0:
                 continue      # não assenta no nível: já reportado em racks_needed
-            cotas = sorted([art.comp_m, art.larg_m, art.alt_m], reverse=True)
-            comp_dim, larg_dim, alt_dim = cotas[0], cotas[1], cotas[2]
-            boxes_per_stack = max(cap_total // max(rack_o.niveis, 1), 1)
-        elif a.load_type == LoadType.LONGO:
-            # "A própria rack é a caixa": o item colocado é o FEIXE de peças que
-            # cabe num nível da cantilever, não uma peça solta. Antes cada peça
-            # era a sua unidade (comp x 0.3 x 0.3), o que enchia a cantilever de
-            # itens fictícios e ignorava largura/altura reais.
-            comp_dim = art.comp_m if art else (comp_max_longo if comp_max_longo > 0 else 1.0)
-            larg_dim = art.larg_m if art and art.larg_m > 0 else 0.3
-            alt_dim = art.alt_m if art and art.alt_m > 0 else 0.3
-            rack_c = _melhor_cantilever(rack_types)
-            cap_nivel = 0
-            if rack_c is not None and art is not None:
-                cap_nivel = _cap_longo_sku(rack_c, art, _cfg) // max(rack_c.niveis, 1)
-            boxes_per_stack = max(cap_nivel, 1)
+            comp_dim, larg_dim, alt_dim = plano_a, plano_b, altura_peca
+            boxes_per_stack = max(por_altura, 1)
         else:
             box = catalogo.get(a.load_type)
             if box is None:
@@ -688,7 +787,6 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             comp_dim, larg_dim, alt_dim = box.ext_comp_m, box.ext_larg_m, box.ext_alt_m
             boxes_per_stack = boxes_per_stack_per_type.get(a.load_type, 1)
 
-        pecas_total = art.stock_max_un if art else 0
         # modo picking desligado (altura_picking_m <= 0): nenhum nível é de
         # picking, logo não se marca caixa nenhuma como "precisa picking" --
         # senão TODAS falhavam a colocação estrita e geravam aviso falso.
@@ -701,9 +799,19 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             boxes_in_stack = min(boxes_per_stack, a.num_unidades - boxes_allocated)
             stack_height = boxes_in_stack * alt_dim
 
-            # Calculate pieces in this stack
-            pecas_cheias = boxes_allocated * a.pecas_por_unidade
-            pecas_aqui = max(min(boxes_in_stack * a.pecas_por_unidade, pecas_total - pecas_cheias), 0)
+            # Peças nesta caixa/stack: SEMPRE a capacidade cheia da caixa
+            # (boxes_in_stack x peças_por_unidade), nunca o stock restante.
+            # `pecas_por_unidade` já vem de pieces_per_box com o fator de
+            # ocupação aplicado (cfg.fill_factor_plano), logo é o MÁXIMO que a
+            # caixa leva a essa ocupação. Aplica-se a todos os SKUs, incluindo
+            # os que só precisam de 1 caixa: a pergunta que esta coluna responde
+            # é "quanto cabe de facto no armazém dimensionado", não "quanto
+            # stock a master data pede". O total por SKU pode assim ficar bem
+            # acima do stock_max_un (peça pequena numa caixa grande cabe aos
+            # milhares) -- é esperado, não é bug: o espaço é o mesmo, muda só a
+            # quantidade armazenada.
+            pecas_aqui = boxes_in_stack * capacidade_reportada(
+                a.load_type, a.pecas_por_unidade, a.sku, _cfg)
 
             # Determine if this stack contains picking boxes
             eh_primeira_do_sku = boxes_allocated < num_unidades_picking
@@ -744,18 +852,20 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             rack = rack_by_name[rack_nome]
             if rack in candidatos:
                 pos = posicoes_por_tipologia[rack_nome][idx]
-                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos)
+                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, _cfg.empilhamento_por_nivel)
                 colocado = _tentar_colocar_em_posicao(pos, rack, item, altura_picking_m,
-                                                      max_blocos, preferir, permitir_fallback)
+                                                      max_blocos, preferir, permitir_fallback,
+                                                      niveis_override=niveis_ov_por_rack[rack.nome])
 
         # 2) esgotar capacidade já aberta (todas as posições, todas as
         # tipologias compatíveis) antes de abrir posição nova
         if not colocado:
             for rack in candidatos:
-                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos)
+                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, _cfg.empilhamento_por_nivel)
                 for pos in posicoes_por_tipologia[rack.nome]:
                     if _tentar_colocar_em_posicao(pos, rack, item, altura_picking_m,
-                                                  max_blocos, preferir, permitir_fallback):
+                                                  max_blocos, preferir, permitir_fallback,
+                                                  niveis_override=niveis_ov_por_rack[rack.nome]):
                         colocado = True
                         if item.eh_primeira_do_sku:
                             sku_posicao[item.sku] = (rack.nome, pos.indice)
@@ -771,12 +881,13 @@ def allocate_to_racks(assignments: list[BoxAssignment],
         # de altura_picking_m -- nesse caso é mesmo impossível).
         if not colocado:
             for rack in candidatos:
-                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos)
+                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, _cfg.empilhamento_por_nivel)
                 lista = posicoes_por_tipologia[rack.nome]
                 pos = PosicaoChao(rack_nome=rack.nome, indice=len(lista))
-                pos.blocos.append(_abrir_bloco(rack, 0, altura_picking_m))
+                pos.blocos.append(_abrir_bloco(rack, 0, altura_picking_m, niveis_ov_por_rack[rack.nome]))
                 if _tentar_colocar_em_posicao(pos, rack, item, altura_picking_m,
-                                              max_blocos, preferir, permitir_fallback):
+                                              max_blocos, preferir, permitir_fallback,
+                                              niveis_override=niveis_ov_por_rack[rack.nome]):
                     colocado = True
                     lista.append(pos)
                     if item.eh_primeira_do_sku:
@@ -789,22 +900,24 @@ def allocate_to_racks(assignments: list[BoxAssignment],
         # reserva mesmo assim -- nunca perder a caixa -- e regista aviso.
         if not colocado and preferir:
             for rack in candidatos:
-                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos)
+                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, _cfg.empilhamento_por_nivel)
                 for pos in posicoes_por_tipologia[rack.nome]:
                     if _tentar_colocar_em_posicao(pos, rack, item, altura_picking_m,
-                                                  max_blocos, preferir, permitir_fallback=True):
+                                                  max_blocos, preferir, permitir_fallback=True,
+                                                  niveis_override=niveis_ov_por_rack[rack.nome]):
                         colocado = True
                         break
                 if colocado:
                     break
             if not colocado:
                 rack = candidatos[0]
-                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos)
+                max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, _cfg.empilhamento_por_nivel)
                 lista = posicoes_por_tipologia[rack.nome]
                 pos = PosicaoChao(rack_nome=rack.nome, indice=len(lista))
-                pos.blocos.append(_abrir_bloco(rack, 0, altura_picking_m))
+                pos.blocos.append(_abrir_bloco(rack, 0, altura_picking_m, niveis_ov_por_rack[rack.nome]))
                 colocado = _tentar_colocar_em_posicao(pos, rack, item, altura_picking_m,
-                                                      max_blocos, preferir, permitir_fallback=True)
+                                                      max_blocos, preferir, permitir_fallback=True,
+                                                      niveis_override=niveis_ov_por_rack[rack.nome])
                 if colocado:
                     lista.append(pos)
             if colocado:

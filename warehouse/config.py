@@ -1,13 +1,69 @@
-"""Parâmetros e decisões de negócio. Mudar estes valores muda resultados."""
+"""Parâmetros e decisões de negócio. Mudar estes valores muda resultados.
+
+Campos CLIENT-SPECIFIC (os que mudam de cliente para cliente -- ver auditoria
+"CORE vs CLIENT-SPECIFIC") já não se editam aqui: vivem em
+`dados/clients/<nome>.json` e entram via `Config.for_client(nome)` (ver
+classmethod ao fundo do ficheiro). Os valores por omissão abaixo continuam a
+existir só como fallback de um `Config()` nu (ex.: testes que constroem
+Config() sem cliente nenhum) -- não são "a configuração", são só o default de
+campo do dataclass.
+"""
 from __future__ import annotations
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# dados/clients/<nome>.json vive ao lado de dados/ (irmão de warehouse/), não
+# relativo à cwd -- para Config.for_client funcionar tanto a partir de
+# `python -m warehouse.main` (cwd = dimensionamento_armazem/) como de dentro
+# de pytest (cwd pode ser outro). master_data/output continuam relativos à
+# cwd de sempre (comportamento inalterado: quem já corria a partir da pasta
+# certa continua a funcionar sem tocar em nada).
+_CLIENTS_DIR = Path(__file__).resolve().parent.parent / "dados" / "clients"
+
+# Nomes de campo do dataclass que Config.for_client aceita ler do JSON do
+# cliente, com o conversor a aplicar ao valor lido (JSON só tem list/dict/
+# str/float/int -- os campos Path/tuple do dataclass precisam de conversão
+# explícita). Mantido como tabela em vez de "aceitar tudo o que vier no JSON"
+# para um cliente não poder, por engano, injetar um campo CORE (ex.:
+# fill_factor_plano) através do ficheiro errado.
+_CLIENT_FIELD_CONVERTERS = {
+    "data_source": str,
+    "master_data": Path,
+    "output": Path,
+    "autonomia_minima_carros": float,
+    "capacidade_override_sku": dict,
+    "stock_autonomia_override_sku": dict,
+    "oversize_racks": tuple,
+    "oversize_par_racks": tuple,
+    "max_modulos_por_tipologia": dict,
+    "empilhamento_por_nivel": tuple,
+    "picking_manual_racks": tuple,
+}
 
 
 @dataclass
 class Config:
-    # caminhos
-    master_data: Path = Path("dados/master_data_classificado_v1.xlsx")
+    # Nome do cliente que originou esta instância (ver Config.for_client).
+    # "" = Config() nu, sem cliente associado (comportamento de sempre, usado
+    # por quem constrói Config() diretamente, ex. testes/racking.py:648).
+    client_name: str = ""
+
+    # De onde vêm os dados deste cliente: "excel" (master_data, comportamento
+    # de sempre) ou "supabase" (client_name identifica as linhas nas tabelas
+    # clients/articles/box_catalog/rack_types/zones -- ver
+    # warehouse/data_access.py e supabase/README.md). Escolhido por
+    # configuração, não por código: o resto do pipeline recebe sempre os
+    # mesmos dataclasses (Article/BoxType/RackType/Zona) de qualquer origem.
+    data_source: str = "excel"
+
+    # caminhos (fallback de um Config() nu -- ver nota no topo do ficheiro;
+    # o valor real de cada cliente vem de dados/clients/<nome>.json).
+    # master_data só é lido quando data_source == "excel"; output (o
+    # resultados.xlsx que o pipeline ESCREVE) é sempre um ficheiro, mesmo
+    # com data_source == "supabase" -- a origem dos dados de entrada e o
+    # relatório de saída são eixos independentes.
+    master_data: Path = Path("dados/master_data_classificado_v3.xlsx")
     output: Path = Path("dados/resultados.xlsx")
 
     # Passo 1 — escolha de caixa
@@ -38,21 +94,49 @@ class Config:
     # rotação de orientação (ver boxing.pieces_per_box).
     fill_factor_plano: float = 0.7
 
-    # Encaminhamento para LONGO (cantilever): geometrias que não vão a caixa
-    long_geometrias: tuple = ("Comprida",)
+    # --- Capacidade PRÁTICA reportada por caixa (só afeta o nº de peças que se
+    # reporta dentro de cada caixa; NÃO afeta o dimensionamento: o nº de caixas,
+    # racks e a área vêm de pecas_por_unidade, que não é tocado aqui).
+    # O máximo geométrico a fill_factor_plano dá números impraticáveis de
+    # manusear em peça miúda (ex.: 98.112 anilhas num bin XS). Estes limites
+    # trazem-nos para quantidades de manuseio reais:
+    #   1) teto absoluto de peças por caixa, por tipo (ausente = sem teto);
+    #   2) acima de 100 peças, arredonda à centena inferior (número redondo de
+    #      contagem/reposição). Abaixo de 100 mantém o valor exato -- arredondar
+    #      daria 0, que não é uma capacidade.
+    capacidade_teto_por_caixa: dict = field(default_factory=lambda: {
+        "XS": 1000, "S": 1000, "MEIA": 1000,
+    })
+    capacidade_arredonda_centena: tuple = ("XS", "S", "M", "MEIA")
+    # Ajustes manuais por SKU (decisão de negócio, prevalece sobre as regras)
+    capacidade_override_sku: dict = field(default_factory=lambda: {
+        "BEN00.FHG111": 100,
+    })
 
-    # Dentro de long_geometrias, subtipos que NÃO são material 1D de
-    # cantilever (não se apoiam em braços) -> caem para o best-fit normal
-    # (S/M/L/PALLET) em vez de ir para a cantilever.
-    long_subtipos_excluidos: tuple = ("PAINEL_GRANDE", "VOLUMOSO_OVERSIZE")
+    # --- Passo 0 — stock por autonomia mínima (boxing.stock_para_autonomia) ---
+    # Substitui o antigo "Stock_máx_10un_a_utilizar" da master data v2, que era
+    # calculado à mão FORA do código (10 carros de autonomia, arredondado para
+    # cima para encher por completo a caixa/palete escolhida) e colado como
+    # INPUT -- o pipeline não sabia que essa decisão tinha sido tomada, só
+    # consumia o número já pronto. Fica algorítmico: por SKU, calcula
+    # ceil(autonomia_minima_carros x Peças_por_carro) e arredonda para cima
+    # para encher a capacidade PRÁTICA reportada (capacidade_reportada, com
+    # teto + arredondamento à centena) da unidade de carga escolhida -- não a
+    # capacidade geométrica bruta. Validado por reverse-engineering: bate
+    # certo com 716/735 SKUs (97.4%) da master data v2 atual.
+    autonomia_minima_carros: float = 10.0
 
-    # Filtro geométrico de admissão à cantilever (boxing.cabe_em_cantilever).
-    # Estar marcado "Comprida" na folha não chega: peças volumosas não cabem no
-    # nível nem se apoiam nos braços. Devem espelhar a tipologia real de
-    # cantilever da folha «Racks» (por defeito: nível 0.6 m, braço 0.6 m).
-    cantilever_alt_nivel_m: float = 0.6     # menor cota tem de caber aqui
-    cantilever_braco_m: float = 0.6         # cota média tem de caber no apoio
-    cantilever_esbelteza_min: float = 3.0   # maior/média: perfil, não volume
+    # Ajustes manuais por SKU ao stock de autonomia (decisão de negócio,
+    # prevalece sobre a fórmula). São os 19 SKUs (2.6%) herdados da v2 cujo
+    # "Stock_máx_10un_a_utilizar" não batia certo com a fórmula -- preservados
+    # aqui em vez de perdidos na migração.
+    stock_autonomia_override_sku: dict = field(default_factory=lambda: {
+        "BOL00050": 100, "BOL00206": 300, "BOL00220": 300, "BOL00238": 100,
+        "BOL00295": 100, "BOL00319": 400, "CLI00008": 1000, "CLI00013": 700,
+        "CLI00017": 900, "CLI00039": 1000, "GRM00001": 500, "GRM00002": 300,
+        "RBC00001": 700, "RBM00010": 800, "WAS00034": 1000, "WAS00040": 1000,
+        "WAS00045": 1000, "WAS00052": 1000, "WAS00061": 500,
+    })
 
     # NOTA: existiu aqui um `aisle_factor` (corredores como % da footprint dos
     # racks). Foi REMOVIDO por ser código morto: desde que layout.py passou a
@@ -112,8 +196,8 @@ class Config:
     # Peças volumosas que não assentam na footprint da palete (boxing -> OVERSIZE)
     # passam a ser dimensionadas numa tipologia própria em vez de ficarem só em
     # aviso. "A própria rack é a superfície": os componentes ficam POUSADOS no
-    # nível, sem palete nem caixa -- como no LONGO/cantilever, a capacidade é de
-    # outro tipo (footprint do nível + empilhamento, não unidades de carga).
+    # nível, sem palete nem caixa -- a capacidade é de outro tipo (footprint
+    # do nível + empilhamento, não unidades de carga).
     #
     # Referência da indústria: wide span / longspan shelving ("bulk rack") --
     # construção de porta-paletes com aplicação de estante, para carga NÃO
@@ -136,21 +220,77 @@ class Config:
     # (é preciso espaço para as mãos/equipamento entre a peça de cima e a viga).
     oversize_folga_altura_m: float = 0.05
 
+    # --- OVERSIZE em par de racks emparelhadas (costas-com-costas) -----------
+    # Alternativa à wide-span quando não há tipologia dedicada na folha «Racks»:
+    # duas posições de uma tipologia já existente (ex.: Rack Porta-Paletes,
+    # 2.7 x 1.2 m), colocadas costas-com-costas como aliás já é o padrão do
+    # layout, formam uma superfície contínua de larg_m x (2 x prof_m) -- aqui
+    # 2.7 x 2.4 m -- suficiente para peças que não cabem numa profundidade só.
+    #
+    # `racking.com_par_oversize` deriva, EM MEMÓRIA (nunca escrito no Excel),
+    # uma tipologia sintética "<nome base> (emparelhada)" com prof_m dobrado, e
+    # usa o MESMO motor de cálculo da wide-span (rack_capacity_oversize) -- a
+    # peça fica pousada no nível, sem palete, testam-se as 2 orientações no
+    # plano. PARTILHA o stock normal da tipologia base (aceita os mesmos tipos
+    # de carga + OVERSIZE): o packer por nível já mistura tipos de carga sem
+    # sobrepor footprints, por isso uma palete normal pode ocupar o espaço que
+    # o OVERSIZE não enche num nível já aberto -- otimiza espaço sem nunca
+    # partilhar a mesma área física ao mesmo tempo.
+    #
+    # Prioridade quando ambas existem: wide-span dedicada (oversize_racks)
+    # primeiro -- se a folha já tem uma tipologia própria, usa-se essa; o par
+    # emparelhado é o 2º recurso, antes de cair para o chão.
+    #
+    # Tipologias da folha «Racks» cujo nome contenha uma destas chaves (case-
+    # insensitive) podem ser emparelhadas. Vazio = nenhuma (comportamento
+    # anterior: só wide-span ou chão).
+    oversize_par_racks: tuple = ("porta-paletes",)
+
+    # Corredor de serviço da tipologia sintética (empilhador -- é o mesmo
+    # equipamento que serve a tipologia base). Independente do `Corredor_m` da
+    # folha «Racks»: a sintética não é uma linha do Excel, por isso o valor
+    # dela vive aqui, não lá. Para mudar o corredor da tipologia BASE (ex.:
+    # Rack Porta-Paletes), edita a folha «Racks» -- essa é INPUT, este não.
+    oversize_par_corredor_m: float = 3.0
+
     # Máximo de MÓDULOS de rack empilhados (racks inteiros uns por cima dos
     # outros na mesma posição de chão), por tipologia cujo nome contenha uma
     # destas chaves. Não confundir com RackType.niveis, que são as prateleiras
     # DENTRO de um módulo (input da folha «Racks», não se mexe).
     #
-    # Porquê: uma prateleira leve é servida por operador a pé, e empilhar
-    # módulos põe stock fora do alcance (com altura_armazem_m=10 e um prumo de
-    # 2.10 m caberiam 4 módulos = 12 prateleiras em coluna). Ao travar, o stock
-    # que subiria espalha-se por MAIS posições de chão ao lado -- mais área,
-    # mas tudo acessível. O porta-paletes não entra: é servido por empilhador.
-    #
     # Chave = substring do nome da tipologia (case-insensitive); valor = máx. de
     # módulos. Tipologias não listadas não têm limite próprio (só a altura).
-    max_modulos_por_tipologia: dict = field(
-        default_factory=lambda: {"prateleira": 2})
+    #
+    # Vazio por defeito: decisão de negócio explícita (instrução direta) de usar
+    # sempre o MÁXIMO de altura disponível em todas as tipologias -- inclui a
+    # prateleira leve, que antes ficava travada a 2 módulos (a razão original
+    # era o alcance do operador a pé, mas deixou de se aplicar). O mecanismo
+    # fica disponível para quem precisar de voltar a travar uma tipologia
+    # específica (ex.: `{"prateleira": 2}`), só não trava nada por omissão.
+    max_modulos_por_tipologia: dict = field(default_factory=dict)
+
+    # Tipologias cujo nome contenha uma destas chaves empilham NÍVEL A NÍVEL
+    # em vez de MÓDULO A MÓDULO (ver max_modulos_por_tipologia acima, que é o
+    # eixo oposto -- quantos módulos INTEIROS). Aqui o próprio módulo único
+    # desta tipologia ajusta o seu nº de níveis ao pé-direito disponível
+    # (racking.niveis_efetivos), em vez de arredondar para baixo ao nº de
+    # módulos completos (racking.blocos_empilhados, que ou desperdiça
+    # pé-direito -- um módulo de Porta-Paletes de 7.2 m não cabe todo num
+    # armazém de 5 m -- ou fica sem nenhum módulo, corrigido para 1 e
+    # ultrapassando mesmo assim o teto).
+    #
+    # Ex.: Rack Porta-Paletes (Alt_nivel_m=1.8, 4 níveis = 7.2 m de módulo)
+    # num armazém de 5 m: módulo a módulo dava 7.2 m (só cabe 1, e esse já
+    # excede); nível a nível dá 2 níveis = 3.6 m, que cabe mesmo.
+    #
+    # Chave = substring do nome da tipologia (case-insensitive), mesmo padrão
+    # de max_modulos_por_tipologia/oversize_racks. Vazio = nenhuma tipologia
+    # usa este modo (volta ao módulo a módulo para todas).
+    #
+    # Decisão de negócio explícita: Prateleira Leve mantém-se módulo a módulo
+    # (várias prateleiras completas empilhadas fazem sentido servidas por
+    # operador a pé); Rack Porta-Paletes passa a nível a nível.
+    empilhamento_por_nivel: tuple = ("porta-paletes",)
 
     # Modo de armazém picking: altura MÁXIMA (m) de alcance do operador. Um
     # nível conta como zona de picking se o seu TOPO (base + altura do nível)
@@ -187,3 +327,70 @@ class Config:
     # 0 = sem limite (comportamento original: o layout escolhe a forma).
     largura_max_m: float = 0.0
     profundidade_max_m: float = 0.0
+
+    # Tipologias servidas por picking MANUAL (operador a pé) continuam livres
+    # para partilhar prateleira (shelf packing) com as restantes -- só ficam
+    # garantidas CONTÍGUAS entre si (ver layout._empacotar_tipologias): nunca
+    # ficam fragmentadas em bandas do bloco separadas por uma tipologia
+    # diferente pelo meio. É restrição operacional: quem faz picking manual
+    # deve encontrar a zona toda concentrada, não espalhada pelo armazém --
+    # mas não há problema em ela partilhar uma fila com outra tipologia.
+    #
+    # Chave = substring do nome da tipologia (case-insensitive), mesmo padrão
+    # de `max_modulos_por_tipologia`/`oversize_racks`. Vazio = nenhuma
+    # garantia de contiguidade (comportamento anterior).
+    picking_manual_racks: tuple = ("prateleira",)
+
+    # ------------------------------------------------------------ multi-cliente
+    @classmethod
+    def for_client(cls, name: str, clients_dir: Path | None = None) -> "Config":
+        """Constrói um Config para o cliente `name`, a partir de
+        `dados/clients/<name>.json`.
+
+        Só os campos CLIENT-SPECIFIC identificados na auditoria (caminhos,
+        overrides manuais por SKU, autonomia mínima, e as chaves de substring
+        que casam nomes de tipologia de rack) vêm do JSON -- ver
+        `_CLIENT_FIELD_CONVERTERS`. Tudo o resto do Config (fatores de
+        enchimento/empilhamento, limites de picking/altura de armazém, etc.)
+        continua a ser CORE: o mesmo para qualquer cliente, só ajustável por
+        quem corre o pipeline (CLI/UI web), nunca por identidade de cliente.
+
+        Um novo cliente = um novo `dados/clients/<nome>.json` + o Excel dele
+        no caminho que esse ficheiro apontar -- nunca uma edição a este
+        módulo. `dados/clients/_template.json` é o ponto de partida (valores
+        placeholder, sem SKUs reais) para copiar ao criar um cliente novo.
+        """
+        base = clients_dir or _CLIENTS_DIR
+        path = base / f"{name}.json"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Sem configuração para o cliente '{name}': {path} não existe. "
+                f"Cria dados/clients/{name}.json (usa dados/clients/_template.json "
+                f"como ponto de partida)."
+            )
+        data = json.loads(path.read_text(encoding="utf-8"))
+        # chaves "_algo" são comentário (JSON não tem comentários nativos),
+        # nunca um campo -- ignoradas antes de validar campos desconhecidos.
+        data = {k: v for k, v in data.items() if not k.startswith("_")}
+
+        desconhecidos = set(data) - set(_CLIENT_FIELD_CONVERTERS)
+        if desconhecidos:
+            raise ValueError(
+                f"dados/clients/{name}.json tem campo(s) não reconhecido(s) como "
+                f"CLIENT-SPECIFIC: {sorted(desconhecidos)}. Se é um parâmetro "
+                f"CORE (afeta todos os clientes da mesma forma), pertence a "
+                f"Config, não ao ficheiro do cliente; se é mesmo específico "
+                f"deste cliente, acrescenta-o a _CLIENT_FIELD_CONVERTERS primeiro."
+            )
+
+        cfg = cls(client_name=name)
+        for campo, conversor in _CLIENT_FIELD_CONVERTERS.items():
+            if campo in data:
+                setattr(cfg, campo, conversor(data[campo]))
+
+        if cfg.data_source not in ("excel", "supabase"):
+            raise ValueError(
+                f"dados/clients/{name}.json: data_source='{cfg.data_source}' "
+                f"desconhecido -- só 'excel' ou 'supabase' (ver warehouse/data_access.py)."
+            )
+        return cfg

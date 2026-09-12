@@ -14,7 +14,6 @@ class LoadType(str, Enum):
     L = "L"
     MEIA = "MEIA"         # meia-palete (0.8 x 0.6): entrada do catálogo, como a PALLET
     PALLET = "PALLET"     # palete: entrada do catálogo (BoxType), packed como um bin
-    LONGO = "LONGO"       # material comprido: NÃO é caixa -> vai direto para cantilever
     OVERSIZE = "OVERSIZE"  # não assenta em NENHUMA unidade de carga do catálogo
                            # (nem na footprint da palete): precisa de solução
                            # dedicada. Nunca é inventado como "1 por palete" --
@@ -49,7 +48,12 @@ class Article:
     fragilidade: str = "Normal"
     geometria: str = "Regular"
     classe: str = "RIGIDO"          # RIGIDO / FLEXIVEL_CONTENTOR
-    subtipo_longo: str = ""         # PAINEL_GRANDE / VOLUMOSO_OVERSIZE / "" (fora de LONGO ou sem subtipo)
+    # Stock atual/bruto do master data (coluna 'Stock_máx_un'), só informativo:
+    # NÃO alimenta o dimensionamento (esse é sempre stock_max_un, decidido pelo
+    # Passo 0 -- ver boxing.stock_para_autonomia). Serve de referência nos
+    # resultados (sheet Autonomia) para comparar contra o stock efetivamente
+    # usado.
+    stock_atual_un: int = 0
 
     @property
     def volume_m3(self) -> float:
@@ -85,22 +89,70 @@ class RackType:
     niveis: int                    # nº de níveis
     aceita: list[LoadType] = field(default_factory=list)   # cargas compatíveis
     footprint_m2: float = 0.0      # área no chão; calculada se 0 (larg x prof)
-    comp_braco_m: float = 0.0      # cantilever: comprimento do braço (0 se N/A)
     corredor_m: float = 0.0        # largura do corredor de serviço (layout.py); 0 = usa default
+    # True só nas tipologias SINTÉTICAS derivadas por racking.com_par_oversize
+    # (nunca nas da folha «Racks»): prof_m já é a profundidade de UM PAR
+    # costas-com-costas (2 x a profundidade real de cada rack). Diz ao
+    # layout.py para não as emparelhar de novo (senão dobrava a profundidade
+    # outra vez) -- cada posição desta tipologia ocupa uma fiada única.
+    profundidade_inclui_par: bool = False
 
 
 # --------------------------- OUTPUT ---------------------------
 @dataclass
-class BoxAssignment:
-    """Passo 1: como guardar o stock máximo de um SKU.
+class AutonomiaResultado:
+    """Passo 0: decisão do stock a usar no dimensionamento (stock_max_un),
+    a partir da autonomia mínima em carros (Config.autonomia_minima_carros).
+    Ver boxing.stock_para_autonomia. Um SKU por linha, mesma granularidade de
+    BoxAssignment -- serve de PROVA (sheet Autonomia) de que o stock final não
+    caiu do céu: mostra o stock atual, o teórico e o ajustado lado a lado."""
+    sku: str
+    stock_atual_un: int             # Stock_máx_un bruto do master data (referência)
+    stock_teorico_un: int           # ceil(autonomia_minima_carros x pecas_por_carro)
+    load_type: "LoadType | None"    # unidade de carga usada para encher o stock teórico
+    pecas_por_unidade_pratico: int  # capacidade prática (capacidade_reportada) dessa unidade
+    num_unidades: int               # ceil(stock_teorico_un / pecas_por_unidade_pratico)
+    stock_ajustado_un: int          # = Article.stock_max_un final (o que entra no Passo 1)
+    override_manual: bool           # True se veio de Config.stock_autonomia_override_sku
 
-    Para LONGO, load_type=LONGO e pecas_por_unidade=1 (o artigo é a própria
-    unidade na cantilever; não há caixa).
-    """
+
+@dataclass
+class BoxAssignment:
+    """Passo 1: como guardar o stock máximo de um SKU."""
     sku: str
     load_type: LoadType
     pecas_por_unidade: int
     num_unidades: int              # nº de caixas/paletes/itens p/ o stock máximo
+
+
+@dataclass
+class BoxJustificacao:
+    """Passo 1, rasto de cálculo por SKU: PROVA de que a unidade de carga
+    escolhida (BoxAssignment) é a correta, não só qual foi escolhida.
+
+    Um SKU por linha (mesma granularidade de BoxAssignment). Campos de
+    caixa/plano ficam None para OVERSIZE, cujo critério de admissão é
+    geométrico e não de encaixe (ver `criterio`, sempre preenchido em texto)."""
+    sku: str
+    descricao: str
+    comp_m: float
+    larg_m: float
+    alt_m: float
+    peso_kg: float
+    load_type: LoadType
+    orientacao_usada: str            # qual cota ficou vertical (texto legível)
+    caixa_int_comp_m: float | None
+    caixa_int_larg_m: float | None
+    caixa_int_alt_m: float | None
+    pecas_por_plano_teorico: int | None   # floor geométrico, antes do fill_factor
+    pecas_por_plano: int | None           # depois do fill_factor (70%)
+    pecas_por_altura: int | None          # empilhamento vertical (pieces_in_stack)
+    pecas_por_peso: int | None            # None = peso não limita (desconhecido ou não aplicável)
+    fator_limitante: str             # "Geometria" | "Peso" | "N/A (armazenagem OVERSIZE)"
+    pecas_por_unidade: int           # valor final usado no dimensionamento (= BoxAssignment.pecas_por_unidade)
+    stock_max_un: int
+    num_unidades: int
+    criterio: str                    # explicação textual do cálculo/critério aplicado
 
 
 @dataclass
@@ -268,6 +320,27 @@ class Corredor:
 
 
 @dataclass
+class EspacoLivre:
+    """Espaço genuinamente vazio dentro do retângulo envolvente do bloco de
+    racks (Passo 3b): parte de uma fiada que não chega à largura-alvo comum
+    do bloco inteiro (ver layout._larguras_alinhadas) -- tipicamente a última
+    fiada de uma tipologia, ou uma tipologia mais estreita que a largura-alvo.
+
+    Distinto de Corredor (esse é circulação medida, sempre "ocupado") e da
+    footprint dos racks -- é chão livre, sem função nenhuma atribuída ainda.
+    Só geometria informativa: nunca conta para area.floor_area/
+    resumo_area_total (mesmo cuidado já aplicado a pilhas_chao/
+    area_oversize_chao -- ver CLAUDE.md)."""
+    rack_nome: str
+    fila_idx: int
+    lado: str
+    x_m: float
+    y_m: float
+    comp_m: float           # extensão ao longo de x
+    larg_m: float            # extensão ao longo de y (= profundidade da fiada)
+
+
+@dataclass
 class WarehouseLayout:
     """Passo 3b: layout físico completo -- posições com coordenadas reais,
     dimensões do retângulo envolvente e área de corredores incluída."""
@@ -278,6 +351,7 @@ class WarehouseLayout:
     area_corredores_m2: float = 0.0
     zonas: list[ZonaLayout] = field(default_factory=list)  # posicionadas à parte, ver Zona
     corredores: list[Corredor] = field(default_factory=list)  # faixas de serviço reais
+    espacos_livres: list[EspacoLivre] = field(default_factory=list)  # ver EspacoLivre
     # Pilhas de peças volumosas no chão (sem rack). Como as zonas, só recebem
     # coordenadas para não sobrepor os racks -- a área conta em
     # ResumoAreaTotal.area_oversize_chao_m2, não em largura/profundidade_total_m.
