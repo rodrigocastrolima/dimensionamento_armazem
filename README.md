@@ -3,7 +3,7 @@
 A partir do **stock máximo** de cada artigo, calcula quanto armazém é preciso:
 
 ```
-stock máximo  ──(1) repacking──►  S / M / L / PALLET  ou  LONGO (cantilever)
+stock máximo  ──(1) repacking──►  S / M / L / PALLET  ou  OVERSIZE
               ──(2) racking ──►   nº de racks por tipologia
               ──(3) área ────►    área de chão (m²)
 ```
@@ -13,11 +13,11 @@ Unidades em metros / m³. Não faz slotting/picking — é dimensionamento de ca
 ## Estrutura
 ```
 warehouse/
-  models.py     dataclasses (INPUT vs OUTPUT); LoadType = S/M/L/PALLET/LONGO
+  models.py     dataclasses (INPUT vs OUTPUT); LoadType = S/M/L/PALLET/OVERSIZE
   config.py     parâmetros e regras de negócio
   io_excel.py   ler master data / escrever resultados
-  boxing.py     Passo 1 — escolher unidade + contar (py3dbp); encaminha LONGO
-  racking.py    Passo 2 — racks necessários (rectpack); cantilever p/ LONGO
+  boxing.py     Passo 1 — escolher unidade + contar
+  racking.py    Passo 2 — racks necessários (rectpack)
   area.py       Passo 3 — área de chão
   main.py       orquestra o pipeline (CLI)
 dados/          master_data.xlsx e resultados.xlsx
@@ -34,7 +34,7 @@ python -m warehouse.main --data dados/master_data.xlsx --out dados/resultados.xl
 ## Ordem sugerida de implementação
 `io_excel.load_articles` / `load_catalog` / `load_rack_types`
 → `boxing.pieces_per_box` → `boxing.choose_load`
-→ `racking.rack_capacity` → `racking.rack_capacity_long` → `racking.racks_needed`
+→ `racking.rack_capacity` → `racking.racks_needed`
 → `io_excel.write_results`.
 
-O Passo 3 (área), a aritmética de contagem e o encaminhamento LONGO já estão feitos.
+O Passo 3 (área) e a aritmética de contagem já estão feitos.

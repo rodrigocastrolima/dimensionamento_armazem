@@ -9,6 +9,7 @@ Corre com: python -m warehouse.web
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -17,10 +18,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import boxing, io_excel, racking, area, layout as layout_mod
+from .cenario_autonomia import aplicar_autonomia
 from .config import Config
 from .models import LoadType
 
-cfg = Config()
+# WAREHOUSE_MASTER_DATA permite apontar o servidor para outro master data (ex.:
+# comparar versões) sem editar código -- omitido = comportamento normal
+# (Config.master_data por omissão).
+_master_data_override = os.environ.get("WAREHOUSE_MASTER_DATA")
+cfg = Config(master_data=Path(_master_data_override)) if _master_data_override else Config()
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Simulador de Armazém")
@@ -31,15 +37,18 @@ app = FastAPI(title="Simulador de Armazém")
 @app.get("/api/articles")
 def get_articles():
     articles = io_excel.load_articles(cfg.master_data)
+    catalogo = io_excel.load_catalog(cfg.master_data)
+    articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, cfg)  # Passo 0
     return [
         {
             "sku": a.sku, "descricao": a.descricao,
             "comp_m": a.comp_m, "larg_m": a.larg_m, "alt_m": a.alt_m,
             "peso_kg": a.peso_kg, "stock_max_un": a.stock_max_un,
+            "stock_atual_un": a.stock_atual_un,
             "pecas_por_carro": a.pecas_por_carro,
             "orientacao": a.orientacao, "empilhamento": a.empilhamento.value,
             "fragilidade": a.fragilidade, "geometria": a.geometria,
-            "classe": a.classe, "subtipo_longo": a.subtipo_longo,
+            "classe": a.classe,
         }
         for a in articles
     ]
@@ -67,8 +76,7 @@ def get_racks():
             "nome": r.nome, "larg_m": r.larg_m, "prof_m": r.prof_m,
             "alt_nivel_m": r.alt_nivel_m, "niveis": r.niveis,
             "aceita": [lt.value for lt in r.aceita],
-            "footprint_m2": r.footprint_m2, "comp_braco_m": r.comp_braco_m,
-            "corredor_m": r.corredor_m,
+            "footprint_m2": r.footprint_m2, "corredor_m": r.corredor_m,
         }
         for r in racks
     ]
@@ -90,25 +98,35 @@ def get_zones():
 
 # ------------------------------------------------------------------- gerar
 
-def _serializar_layout(warehouse_layout, rack_by_name):
-    """Converte WarehouseLayout (coordenadas físicas reais, layout.py) para o
-    formato JSON consumido pelo viewer 3D: um registo por posição de chão,
-    com os blocos/níveis/caixas já embutidos (cada posição é a fonte da
-    verdade -- sem reconstrução por intervalo de rack_numero)."""
+def _serializar_layout(posicoes: list, rack_by_name):
+    """Converte uma lista de PosicaoLayout (coordenadas físicas reais,
+    layout.py) para o formato JSON consumido pelo viewer 3D: um registo por
+    posição de chão, com os blocos/níveis/caixas já embutidos (cada posição é
+    a fonte da verdade -- sem reconstrução por intervalo de rack_numero).
+    Recebe a lista diretamente (não um WarehouseLayout inteiro) para poder
+    servir também `.posicoes` reais e `posicoes_fantasma` com a mesma função."""
     layout = []
-    for pl in warehouse_layout.posicoes:
+    for pl in posicoes:
         pos = pl.posicao
         rack = rack_by_name[pos.rack_nome]
         load_types = sorted({c.load_type.value
                              for bloco in pos.blocos for nivel in bloco.niveis
                              for c in nivel.caixas})
+        # Nº de níveis REAL desta posição -- normalmente = rack.niveis (o
+        # catálogo), mas as tipologias de empilhamento nível a nível (ver
+        # Config.empilhamento_por_nivel/racking.niveis_efetivos) podem ter
+        # menos, quando o pé-direito não dá para o módulo completo. Ler do
+        # próprio bloco (não do catálogo às cegas) é o que faz o 3D respeitar
+        # de facto o limite -- senão a estrutura desenhava sempre a altura
+        # cheia do catálogo, mesmo com menos níveis lá dentro.
+        niveis_reais = len(pos.blocos[0].niveis) if pos.blocos and pos.blocos[0].niveis else rack.niveis
         layout.append({
             "rack_nome": pos.rack_nome,
             "indice": pos.indice,
             "x": pl.x_m, "y": pl.y_m,
             "larg_m": pl.largura_m, "prof_m": pl.profundidade_m,
-            "altura_m": rack.alt_nivel_m * rack.niveis,
-            "niveis": rack.niveis,
+            "altura_m": rack.alt_nivel_m * niveis_reais,
+            "niveis": niveis_reais,
             "blocos_empilhados": pos.num_blocos,
             "load_types": load_types,
             "fila_idx": pl.fila_idx, "lado": pl.lado,
@@ -142,6 +160,49 @@ def _serializar_layout(warehouse_layout, rack_by_name):
     return layout
 
 
+# Ordem de preferência do tipo de carga "de exemplo" (maior/mais vistoso
+# primeiro) para encher visualmente uma posição de rack manual que não teve
+# nenhum conteúdo real emprestado (ver render_layout/_caixas_ficticias) --
+# só entra em jogo o tipo que a própria tipologia aceitar de facto.
+_ORDEM_DUMMY = (LoadType.PALLET, LoadType.MEIA, LoadType.L, LoadType.M, LoadType.S, LoadType.XS)
+
+
+def _caixas_ficticias(rack, catalogo_por_tipo: dict) -> list[dict]:
+    """Grelha de caixas "de exemplo" (sem SKU real, `pecas_nesta_caixa=0`) do
+    tamanho de um nível desta tipologia -- só para uma posição manual (Passo
+    4, sandbox) não ficar com o aspeto de rack vazia quando não há stock
+    real emprestado (ver Config/render_layout: `pool_posicoes_reais`
+    esgotada ou inexistente). Encaixe geométrico simples (floor, sem
+    fill_factor -- é só visual, não conta para nada), testando as 2
+    orientações do plano, mesmo espírito de `racking.rack_capacity`."""
+    box = None
+    load_type = None
+    for lt in _ORDEM_DUMMY:
+        if lt in rack.aceita and lt in catalogo_por_tipo:
+            load_type, box = lt, catalogo_por_tipo[lt]
+            break
+    if box is None:
+        return []
+    op1 = (math.floor(rack.larg_m / box.ext_comp_m), math.floor(rack.prof_m / box.ext_larg_m),
+          box.ext_comp_m, box.ext_larg_m)
+    op2 = (math.floor(rack.larg_m / box.ext_larg_m), math.floor(rack.prof_m / box.ext_comp_m),
+          box.ext_larg_m, box.ext_comp_m)
+    n_c, n_l, dim_c, dim_l = max((op1, op2), key=lambda o: o[0] * o[1])
+    if n_c <= 0 or n_l <= 0:
+        return []
+    alt_m = min(box.ext_alt_m, max(rack.alt_nivel_m - 0.05, 0.05))
+    return [
+        {
+            "sku": "(exemplo)", "descricao": "Carga de exemplo -- sandbox, sem SKU real",
+            "load_type": load_type.value,
+            "x_m": round(i * dim_c, 4), "y_m": round(j * dim_l, 4),
+            "comp_m": round(dim_c, 4), "larg_m": round(dim_l, 4), "alt_m": round(alt_m, 4),
+            "pecas_nesta_caixa": 0, "eh_picking": False, "num_boxes_in_stack": 1,
+        }
+        for j in range(n_l) for i in range(n_c)
+    ]
+
+
 class GerarRequest(BaseModel):
     altura_armazem_m: float = 0.0
     altura_picking_m: float = 0.0
@@ -149,6 +210,9 @@ class GerarRequest(BaseModel):
     # envelope do bloco de racks (0 = sem limite); ver Config.largura_max_m
     largura_max_m: float = 0.0
     profundidade_max_m: float = 0.0
+    # cenário de autonomia (nº de carros); 0 = usa o master data tal como está,
+    # sem escalar stock_max_un. Ver warehouse.cenario_autonomia.
+    carros_alvo: float = 0.0
 
 
 class ArrangeRequest(BaseModel):
@@ -162,6 +226,10 @@ class ArrangeRequest(BaseModel):
     # delas e as fiadas apareciam cortadas a meio (ver _roda_rect).
     largura_max_m: float = 0.0
     profundidade_max_m: float = 0.0
+    # Idem: TEM de ser o mesmo carros_alvo que /api/gerar usou para o bloco que
+    # está no canvas -- senão o render volta a usar o stock do master data sem
+    # escala, e o bloco 3D deixa de corresponder ao que está desenhado.
+    carros_alvo: float = 0.0
 
 
 @app.post("/api/gerar")
@@ -174,7 +242,11 @@ def gerar(body: GerarRequest):
 
     articles = io_excel.load_articles(cfg.master_data)
     catalogo = io_excel.load_catalog(cfg.master_data)
+    articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, local_cfg)  # Passo 0
+    if body.carros_alvo > 0:
+        articles = aplicar_autonomia(articles, body.carros_alvo)
     rack_types = io_excel.load_rack_types(cfg.master_data)
+    rack_types = racking.com_par_oversize(rack_types, local_cfg)
     catalogo_por_tipo = {b.nome: b for b in catalogo}
     rack_by_name = {r.nome: r for r in rack_types}
     article_idx = {a.sku: a for a in articles}
@@ -184,33 +256,28 @@ def gerar(body: GerarRequest):
                                    cfg.master_data.parent / "pecas_tipo_caixa.xlsx",
                                    assignments)
 
-    comp_max_longo = max(
-        (article_idx[a.sku].comp_m for a in assignments
-         if a.load_type == LoadType.LONGO and a.sku in article_idx),
-        default=1.0,
-    )
     requirements, avisos_estimativa = racking.racks_needed(
-        assignments, rack_types, catalogo_por_tipo, local_cfg, comp_max_longo,
+        assignments, rack_types, catalogo_por_tipo, local_cfg,
         local_cfg.altura_picking_m, articles)
 
     posicoes, avisos_alocacao = racking.allocate_to_racks(
-        assignments, requirements, rack_types, catalogo_por_tipo, articles, comp_max_longo,
+        assignments, requirements, rack_types, catalogo_por_tipo, articles,
         local_cfg.altura_picking_m, local_cfg.altura_armazem_m, local_cfg)
 
-    avisos = (boxing.avisos_cantilever(articles, local_cfg)
-              + avisos_estimativa + avisos_alocacao)
+    avisos = avisos_estimativa + avisos_alocacao
 
     zonas = io_excel.load_zones(cfg.master_data)
 
-    # OVERSIZE ao chão: só existe quando NÃO há tipologia wide-span (o rack tem
-    # prioridade). A área vem das cotas + stock, não de um valor fixo. Calcula-se
-    # ANTES do layout, para as pilhas receberem coordenadas e aparecerem no 3D.
+    # OVERSIZE ao chão: só existe quando NÃO há tipologia wide-span NEM par
+    # emparelhado (o rack tem prioridade). A área vem das cotas + stock, não de
+    # um valor fixo. Calcula-se ANTES do layout, para as pilhas receberem
+    # coordenadas e aparecerem no 3D.
     artigos_chao: list[tuple] = []
     area_chao_m2, detalhe_chao = 0.0, []
-    if local_cfg.oversize_ao_chao and not racking._melhor_oversize(
-            rack_types, local_cfg.oversize_racks):
+    if local_cfg.oversize_ao_chao and not racking._melhor_oversize_ativo(
+            rack_types, local_cfg):
         artigos_chao = [
-            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades)
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.orientacao)
             for a in assignments if a.load_type == LoadType.OVERSIZE
             for art in [article_idx.get(a.sku)] if art
         ]
@@ -222,9 +289,37 @@ def gerar(body: GerarRequest):
         posicoes, rack_by_name, zonas,
         local_cfg.largura_max_m, local_cfg.profundidade_max_m,
         artigos_chao, local_cfg.oversize_chao_altura_max_m,
-        local_cfg.oversize_chao_peso_max_kg)
+        local_cfg.oversize_chao_peso_max_kg, local_cfg.picking_manual_racks)
     avisos = avisos + warehouse_layout.avisos
-    layout_json = _serializar_layout(warehouse_layout, rack_by_name)
+    layout_json = _serializar_layout(warehouse_layout.posicoes, rack_by_name)
+
+    # Geometria real do bloco de racks (posições/corredores/espaço livre) no
+    # referencial LOCAL do próprio bloco (y0=0, sem o deslocamento das zonas)
+    # -- mesma chamada com zonas=None que /api/render-layout já faz para
+    # reposicionar o bloco no canvas. Serve só para o canvas 2D desenhar a
+    # forma real em vez de um retângulo único; não substitui warehouse_layout
+    # (que continua a ser a fonte da verdade da área/avisos).
+    layout_local = layout_mod.gerar_layout(
+        posicoes, rack_by_name, None,
+        local_cfg.largura_max_m, local_cfg.profundidade_max_m,
+        artigos_chao, local_cfg.oversize_chao_altura_max_m,
+        local_cfg.oversize_chao_peso_max_kg, local_cfg.picking_manual_racks)
+    racking_geometria = {
+        "posicoes": [
+            {"rack_nome": pl.posicao.rack_nome, "x": pl.x_m, "y": pl.y_m,
+             "w": pl.largura_m, "h": pl.profundidade_m}
+            for pl in layout_local.posicoes
+        ],
+        "corredores": [
+            {"x": c.x_m, "y": c.y_m, "w": c.comp_m, "h": c.larg_m}
+            for c in layout_local.corredores
+        ],
+        "espacos_livres": [
+            {"rack_nome": e.rack_nome, "x": e.x_m, "y": e.y_m,
+             "w": e.comp_m, "h": e.larg_m}
+            for e in layout_local.espacos_livres
+        ],
+    }
 
     # floor_area DEPOIS do layout: as pilhas são uma fiada do bloco e o seu
     # footprint conta como área ocupada (senão aparecia como corredor).
@@ -276,6 +371,7 @@ def gerar(body: GerarRequest):
         "area_racks_m2": round(dim.area_racks_m2, 2),
         "area_layout_m2": warehouse_layout.area_total_m2,
         "area_corredores_m2": warehouse_layout.area_corredores_m2,
+        "racking_geometria": racking_geometria,
         "largura_layout_m": warehouse_layout.largura_total_m,
         "profundidade_layout_m": warehouse_layout.profundidade_total_m,
         "area_zonas_m2": round(resumo.area_zonas_m2, 2),
@@ -388,33 +484,32 @@ def render_layout(body: ArrangeRequest):
 
     articles = io_excel.load_articles(cfg.master_data)
     catalogo = io_excel.load_catalog(cfg.master_data)
+    articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, local_cfg)  # Passo 0
+    if body.carros_alvo > 0:
+        articles = aplicar_autonomia(articles, body.carros_alvo)
     rack_types = io_excel.load_rack_types(cfg.master_data)
+    rack_types = racking.com_par_oversize(rack_types, local_cfg)
     catalogo_por_tipo = {b.nome: b for b in catalogo}
     rack_by_name = {r.nome: r for r in rack_types}
     article_idx = {a.sku: a for a in articles}
 
     assignments = boxing.plan_all(articles, catalogo, local_cfg)
-    comp_max_longo = max(
-        (article_idx[a.sku].comp_m for a in assignments
-         if a.load_type == LoadType.LONGO and a.sku in article_idx),
-        default=1.0,
-    )
     requirements, _ = racking.racks_needed(
-        assignments, rack_types, catalogo_por_tipo, local_cfg, comp_max_longo,
+        assignments, rack_types, catalogo_por_tipo, local_cfg,
         local_cfg.altura_picking_m, articles)
     posicoes, _ = racking.allocate_to_racks(
         assignments, requirements, rack_types, catalogo_por_tipo, articles,
-        comp_max_longo, local_cfg.altura_picking_m, local_cfg.altura_armazem_m,
+        local_cfg.altura_picking_m, local_cfg.altura_armazem_m,
         local_cfg)
 
     # OVERSIZE ao chão (ver /api/gerar): antes do layout, para as pilhas
     # receberem coordenadas e serem desenhadas no 3D.
     artigos_chao: list[tuple] = []
     area_chao_m2 = 0.0
-    if local_cfg.oversize_ao_chao and not racking._melhor_oversize(
-            rack_types, local_cfg.oversize_racks):
+    if local_cfg.oversize_ao_chao and not racking._melhor_oversize_ativo(
+            rack_types, local_cfg):
         artigos_chao = [
-            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades)
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.orientacao)
             for a in assignments if a.load_type == LoadType.OVERSIZE
             for art in [article_idx.get(a.sku)] if art
         ]
@@ -428,9 +523,20 @@ def render_layout(body: ArrangeRequest):
         posicoes, rack_by_name, None,
         local_cfg.largura_max_m, local_cfg.profundidade_max_m,
         artigos_chao, local_cfg.oversize_chao_altura_max_m,
-        local_cfg.oversize_chao_peso_max_kg)
+        local_cfg.oversize_chao_peso_max_kg, local_cfg.picking_manual_racks)
     dim = area.floor_area(posicoes, rack_by_name, warehouse_layout.pilhas_chao)
-    layout_json = _serializar_layout(warehouse_layout, rack_by_name)
+    layout_json = _serializar_layout(warehouse_layout.posicoes, rack_by_name)
+
+    # Racks fantasma (preview, Passo 4): uma posição vazia por slot inteiro
+    # que cabe em cada espaço livre, mesma tipologia da fiada que estendem.
+    # Sempre calculadas (é barato -- não têm caixas ainda) e sempre devolvidas;
+    # o frontend decide mostrar/esconder com a checkbox, sem precisar de pedir
+    # de novo (mesmo padrão dos "Operadores" já existentes).
+    racks_fantasma = layout_mod.gerar_racks_fantasma(
+        warehouse_layout.espacos_livres, rack_by_name,
+        local_cfg.altura_armazem_m, local_cfg.max_modulos_por_tipologia,
+        local_cfg.altura_picking_m, local_cfg.empilhamento_por_nivel)
+    layout_fantasma_json = _serializar_layout(racks_fantasma, rack_by_name)
 
     bloco_racks = next((b for b in body.blocks if b.get("type") == "racking"), None)
     off_x = float(bloco_racks.get("x", 0.0)) if bloco_racks else 0.0
@@ -439,16 +545,23 @@ def render_layout(body: ArrangeRequest):
     bloco_w = float(bloco_racks.get("w", 0.0)) if bloco_racks else 0.0
     bloco_h = float(bloco_racks.get("h", 0.0)) if bloco_racks else 0.0
 
-    def _roda_rect(x, y, l, p, cont_w, cont_h):
+    def _roda_rect_rot(x, y, l, p, cont_w, cont_h, rot):
         """Roda um retângulo axis-aligned dentro de um contentor cont_w x cont_h,
-        em passos de 90° (rot_racks). Devolve (x, y, larg, prof) no novo frame."""
-        if rot_racks == 90:
+        em passos de 90°. Devolve (x, y, larg, prof) no novo frame. Rotação
+        explícita (não fixa a rot_racks) -- reaproveitada por _roda_rect
+        (bloco de racks principal) e por _colocar_bloco_manual (cada fila de
+        racks manuais é o seu próprio bloco, com a sua própria rotação)."""
+        rot = int(rot) % 360
+        if rot == 90:
             return cont_h - (y + p), x, p, l
-        if rot_racks == 180:
+        if rot == 180:
             return cont_w - (x + l), cont_h - (y + p), l, p
-        if rot_racks == 270:
+        if rot == 270:
             return y, cont_w - (x + l), p, l
         return x, y, l, p
+
+    def _roda_rect(x, y, l, p, cont_w, cont_h):
+        return _roda_rect_rot(x, y, l, p, cont_w, cont_h, rot_racks)
 
     # o canvas roda o bloco em torno do centro: origem do bloco rodado
     if rot_racks in (90, 270):
@@ -472,6 +585,97 @@ def render_layout(body: ArrangeRequest):
         item["x"] = round(base_x + x, 4)
         item["y"] = round(base_y + y, 4)
         item["larg_m"], item["prof_m"] = l, p
+
+    # Racks fantasma: MESMA rotação/deslocamento das posições reais (sem
+    # caixas lá dentro para rodar -- estão vazias nesta fase).
+    for item in layout_fantasma_json:
+        larg_orig, prof_orig = item["larg_m"], item["prof_m"]
+        x, y, l, p = _roda_rect(item["x"], item["y"], larg_orig, prof_orig, bloco_w, bloco_h)
+        item["x"] = round(base_x + x, 4)
+        item["y"] = round(base_y + y, 4)
+        item["larg_m"], item["prof_m"] = l, p
+
+    # Racks MANUAIS (sandbox de capacidade -- ver layout.gerar_fila_manual):
+    # cada fila é o seu PRÓPRIO bloco no canvas, com posição/rotação própria
+    # (não a do bloco de racks principal). Mesma técnica de _roda_rect, só que
+    # aplicada fila a fila em vez de uma vez só para o bloco inteiro.
+    def _colocar_bloco_manual(items_json, off_x, off_y, rot, cont_w, cont_h):
+        rot = int(float(rot or 0)) % 360
+        if rot in (90, 270):
+            centro_x, centro_y = off_x + cont_w / 2, off_y + cont_h / 2
+            bx, by = centro_x - cont_h / 2, centro_y - cont_w / 2
+        else:
+            bx, by = off_x, off_y
+        for item in items_json:
+            larg_orig, prof_orig = item["larg_m"], item["prof_m"]
+            x, y, l, p = _roda_rect_rot(item["x"], item["y"], larg_orig, prof_orig, cont_w, cont_h, rot)
+            item["x"] = round(bx + x, 4)
+            item["y"] = round(by + y, 4)
+            item["larg_m"], item["prof_m"] = l, p
+
+    # Sem bloco de racks (sandbox puro): as posições REAIS que o Passo 2 já
+    # alocou (com caixas a sério, a partir do stock) ficam disponíveis para
+    # "emprestar" às filas manuais da MESMA tipologia -- sem bloco de racks
+    # não há onde as desenhar de outra forma, e ficariam perdidas em
+    # silêncio. Agrupadas por tipologia, uma lista que cada fila manual vai
+    # ESVAZIANDO (pool.pop) à medida que preenche os seus slots.
+    posicoes_reais_por_tipo: dict[str, list] = {}
+    if bloco_racks is None:
+        for pos in posicoes:
+            posicoes_reais_por_tipo.setdefault(pos.rack_nome, []).append(pos)
+
+    racks_manuais_json: list = []
+    avisos_manuais: list[str] = []
+    for b in body.blocks:
+        if b.get("type") != "rack_manual":
+            continue
+        tipo_nome = b.get("rack_tipo")
+        rack = rack_by_name.get(tipo_nome)
+        nome_bloco = b.get("nome") or "Fila manual"
+        n = int(float(b.get("n", 0) or 0))
+        if rack is None:
+            avisos_manuais.append(
+                f"Fila manual '{nome_bloco}': tipologia '{tipo_nome}' não existe na folha «Racks» -- ignorada.")
+            continue
+        if n <= 0:
+            continue
+        dupla = bool(b.get("dupla"))
+        pool = posicoes_reais_por_tipo.get(tipo_nome)
+        posicoes_locais = layout_mod.gerar_fila_manual(
+            rack, n, dupla, local_cfg.altura_armazem_m, local_cfg.max_modulos_por_tipologia, pool,
+            local_cfg.empilhamento_por_nivel)
+        itens_json = _serializar_layout(posicoes_locais, rack_by_name)
+
+        # Posições que não vieram do pool real (ou o pool esgotou-se antes de
+        # lá chegar) ficam com o aspeto de rack vazia -- enche-se com caixas
+        # "de exemplo" (sem SKU real, pecas_nesta_caixa=0) só para o 3D não
+        # parecer despovoado. Nunca mistura com conteúdo real: só entra em
+        # níveis que já vinham 100% vazios do gerar_fila_manual.
+        caixas_exemplo = _caixas_ficticias(rack, catalogo_por_tipo)
+        if caixas_exemplo:
+            for item in itens_json:
+                vazio = not any(c for bloco in item["blocos"] for nivel in bloco["niveis"] for c in nivel["caixas"])
+                if not vazio:
+                    continue
+                for bloco in item["blocos"]:
+                    for nivel in bloco["niveis"]:
+                        nivel["caixas"] = [dict(c) for c in caixas_exemplo]
+
+        cont_w = n * rack.larg_m
+        cont_h = rack.prof_m * (2 if dupla else 1)
+        _colocar_bloco_manual(itens_json, float(b.get("x", 0.0)), float(b.get("y", 0.0)),
+                              b.get("rot", 0), cont_w, cont_h)
+        racks_manuais_json.extend(itens_json)
+
+    # O que sobrou por preencher (mais posições reais do que slots manuais
+    # desenhados, ou uma tipologia com stock real mas NENHUMA fila manual) --
+    # nunca se perde em silêncio: avisa-se com quantas posições reais
+    # (não peças/caixas) ficaram de fora.
+    for nome_tipo, sobra in posicoes_reais_por_tipo.items():
+        if sobra:
+            avisos_manuais.append(
+                f"Tipologia '{nome_tipo}': {len(sobra)} posição/posições reais (com stock) não couberam "
+                f"nas filas manuais desenhadas -- alarga-as ou acrescenta mais uma fila desta tipologia.")
 
     # Corredores de serviço: sofrem a MESMA rotação/deslocamento das posições,
     # para os operadores andarem sobre eles em qualquer orientação do bloco.
@@ -520,6 +724,12 @@ def render_layout(body: ArrangeRequest):
     for item in layout_json:
         item["x"] = round(item["x"] - min_x, 4)
         item["y"] = round(item["y"] - min_y, 4)
+    for item in layout_fantasma_json:
+        item["x"] = round(item["x"] - min_x, 4)
+        item["y"] = round(item["y"] - min_y, 4)
+    for item in racks_manuais_json:
+        item["x"] = round(item["x"] - min_x, 4)
+        item["y"] = round(item["y"] - min_y, 4)
     for z in zonas_layout:
         z["x"] = round(z["x"] - min_x, 4)
         z["y"] = round(z["y"] - min_y, 4)
@@ -547,17 +757,100 @@ def render_layout(body: ArrangeRequest):
     # negativas ao rodar e ficavam fora das paredes; agora que são uma fiada
     # dentro do bloco, o _roda_rect e a normalização dos racks já as cobrem.
 
+    # Contorno do Cubo (edifício real, ver "Cabe no cubo?" no canvas 2D): o
+    # frontend manda-o como mais um bloco (type="cubo", nunca rodado) só para
+    # entrar na normalização acima (_cantos/pontos já o incluem no min_x/min_y
+    # -- sem alteração nenhuma aqui). Devolve-se a MESMA posição normalizada
+    # dos restantes, para o 3D o desenhar exatamente onde o 2D o mostra
+    # relativo ao arranjo. Não é um bloco arrastável nem entra na área
+    # reportada -- é só referência visual fixa.
+    cubo_block = next((b for b in body.blocks if b.get("type") == "cubo"), None)
+    cubo_json = None
+    if cubo_block is not None:
+        cw, ch = float(cubo_block.get("w", 0.0)), float(cubo_block.get("h", 0.0))
+        cubo_json = {
+            "x": round(float(cubo_block.get("x", 0.0)) - min_x, 4),
+            "y": round(float(cubo_block.get("y", 0.0)) - min_y, 4),
+            "w": cw, "h": ch,
+        }
+
+    # Obstáculos (pilares, condutas, zonas interditas, ...): restrições FÍSICAS
+    # fixas, do chão ao teto -- NÃO entram no dimensionamento (o nº de racks
+    # continua a vir só do stock, como sempre) nem na área reportada. São só
+    # referência visual (3D) + aviso se ficarem por baixo do bloco de racks ou
+    # de uma zona -- comparação por AABB (retângulo envolvente já rodado): não
+    # é geometria exata de polígono rodado, mas chega para avisar, e nunca
+    # bloqueia silenciosamente uma sobreposição real.
+    def _aabb(cantos):
+        xs = [p[0] for p in cantos]
+        ys = [p[1] for p in cantos]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    def _aabb_overlap(a, b):
+        return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+    obstaculo_blocks = [b for b in body.blocks if b.get("type") == "obstaculo"]
+    obstaculos_layout = []
+    avisos_obstaculos: list[str] = []
+    if obstaculo_blocks:
+        aabb_racking = _aabb(_cantos(bloco_racks)) if bloco_racks else None
+        aabbs_zonas = [(_aabb(_cantos(b)), b.get("nome") or "zona")
+                       for b in body.blocks if b.get("type") == "zone"]
+        for ob in obstaculo_blocks:
+            nome = ob.get("nome") or "Obstáculo"
+            aabb_ob = _aabb(_cantos(ob))
+            if aabb_racking is not None and _aabb_overlap(aabb_ob, aabb_racking):
+                avisos_obstaculos.append(
+                    f"Obstáculo '{nome}' sobrepõe o bloco de racks -- ajusta as posições.")
+            for aabb_z, nome_z in aabbs_zonas:
+                if _aabb_overlap(aabb_ob, aabb_z):
+                    avisos_obstaculos.append(
+                        f"Obstáculo '{nome}' sobrepõe a zona '{nome_z}' -- ajusta as posições.")
+            obstaculos_layout.append({
+                "nome": nome,
+                "x": round(float(ob.get("x", 0.0)) - min_x, 4),
+                "y": round(float(ob.get("y", 0.0)) - min_y, 4),
+                "w": float(ob.get("w", 0.0)), "h": float(ob.get("h", 0.0)),
+                "rot": float(ob.get("rot", 0.0) or 0.0),
+            })
+
+    # Sem bloco de racks no arranjo (bloco_racks is None -- só racks manuais /
+    # obstáculos / zonas / Cubo, nunca se carregou "Gerar racks"): o pipeline
+    # real (boxing/racking/layout, acima) corre sempre -- é preciso para as
+    # outras coisas poderem ser normalizadas/posicionadas -- mas o resultado
+    # não tem posição nenhuma no canvas para ir, porque o utilizador nunca lá
+    # pôs um bloco de racks. Sem esta guarda, o 3D desenhava o armazém REAL
+    # inteiro (paletes a sério, a partir do stock) espremido em (0,0) por
+    # cima de tudo o resto -- o "ficou a loucura" reportado: o utilizador
+    # via caixas empilhadas a sério que não pediu, só porque tinha filas
+    # manuais no canvas. Sandbox puro (sem bloco de racks) mostra só o que
+    # foi colocado à mão.
+    if bloco_racks is None:
+        layout_json = []
+        layout_fantasma_json = []
+        pilhas_json = []
+        corredores_json = []
+        area_racks_reportada = 0.0
+        area_chao_m2 = 0.0
+    else:
+        area_racks_reportada = dim.area_racks_m2
+
     return {
         "layout": layout_json,
+        "layout_fantasma": layout_fantasma_json,
         "pilhas_chao": pilhas_json,
         "area_oversize_chao_m2": round(area_chao_m2, 2),
         "zonas_layout": zonas_layout,
         "corredores": corredores_json,
-        "area_racks_m2": round(dim.area_racks_m2, 2),
+        "area_racks_m2": round(area_racks_reportada, 2),
         "area_zonas_m2": round(sum(z["area_m2"] for z in zonas_layout), 2),
         "largura_total_m": round(largura, 2),
         "profundidade_total_m": round(profundidade, 2),
         "area_total_m2": round(largura * profundidade, 2),
+        "cubo": cubo_json,
+        "obstaculos_layout": obstaculos_layout,
+        "racks_manuais": racks_manuais_json,
+        "avisos": avisos_obstaculos + avisos_manuais,
     }
 
 

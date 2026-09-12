@@ -94,7 +94,7 @@
       <thead>
         <tr>
           <th>Nome</th><th>Larg (m)</th><th>Prof (m)</th><th>Alt/nível (m)</th>
-          <th>Níveis</th><th>Aceita (S,M,L,PALLET,LONGO)</th><th>Comp braço (m)</th>
+          <th>Níveis</th><th>Aceita (S,M,L,PALLET)</th>
           <th>Corredor (m)</th>
         </tr>
       </thead>
@@ -124,6 +124,10 @@
     <label>Altura do armazém (m, 0 = sem limite):
       <input id="altura-armazem" type="number" step="0.1" value="0" style="width:80px">
     </label>
+    <label title="Escala o stock_max_un de cada SKU proporcionalmente a este nº de carros (o master data atual já corresponde a 10 carros). 0 = usa o master data tal como está, sem escalar.">
+      Nº carros autonomia (0 = master data):
+      <input id="carros-alvo" type="number" step="1" min="0" value="0" style="width:80px">
+    </label>
     <label>Altura de picking (m, 0 = desativado):
       <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
     </label>
@@ -137,6 +141,7 @@
     </label>
     <button class="action" id="btn-gerar-racks">1 · Gerar racks</button>
     <button id="btn-rodar-zona">⟳ Rodar (zona 45° · racks 90°)</button>
+    <button id="btn-remover-bloco">🗑 Remover selecionado</button>
     <button id="btn-reset-canvas">↺ Repor</button>
     <span style="flex:1"></span>
     <button id="btn-guardar-arranjo">⬇ Guardar arranjo</button>
@@ -154,15 +159,43 @@
     </div>
     <div style="width:260px; display:flex; flex-direction:column; gap:12px;">
       <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
-        <h3 style="margin:0 0 8px 0; font-size:13px;">Cabe no hangar?</h3>
+        <h3 style="margin:0 0 8px 0; font-size:13px;">Cabe no cubo?</h3>
         <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:8px;">
-          <input id="hangar-comp" type="number" step="0.01" min="0" value="79.5" style="width:62px">
+          <input id="hangar-comp" type="number" step="0.01" min="0" value="19.836" style="width:62px">
           <span>×</span>
-          <input id="hangar-larg" type="number" step="0.01" min="0" value="15.81" style="width:62px">
+          <input id="hangar-larg" type="number" step="0.01" min="0" value="14.836" style="width:62px">
           <span>m</span>
         </div>
         <div id="hangar-verdict" style="text-align:center; font-weight:bold; font-size:26px; letter-spacing:1px; border-radius:6px; padding:10px 0; background:#333; color:#999;">—</div>
         <div id="hangar-detalhe" style="font-size:11px; color:#aaa; margin-top:8px; line-height:1.55;"></div>
+      </div>
+      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
+        <h3 style="margin:0 0 8px 0; font-size:13px;" title="Restrições físicas reais (pilares, condutas, zonas interditas, ...) que tiram espaço do chão ao teto. Não entram no cálculo de racks/área -- são só uma referência visual e de aviso: se um rack ou zona ficar por cima, avisamos.">Obstáculos</h3>
+        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:6px;">
+          <input id="obstaculo-nome" type="text" placeholder="nome (opcional)" style="width:96px">
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:8px;">
+          <input id="obstaculo-comp" type="number" step="0.1" min="0.1" value="1" style="width:62px">
+          <span>×</span>
+          <input id="obstaculo-larg" type="number" step="0.1" min="0.1" value="1" style="width:62px">
+          <span>m</span>
+        </div>
+        <button id="btn-add-obstaculo" style="width:100%;">+ Adicionar obstáculo</button>
+        <div id="obstaculos-lista" style="font-size:11px; color:#aaa; margin-top:8px; line-height:1.8;"></div>
+      </div>
+      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
+        <h3 style="margin:0 0 8px 0; font-size:13px;" title="Fila de racks VAZIOS (sem SKU/caixas) colocada à mão -- para desenhar uma planta de capacidade (ex.: 'fila de 9 Prateleira Leve') antes de decidir que componentes vão onde. Não passa pelo cálculo a partir do stock nem entra na área reportada.">Racks manuais (sandbox)</h3>
+        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:6px;">
+          <select id="rack-manual-tipo" style="flex:1;"></select>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:6px;">
+          <label>Posições/fila <input id="rack-manual-n" type="number" step="1" min="1" value="9" style="width:50px"></label>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:8px;">
+          <label><input id="rack-manual-dupla" type="checkbox"> Fila dupla (costas-com-costas)</label>
+        </div>
+        <button id="btn-add-rack-manual" style="width:100%;">+ Adicionar fila</button>
+        <div id="racks-manuais-lista" style="font-size:11px; color:#aaa; margin-top:8px; line-height:1.8;"></div>
       </div>
       <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
         <h3 style="margin:0 0 8px 0; font-size:13px;">Informações</h3>
@@ -204,13 +237,16 @@
     <span class="dica" style="margin:0">Adiciona os que quiseres (repetíveis) e arrasta-os com o rato; clica para selecionar.
       <b>Ctrl+D</b> duplica o selecionado ao lado — repete para fazer uma fila.</span>
     <span style="flex:1"></span>
+    <label style="font-size:13px;" title="Preview do espaço livre dentro do bloco de racks (Passo 4): mais posições da mesma tipologia da fiada, ainda vazias. Verde translúcido, não conta para a área nem para o dimensionamento.">
+      <input type="checkbox" id="chk-racks-fantasma"> Racks fantasma
+    </label>
     <label style="font-size:13px;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
       <input type="checkbox" id="ops-ativo" checked> Operadores
     </label>
     <label style="font-size:13px;" title="Operadores a pé — só fazem picking em Prateleira Leve">
       A pé <input id="ops-n" type="number" min="0" max="20" step="1" value="4" style="width:52px">
     </label>
-    <label style="font-size:13px;" title="Operadores com porta-paletes — acedem a porta-paletes e cantilever">
+    <label style="font-size:13px;" title="Operadores com porta-paletes — acedem a porta-paletes e outras tipologias pesadas">
       Porta-paletes <input id="ops-n-porta" type="number" min="0" max="10" step="1" value="2" style="width:52px">
     </label>
     <label style="font-size:13px;">Velocidade
@@ -304,17 +340,24 @@ async function carregarCaixas() {
   `).join("");
 }
 
+let rackTypesCache = [];   // ver painel "Racks manuais" no canvas 2D
 async function carregarRacks() {
   const racks = await fetch(`${API}/racks`).then(r => r.json());
+  rackTypesCache = racks;
   const tbody = document.querySelector("#tabela-racks tbody");
   tbody.innerHTML = racks.map(r => `
     <tr>
       <td>${r.nome}</td>
       <td>${r.larg_m}</td><td>${r.prof_m}</td><td>${r.alt_nivel_m}</td>
       <td>${r.niveis}</td><td>${r.aceita.join(', ')}</td>
-      <td>${r.comp_braco_m}</td><td>${r.corredor_m}</td>
+      <td>${r.corredor_m}</td>
     </tr>
   `).join("");
+  const sel = document.getElementById("rack-manual-tipo");
+  if (sel) {
+    sel.innerHTML = racks.map(r =>
+      `<option value="${r.nome}">${r.nome} (${r.larg_m}×${r.prof_m}m)</option>`).join("");
+  }
 }
 
 // ----------------------------------------------------------------- zonas
@@ -333,11 +376,13 @@ async function carregarZonas() {
 
 // ----------------------------------------------------------------- 3D viewer
 let scene, camera, renderer, labelRenderer, controls, raycaster, mouse, dirLight, chao;
+let cuboMarcador = null;   // contorno fixo do Cubo (edifício real) no chão -- ver atualizarCuboMarcador
+let alturaEdificioAtual = 5;   // altura das paredes desenhadas por último -- os obstáculos vão sempre até lá (ver desenharParedes/desenharObstaculos)
 let _rotRacks = 0;   // rotação (graus) do bloco de racks no canvas -> orienta os bins
 const CORES = {
   // caixas de picking (bins de bico aberto): tons de azul por tamanho
   XS: 0x8ec4f7, S: 0x4dabf7, M: 0x2f83cc, L: 0x1c5a92,
-  MEIA: 0xf7c948, PALLET: 0xff6b6b, LONGO: 0xda77f2,
+  MEIA: 0xf7c948, PALLET: 0xff6b6b,
   OVERSIZE: 0x6f7c8a,   // componente pousado nu na wide-span (ver MAT_OVERSIZE)
 };
 
@@ -423,6 +468,12 @@ function initViewer() {
   chao.position.y = -0.02;
   chao.receiveShadow = true;
   scene.add(chao);
+
+  // contorno do Cubo (edifício real): criado uma vez, escondido até o 1º
+  // render-layout devolver a sua posição (ver atualizarCuboMarcador). Nunca
+  // removido por limparRacks (não tem isRackGroup/isZonaGroup/etc.) -- é
+  // referência fixa, sobrevive a "gerar" sucessivos.
+  cuboMarcador = criarCuboMarcador();
 
   raycaster = new THREE.Raycaster();
   mouse = new THREE.Vector2();
@@ -608,6 +659,7 @@ function initViewer() {
     if (propSel) { propSel.rotation.y += Math.PI / 4; guardarProps(); }
   });
   ligarControlosOperadores();
+  ligarControloRacksFantasma();
   // repõe os props da sessão anterior (o limparRacks não os apaga, por isso
   // sobrevivem a novos "Renderizar layout 3D" -- só ao refresh é que se perdiam)
   restaurarProps();
@@ -678,6 +730,17 @@ function recriarOperadores() {
     destino: "7 - Zona de Espera de Transporte para BDL",
     corredores: _opsCtx.corredores,
     velocidade: vel,
+  });
+}
+
+function ligarControloRacksFantasma() {
+  // Grupos já construídos por desenharLayoutFantasma (userData.isFantasma) --
+  // só alterna .visible, sem pedir nada de novo ao backend nem reconstruir
+  // a geometria (mesmo padrão do "Operadores" para a velocidade).
+  document.getElementById("chk-racks-fantasma")?.addEventListener("change", (e) => {
+    scene.traverse(obj => {
+      if (obj.userData && obj.userData.isFantasma) obj.visible = e.target.checked;
+    });
   });
 }
 
@@ -771,7 +834,7 @@ function limparRacks() {
   if (operadores) { operadores.dispose(); operadores = null; }
   [...scene.children].forEach(obj => {
     if (obj.userData.isRackGroup || obj.userData.isZonaGroup || obj.userData.isParedes
-        || obj.userData.isPilhaGroup) scene.remove(obj);
+        || obj.userData.isPilhaGroup || obj.userData.isObstaculoGroup) scene.remove(obj);
   });
 }
 
@@ -796,13 +859,80 @@ function texturaChapa() {
   }, 256, 256);
 }
 
-function desenharParedes(maxX, maxY, maxZ) {
+// Contorno fixo do Cubo (edifício real) no chão -- referência visual, nunca um
+// bloco arrastável: os racks/zonas podem ficar dentro ou fora dele (ver
+// "Cabe no cubo?" no canvas 2D e atualizarCuboMarcador). Contorno tracejado +
+// preenchimento muito translúcido, para se ler como uma marcação no chão sem
+// esconder o que está por baixo.
+function criarCuboMarcador() {
+  const g = new THREE.Group();
+  g.userData.isCuboMarcador = true;
+  g.visible = false;
+
+  const fill = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1),
+    new THREE.MeshBasicMaterial({
+      color: 0xf5c518, transparent: true, opacity: 0.07,
+      side: THREE.DoubleSide, depthWrite: false,
+    }));
+  fill.name = "fill";
+  fill.rotation.x = -Math.PI / 2;
+  g.add(fill);
+
+  const linha = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineDashedMaterial({ color: 0xc99a0e, dashSize: 0.4, gapSize: 0.25 }));
+  linha.name = "contorno";
+  g.add(linha);
+
+  scene.add(g);
+  return g;
+}
+
+// cubo: {x, y, w, h} já normalizado pelo backend (mesmo referencial dos
+// racks/zonas devolvidos por /api/render-layout) -- x/y ao longo dos MESMOS
+// eixos que o resto do 3D (x -> X, y -> Z).
+function atualizarCuboMarcador(cubo) {
+  if (!cuboMarcador) return;
+  if (!cubo || !cubo.w || !cubo.h) { cuboMarcador.visible = false; return; }
+  const { x, y, w, h } = cubo;
+
+  const fill = cuboMarcador.getObjectByName("fill");
+  fill.geometry.dispose();
+  fill.geometry = new THREE.PlaneGeometry(w, h);
+  fill.position.set(x + w / 2, 0.012, y + h / 2);
+
+  const linha = cuboMarcador.getObjectByName("contorno");
+  linha.geometry.dispose();
+  linha.geometry = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(x, 0.015, y), new THREE.Vector3(x + w, 0.015, y),
+    new THREE.Vector3(x + w, 0.015, y + h), new THREE.Vector3(x, 0.015, y + h),
+    new THREE.Vector3(x, 0.015, y),
+  ]);
+  linha.computeLineDistances();
+
+  cuboMarcador.visible = true;
+}
+
+function desenharParedes(maxX, maxY, maxZ, cubo = null) {
   const altura = Math.max(maxZ * 1.2, 5);
+  alturaEdificioAtual = altura;   // ver desenharObstaculos: obstáculos vão sempre até ao teto
   const grupo = new THREE.Group();
   grupo.userData.isParedes = true;
-  const margem = 1.5;
-  const larguraTotal = maxX + margem * 2;
-  const profundidadeTotal = maxY + margem * 2;
+
+  // Com Cubo definido, as paredes acabam EXATAMENTE nas dimensões reais do
+  // edifício (0,0)-(cubo.w,cubo.h) -- pedido explícito do utilizador, mesmo
+  // que o conteúdo (racks/zonas) fique maior ou menor do que ele; é assim
+  // que se vê se cabe ou não. Sem Cubo definido, mantém-se o comportamento
+  // antigo: envolvente do conteúdo + margem de visualização de 1.5 m (só
+  // para não ficar "colado" às racks).
+  const margem = cubo ? 0 : 1.5;
+  const origemX = cubo ? cubo.x : -margem;
+  const origemY = cubo ? cubo.y : -margem;
+  const larguraTotal = cubo ? cubo.w : maxX + margem * 2;
+  const profundidadeTotal = cubo ? cubo.h : maxY + margem * 2;
+  const centroX = origemX + larguraTotal / 2;
+  const centroY = origemY + profundidadeTotal / 2;
 
   // laje de betão do edifício
   const texChao = texturaBetao();
@@ -811,7 +941,7 @@ function desenharParedes(maxX, maxY, maxZ) {
     new THREE.PlaneGeometry(larguraTotal, profundidadeTotal),
     new THREE.MeshStandardMaterial({ map: texChao, roughness: 0.92 }));
   laje.rotation.x = -Math.PI / 2;
-  laje.position.set(maxX / 2, 0.005, maxY / 2);
+  laje.position.set(centroX, 0.005, centroY);
   laje.receiveShadow = true;
   grupo.add(laje);
 
@@ -819,10 +949,10 @@ function desenharParedes(maxX, maxY, maxZ) {
   // (vês o interior); por dentro são chapa ondulada com claraboias
   const texBase = texturaChapa();
   const paredes = [
-    { larg: larguraTotal, x: maxX / 2, z: -margem, rotY: Math.PI },
-    { larg: larguraTotal, x: maxX / 2, z: maxY + margem, rotY: 0 },
-    { larg: profundidadeTotal, x: -margem, z: maxY / 2, rotY: -Math.PI / 2 },
-    { larg: profundidadeTotal, x: maxX + margem, z: maxY / 2, rotY: Math.PI / 2 },
+    { larg: larguraTotal, x: centroX, z: origemY, rotY: Math.PI },
+    { larg: larguraTotal, x: centroX, z: origemY + profundidadeTotal, rotY: 0 },
+    { larg: profundidadeTotal, x: origemX, z: centroY, rotY: -Math.PI / 2 },
+    { larg: profundidadeTotal, x: origemX + larguraTotal, z: centroY, rotY: Math.PI / 2 },
   ];
   for (const p of paredes) {
     const tex = texBase.clone();
@@ -838,8 +968,8 @@ function desenharParedes(maxX, maxY, maxZ) {
   }
 
   // luminárias highbay suspensas em grelha sobre a área útil
-  for (let lx = 4; lx < maxX - 2; lx += 8) {
-    for (let lz = 4; lz < maxY - 2; lz += 8) {
+  for (let lx = origemX + 4; lx < origemX + larguraTotal - 2; lx += 8) {
+    for (let lz = origemY + 4; lz < origemY + profundidadeTotal - 2; lz += 8) {
       const lum = criarLuminaria();
       lum.position.set(lx, altura - 0.9, lz);
       grupo.add(lum);
@@ -847,11 +977,11 @@ function desenharParedes(maxX, maxY, maxZ) {
   }
 
   // empilhadores estacionados na faixa livre junto à parede da frente
-  const posEmp = [[maxX * 0.25, 0], [maxX * 0.62, Math.PI / 7]];
+  const posEmp = [[origemX + larguraTotal * 0.25, 0], [origemX + larguraTotal * 0.62, Math.PI / 7]];
   for (const [ex, rotE] of posEmp) {
-    if (ex < 2) continue;
+    if (ex < origemX + 2) continue;
     const emp = criarEmpilhador();
-    emp.position.set(ex, 0, maxY + margem - 1.7);
+    emp.position.set(ex, 0, origemY + profundidadeTotal - 1.7);
     emp.rotation.y = rotE;
     grupo.add(emp);
   }
@@ -957,10 +1087,16 @@ const MAT_PRUMO = new THREE.MeshStandardMaterial({ color: 0x2e5aa0, roughness: 0
 const MAT_VIGA = new THREE.MeshStandardMaterial({ color: 0xe0641e, roughness: 0.5, metalness: 0.3 });
 const MAT_PRATELEIRA = new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.6, metalness: 0.5 });
 const MAT_MADEIRA = new THREE.MeshStandardMaterial({ color: 0x9a6b3f, roughness: 0.85 });
-const MAT_PERFIL_LONGO = new THREE.MeshStandardMaterial({ color: 0x8b9098, roughness: 0.35, metalness: 0.75 });
 // OVERSIZE: componente pousado nu na wide-span (chapa/estrutura pintada, não
-// cartão nem palete) -- distingue-se do perfil metálico do LONGO por ser mate.
+// cartão nem palete) -- mate, distingue-se do cartão e da palete de madeira.
 const MAT_OVERSIZE = new THREE.MeshStandardMaterial({ color: 0x6f7c8a, roughness: 0.62, metalness: 0.35 });
+// Racks fantasma (preview do espaço livre, Passo 4): verde translúcido, "em
+// bruto" -- não é uma rack real, por isso nunca deve confundir-se com as
+// laranja/azuis/cinzentas de sempre.
+const MAT_FANTASMA = new THREE.MeshStandardMaterial({
+  color: 0x22c55e, roughness: 0.6, transparent: true, opacity: 0.32, depthWrite: false,
+});
+const MATS_FANTASMA = { prumo: MAT_FANTASMA, viga: MAT_FANTASMA, prateleira: MAT_FANTASMA };
 
 function criarPalete(comp, prof) {
   const g = new THREE.Group();
@@ -975,7 +1111,13 @@ function criarPalete(comp, prof) {
   return g;
 }
 
-function criarEstruturaRack(grupo, r, baseY, altModulo) {
+function criarEstruturaRack(grupo, r, baseY, altModulo, mats) {
+  // mats: override opcional {prumo, viga, prateleira} -- usado pelas racks
+  // fantasma (MATS_FANTASMA) para desenhar a MESMA estrutura com um material
+  // verde translúcido em vez das cores reais. Omitido = comportamento normal.
+  const matPrumo = mats ? mats.prumo : MAT_PRUMO;
+  const matViga = mats ? mats.viga : MAT_VIGA;
+  const matPrateleira = mats ? mats.prateleira : MAT_PRATELEIRA;
   const nivAlt = altModulo / r.niveis;
   // prumos verticais (pares frente/trás, a cada ~1.4 m de largura)
   const nSec = Math.max(1, Math.round(r.larg_m / 1.4));
@@ -983,7 +1125,7 @@ function criarEstruturaRack(grupo, r, baseY, altModulo) {
     let x = r.x + (r.larg_m * i) / nSec;
     x = Math.min(Math.max(x, r.x + 0.04), r.x + r.larg_m - 0.04);
     for (const zz of [r.y + 0.04, r.y + r.prof_m - 0.04]) {
-      const prumo = new THREE.Mesh(geoCaixa(0.08, altModulo, 0.08), MAT_PRUMO);
+      const prumo = new THREE.Mesh(geoCaixa(0.08, altModulo, 0.08), matPrumo);
       prumo.position.set(x, baseY + altModulo / 2, zz);
       prumo.userData.posicao = r;
       grupo.add(prumo);
@@ -992,13 +1134,13 @@ function criarEstruturaRack(grupo, r, baseY, altModulo) {
   // por nível: 2 vigas laranja + prateleira
   for (let nvl = 0; nvl < r.niveis; nvl++) {
     const y = baseY + nvl * nivAlt;
-    const deck = new THREE.Mesh(geoCaixa(r.larg_m, 0.035, r.prof_m), MAT_PRATELEIRA);
+    const deck = new THREE.Mesh(geoCaixa(r.larg_m, 0.035, r.prof_m), matPrateleira);
     deck.position.set(r.x + r.larg_m / 2, y + 0.0175, r.y + r.prof_m / 2);
     deck.userData.posicao = r;
     deck.castShadow = true;
     grupo.add(deck);
     for (const zz of [r.y + 0.03, r.y + r.prof_m - 0.03]) {
-      const viga = new THREE.Mesh(geoCaixa(r.larg_m, 0.1, 0.05), MAT_VIGA);
+      const viga = new THREE.Mesh(geoCaixa(r.larg_m, 0.1, 0.05), matViga);
       viga.position.set(r.x + r.larg_m / 2, y + 0.05, zz);
       viga.userData.posicao = r;
       grupo.add(viga);
@@ -1347,6 +1489,37 @@ function desenharPilhasChao(pilhas) {
   scene.add(grupo);
 }
 
+// Obstáculos: restrição FÍSICA real (pilar, conduta, zona interdita, ...) --
+// vão sempre do chão ao TETO (alturaEdificioAtual, a mesma das paredes),
+// como um volume sólido e translúcido, para se perceber de imediato que ali
+// não se pode meter rack nenhum. Refeitos a cada "Renderizar" (limparRacks
+// já os apanha via isObstaculoGroup) -- ao contrário do marcador do Cubo,
+// não são persistentes: vêm da mesma resposta que racks/zonas.
+function desenharObstaculos(obstaculosLayout) {
+  for (const o of (obstaculosLayout || [])) {
+    const grupo = new THREE.Group();
+    grupo.userData.isObstaculoGroup = true;
+    grupo.position.set(o.x + o.w / 2, 0, o.y + o.h / 2);
+    grupo.rotation.y = -THREE.MathUtils.degToRad(o.rot || 0);
+
+    const altura = alturaEdificioAtual;
+    const geo = new THREE.BoxGeometry(o.w, altura, o.h);
+    const corpo = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+      color: 0xb91c1c, roughness: 0.8, transparent: true, opacity: 0.5,
+    }));
+    corpo.position.y = altura / 2;
+    grupo.add(corpo);
+
+    const arestas = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo),
+      new THREE.LineBasicMaterial({ color: 0x7f1d1d }));
+    arestas.position.y = altura / 2;
+    grupo.add(arestas);
+
+    scene.add(grupo);
+  }
+}
+
 function desenharZonas(zonasLayout) {
   // zonas como marcação pintada no pavimento: preenchimento translúcido,
   // contorno sólido e nome estampado (stencil), como tinta industrial.
@@ -1457,7 +1630,7 @@ function criarBinPicking(W, H, D, corHex) {
 function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
   // nivel.caixas ja vem com x_m/y_m reais do packer 2D (rectpack).
   // Stacks (num_boxes_in_stack > 1) sao desenhados como caixas fisicas
-  // empilhadas; PALLET assenta numa palete de madeira; LONGO e' perfil metalico.
+  // empilhadas; PALLET assenta numa palete de madeira.
   const folga = 0.04;   // caixas pousadas em cima da prateleira (3.5 cm de deck)
   for (const c of nivel.caixas) {
     const cx = r.x + c.x_m + c.comp_m / 2;
@@ -1465,14 +1638,6 @@ function desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY) {
     const corTipo = "#" + (CORES[c.load_type] || 0x888888).toString(16).padStart(6, "0");
     const n = Math.max(c.num_boxes_in_stack || 1, 1);
     const tint = hashInt(c.sku) % TINTAS_CARTAO.length;
-
-    if (c.load_type === "LONGO") {
-      const perfil = new THREE.Mesh(
-        geoCaixa(c.comp_m * 0.98, c.alt_m * 0.55, c.larg_m * 0.7), MAT_PERFIL_LONGO);
-      perfil.position.set(cx, baseY + folga + c.alt_m * 0.3, cz);
-      _marcarCaixa(perfil, r, c, nivel, grupo);
-      continue;
-    }
 
     if (c.load_type === "OVERSIZE") {
       // Componente POUSADO nu na wide-span: sem palete e sem caixa de cartão.
@@ -1558,13 +1723,44 @@ function desenharLayout(layout) {
   }
 }
 
-function ajustarCenaECamera(layout, zonasLayout, pilhas = []) {
+function desenharLayoutFantasma(layoutFantasma) {
+  // Racks fantasma (preview do espaço livre, Passo 4): MESMA função de
+  // desenho que os racks reais (criarEstruturaRack/desenharCaixasDoNivel),
+  // só com materiais verdes translúcidos (MATS_FANTASMA) -- "renderização em
+  // bruto", nunca confundível com uma rack real. Ficam num grupo à parte por
+  // posição, marcado isFantasma=true, para a checkbox alternar .visible sem
+  // precisar de os reconstruir.
+  const visivel = document.getElementById("chk-racks-fantasma")?.checked ?? false;
+  for (const r of (layoutFantasma || [])) {
+    const grupo = new THREE.Group();
+    grupo.userData.isRackGroup = true;
+    grupo.userData.isFantasma = true;
+    grupo.visible = visivel;
+
+    const altModulo = r.altura_m;
+    const altNivel = r.altura_m / r.niveis;
+    for (const bloco of r.blocos) {
+      const baseModulo = bloco.bloco_idx * altModulo;
+      criarEstruturaRack(grupo, r, baseModulo, altModulo, MATS_FANTASMA);
+      for (const nivel of bloco.niveis) {
+        const baseY = baseModulo + nivel.nivel_idx * altNivel;
+        desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY);
+      }
+    }
+    scene.add(grupo);
+  }
+}
+
+function ajustarCenaECamera(layout, zonasLayout, pilhas = [], cubo = null) {
   // As pilhas no chão entram no enquadramento e nas PAREDES: ficam fora do bloco
-  // de racks, por isso sem isto caíam fora do edifício desenhado.
+  // de racks, por isso sem isto caíam fora do edifício desenhado. O contorno do
+  // Cubo (referência fixa, ver atualizarCuboMarcador) entra pela mesma razão --
+  // senão, quando é maior que o arranjo, ficava a "pairar" fora das paredes.
   const pontosX = [...layout.map(r => r.x + r.larg_m), ...zonasLayout.map(z => z.x + z.larg_m),
                    ...pilhas.map(p => p.x + p.comp_m)];
   const pontosY = [...layout.map(r => r.y + r.prof_m), ...zonasLayout.map(z => z.y + z.prof_m),
                    ...pilhas.map(p => p.y + p.larg_m)];
+  if (cubo) { pontosX.push(cubo.x + cubo.w); pontosY.push(cubo.y + cubo.h); }
   if (!pontosX.length) return;
 
   const maxX = Math.max(...pontosX);
@@ -1572,7 +1768,7 @@ function ajustarCenaECamera(layout, zonasLayout, pilhas = []) {
   const maxZ = Math.max(1, ...layout.map(r => r.altura_m * (r.blocos_empilhados || 1)),
                         ...pilhas.map(p => p.altura_total_m || 0));
 
-  desenharParedes(maxX, maxY, maxZ);
+  desenharParedes(maxX, maxY, maxZ, cubo);
 
   const escala = Math.max(maxX, maxY, maxZ);
   controls.target.set(maxX / 2, maxZ / 3, maxY / 2);
@@ -1717,9 +1913,14 @@ function inicializarCanvas() {
   }
 
   function envolvente() {
-    if (!canvasBlocks.length) return null;
+    // Obstáculos ficam de fora: são uma restrição já DENTRO do Cubo, não
+    // conteúdo que precise de caber -- contá-los aqui inflava "Cabe no
+    // cubo?" sempre que um obstáculo (ex.: um pilar a um canto) ficasse mais
+    // longe do resto do arranjo do que os próprios racks/zonas.
+    const relevantes = canvasBlocks.filter(b => b.type !== "obstaculo");
+    if (!relevantes.length) return null;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const b of canvasBlocks) {
+    for (const b of relevantes) {
       for (const [px, py] of cantosRodados(b)) {
         minX = Math.min(minX, px); minY = Math.min(minY, py);
         maxX = Math.max(maxX, px); maxY = Math.max(maxY, py);
@@ -1733,6 +1934,21 @@ function inicializarCanvas() {
     let grid = "";
     for (let i = 0; i <= W; i += PXM) grid += `<line x1="${i}" y1="0" x2="${i}" y2="${H}" stroke="#eee"/>`;
     for (let i = 0; i <= H; i += PXM) grid += `<line x1="0" y1="${i}" x2="${W}" y2="${i}" stroke="#eee"/>`;
+
+    // Contorno do Cubo (edifício real, "Cabe no cubo?" ao lado): referência
+    // FIXA no chão, ancorada em (0,0) -- os blocos (racks/zonas) nunca vão a
+    // x/y negativo (ver clamp no mousemove), por isso este é o mesmo canto
+    // que eles já usam como origem. Só visual: não limita o drag, os blocos
+    // podem ficar dentro ou fora dele.
+    const cuboComp = parseFloat(document.getElementById("hangar-comp")?.value) || 0;
+    const cuboLarg = parseFloat(document.getElementById("hangar-larg")?.value) || 0;
+    if (cuboComp > 0 && cuboLarg > 0) {
+      grid += `<rect x="0" y="0" width="${cuboComp * PXM}" height="${cuboLarg * PXM}" ` +
+        `fill="#f5c51810" stroke="#c99a0e" stroke-width="2.5" stroke-dasharray="10,6"/>` +
+        `<text x="6" y="18" font-size="13" font-weight="bold" fill="#c99a0e">` +
+        `Cubo (${cuboComp.toFixed(1)}×${cuboLarg.toFixed(1)} m)</text>`;
+    }
+
     svg.innerHTML = grid;
 
     canvasBlocks.forEach(b => {
@@ -1740,19 +1956,88 @@ function inicializarCanvas() {
       const cx = x + w / 2, cy = y + h / 2;
       const isSel = b.id === selBlockId;
       const isRacking = b.type === "racking";
+      const isObstaculo = b.type === "obstaculo";
+      const isRackManual = b.type === "rack_manual";
 
       const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
       g.setAttribute("transform", `rotate(${b.rot || 0} ${cx} ${cy})`);
 
+      // Bloco de racks com geometria real (b.geom, vinda do backend --
+      // posições/corredores/espaço livre já calculados por layout.py): o
+      // rect exterior fica só de contorno (é o alvo de drag/rotação; tem de
+      // continuar a cobrir a área toda para o mousedown funcionar em
+      // qualquer ponto), e desenham-se por cima as formas reais -- racks
+      // sólidos, corredores mais claros, espaço livre a verde tracejado
+      // (a mesma cor que as racks fantasma vão usar mais tarde). Sem b.geom
+      // (zonas, ou fallback), mantém-se o retângulo único de sempre.
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       rect.setAttribute("x", x); rect.setAttribute("y", y);
       rect.setAttribute("width", w); rect.setAttribute("height", h);
-      rect.setAttribute("fill", isRacking ? "#d8cef0" : "#f5e7c4");
-      rect.setAttribute("stroke", isSel ? "#2563eb" : (isRacking ? "#7c3aed" : "#d97706"));
-      rect.setAttribute("stroke-width", isSel ? "3" : "1.5");
+      rect.setAttribute("fill", isObstaculo ? "#fca5a533" : (isRackManual ? "#fde68a4d" :
+        (isRacking && b.geom ? "#f7f5fb" : (isRacking ? "#d8cef0" : "#f5e7c4"))));
+      rect.setAttribute("stroke", isSel ? "#2563eb" : (isObstaculo ? "#b91c1c" :
+        (isRackManual ? "#b45309" : (isRacking ? "#7c3aed" : "#d97706"))));
+      rect.setAttribute("stroke-width", isSel ? "3" : (isObstaculo || isRackManual ? "2.5" : "1.5"));
+      if (isObstaculo) rect.setAttribute("stroke-dasharray", "5,3");
       rect.setAttribute("cursor", "grab");
       rect.addEventListener("mousedown", (e) => iniciarDrag(b, e));
       g.appendChild(rect);
+
+      if (isRacking && b.geom) {
+        const sub = (r, fill, stroke, dash) => {
+          const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          el.setAttribute("x", x + r.x * PXM);
+          el.setAttribute("y", y + r.y * PXM);
+          el.setAttribute("width", Math.max(r.w * PXM, 0.5));
+          el.setAttribute("height", Math.max(r.h * PXM, 0.5));
+          el.setAttribute("fill", fill);
+          el.setAttribute("stroke", stroke);
+          el.setAttribute("stroke-width", "1");
+          if (dash) el.setAttribute("stroke-dasharray", dash);
+          el.setAttribute("pointer-events", "none");
+          const title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+          title.textContent = `${r.rack_nome || ""} ${r.w.toFixed(2)}×${r.h.toFixed(2)}m`.trim();
+          el.appendChild(title);
+          g.appendChild(el);
+        };
+        for (const c of b.geom.corredores) sub(c, "#e5e0ee", "#c9bfe0", null);
+        for (const e2 of b.geom.espacos_livres) sub(e2, "#dcfce7", "#4ade80", "4,3");
+        for (const p of b.geom.posicoes) sub(p, "#d8cef0", "#7c3aed", null);
+      }
+
+      // Racks manuais: uma célula numerada por posição (frente, e trás se
+      // fila dupla) -- para se ler exatamente como a planta desenhada à mão
+      // que lhe deu origem (fila de N posições numeradas).
+      if (isRackManual) {
+        const tipo = rackTypesCache.find(r => r.nome === b.rack_tipo);
+        const larg = tipo ? tipo.larg_m : (b.w / Math.max(b.n, 1));
+        const prof = tipo ? tipo.prof_m : (b.dupla ? b.h / 2 : b.h);
+        let num = 1;
+        const lados = b.dupla ? [0, prof] : [0];
+        for (const ly of lados) {
+          for (let i = 0; i < b.n; i++) {
+            const cellX = x + i * larg * PXM, cellY = y + ly * PXM;
+            const cellW = larg * PXM, cellH = prof * PXM;
+            const el = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            el.setAttribute("x", cellX); el.setAttribute("y", cellY);
+            el.setAttribute("width", cellW); el.setAttribute("height", cellH);
+            el.setAttribute("fill", "#fbbf2440");
+            el.setAttribute("stroke", "#b45309");
+            el.setAttribute("stroke-width", "1");
+            el.setAttribute("pointer-events", "none");
+            g.appendChild(el);
+            const lbl = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            lbl.setAttribute("x", cellX + cellW / 2);
+            lbl.setAttribute("y", cellY + cellH / 2 + 4);
+            lbl.setAttribute("font-size", "11");
+            lbl.setAttribute("text-anchor", "middle");
+            lbl.setAttribute("fill", "#78350f");
+            lbl.setAttribute("pointer-events", "none");
+            lbl.textContent = num++;
+            g.appendChild(lbl);
+          }
+        }
+      }
 
       const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
       text.setAttribute("x", x + 5);
@@ -1785,7 +2070,13 @@ function inicializarCanvas() {
     const b = canvasBlocks.find(x => x.id === selBlockId);
     if (b) {
       html += `<b>${b.nome}</b><br>`;
-      html += `Tipo: ${b.type === "racking" ? "Bloco de racks" : "Zona"}<br>`;
+      const tipoLabel = b.type === "racking" ? "Bloco de racks"
+        : b.type === "obstaculo" ? "Obstáculo"
+        : b.type === "rack_manual" ? "Fila de racks manual" : "Zona";
+      html += `Tipo: ${tipoLabel}<br>`;
+      if (b.type === "rack_manual") {
+        html += `Tipologia: ${b.rack_tipo} · ${b.n} posições/fila${b.dupla ? " × 2 (dupla)" : ""}<br>`;
+      }
       html += `Dimensões: ${b.w.toFixed(2)} × ${b.h.toFixed(2)} m<br>`;
       html += `Área: ${(b.w * b.h).toFixed(2)} m²<br>`;
       html += `Posição: (${b.x.toFixed(2)}, ${b.y.toFixed(2)}) m<br>`;
@@ -1795,17 +2086,67 @@ function inicializarCanvas() {
     } else {
       html += `<span style="color:#999">Gera os racks para começar.</span>`;
     }
+    if (lastGerarData && lastGerarData.requirements && lastGerarData.requirements.length) {
+      const reqs = lastGerarData.requirements;
+      const totalRacks = reqs.reduce((a, r) => a + r.num_racks, 0);
+      html += `<br><br><b>Nº de racks por tipologia</b><br>`;
+      for (const r of reqs) {
+        html += `${r.rack_nome}: ${r.num_racks} (${r.posicoes_chao} posições × ${r.blocos_empilhados} módulo${r.blocos_empilhados > 1 ? "s" : ""})<br>`;
+      }
+      html += `<b>Total de racks: ${totalRacks}</b>`;
+    }
     if (lastGerarData && lastGerarData.totais_por_carga) {
       const tot = lastGerarData.totais_por_carga;
       const soma = Object.values(tot).reduce((a, s) => a + s, 0);
       html += `<br><br><b>Caixas (unidades de carga)</b><br>`;
-      for (const tipo of ["XS", "S", "M", "L", "MEIA", "PALLET", "LONGO"]) {
+      for (const tipo of ["XS", "S", "M", "L", "MEIA", "PALLET"]) {
         if (tot[tipo]) html += `${tipo}: ${tot[tipo]}<br>`;
       }
       html += `<b>Total: ${soma}</b>`;
     }
     el.innerHTML = html;
     atualizarHangar(env);
+    atualizarListaObstaculos();
+  }
+
+  // Lista os obstáculos atuais com um botão de remoção individual -- criá-los
+  // é fácil (painel "Obstáculos"), mas sem isto só dava para os apagar a
+  // arrastar para fora do canvas ou usando "Remover selecionado" um a um às
+  // cegas.
+  // Genérico: lista os blocos de um `tipo` (obstáculo / rack manual) com
+  // seleção e remoção individual -- reaproveitado pelos dois painéis, só
+  // muda o filtro e o texto de cada linha.
+  function _listaBlocosDeTipo(elId, tipo, vazio, formatar) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const blocos = canvasBlocks.filter(b => b.type === tipo);
+    if (!blocos.length) {
+      el.innerHTML = `<span style="color:#666">${vazio}</span>`;
+      return;
+    }
+    el.innerHTML = blocos.map(o => `
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
+        <span style="cursor:pointer; ${o.id === selBlockId ? "color:#60a5fa;font-weight:bold;" : ""}"
+              data-sel="${o.id}">${formatar(o)}</span>
+        <button data-del="${o.id}" style="padding:1px 6px;font-size:11px;">✕</button>
+      </div>`).join("");
+    el.querySelectorAll("[data-sel]").forEach(elx => elx.addEventListener("click", () => {
+      selBlockId = elx.getAttribute("data-sel");
+      desenharBlocks();
+    }));
+    el.querySelectorAll("[data-del]").forEach(elx => elx.addEventListener("click", () => {
+      const id = elx.getAttribute("data-del");
+      canvasBlocks = canvasBlocks.filter(b => b.id !== id);
+      if (selBlockId === id) selBlockId = null;
+      desenharBlocks();
+    }));
+  }
+
+  function atualizarListaObstaculos() {
+    _listaBlocosDeTipo("obstaculos-lista", "obstaculo", "Nenhum obstáculo.",
+      o => `${o.nome} (${o.w.toFixed(1)}×${o.h.toFixed(1)}m)`);
+    _listaBlocosDeTipo("racks-manuais-lista", "rack_manual", "Nenhuma fila manual.",
+      o => `${o.nome} (${o.n}${o.dupla ? "×2" : ""} pos.)`);
   }
 
   // Indicador dinâmico: valida se a envolvente do arranjo CABE nas 2 dimensões
@@ -1822,7 +2163,7 @@ function inicializarCanvas() {
     if (!env) {
       vEl.textContent = "—";
       vEl.style.background = "#333"; vEl.style.color = "#999";
-      dEl.innerHTML = `Hangar: <b>${comp}×${larg} m</b> (${areaHangar.toFixed(1)} m²)<br>` +
+      dEl.innerHTML = `Cubo: <b>${comp}×${larg} m</b> (${areaHangar.toFixed(1)} m²)<br>` +
                       `<span style="color:#777">Gera e arranja os blocos para validar.</span>`;
       return;
     }
@@ -1842,7 +2183,7 @@ function inicializarCanvas() {
     };
     dEl.innerHTML =
       `Arranjo: <b>${env.w.toFixed(1)}×${env.h.toFixed(1)} m</b> = ${env.area.toFixed(1)} m²<br>` +
-      `Hangar: <b>${comp}×${larg} m</b> = ${areaHangar.toFixed(1)} m²<br>` +
+      `Cubo: <b>${comp}×${larg} m</b> = ${areaHangar.toFixed(1)} m²<br>` +
       linha("Lado maior", aLong, hLong, folgaLong) + `<br>` +
       linha("Lado menor", aShort, hShort, folgaShort);
   }
@@ -1866,10 +2207,61 @@ function inicializarCanvas() {
   svg.addEventListener("mouseup", () => { dragging = null; });
   svg.addEventListener("mouseleave", () => { dragging = null; });
 
-  // re-valida o hangar em tempo real ao editar as suas dimensões
+  // re-valida o hangar e redesenha o contorno do Cubo em tempo real ao
+  // editar as suas dimensões (desenharBlocks já chama atualizarInfo no fim)
   ["hangar-comp", "hangar-larg"].forEach(id => {
     const inp = document.getElementById(id);
-    if (inp) inp.addEventListener("input", atualizarInfo);
+    if (inp) inp.addEventListener("input", desenharBlocks);
+  });
+
+  // Obstáculos: podem ser vários -- cada clique acrescenta mais um, nunca
+  // substitui os anteriores. Posição inicial (0,0): mesmo canto de referência
+  // do Cubo/dos outros blocos; o utilizador arrasta-o para o sítio certo.
+  let _obstaculoSeq = 1;
+  document.getElementById("btn-add-obstaculo").addEventListener("click", () => {
+    const comp = parseFloat(document.getElementById("obstaculo-comp").value) || 1;
+    const larg = parseFloat(document.getElementById("obstaculo-larg").value) || 1;
+    const nomeInp = document.getElementById("obstaculo-nome");
+    const nome = (nomeInp.value || "").trim() || `Obstáculo ${_obstaculoSeq}`;
+    _obstaculoSeq++;
+    const id = `obstaculo_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    canvasBlocks.push({ id, type: "obstaculo", nome, w: comp, h: larg, x: 0, y: 0, rot: 0 });
+    selBlockId = id;
+    nomeInp.value = "";
+    desenharBlocks();
+  });
+
+  // Remove o bloco atualmente selecionado (qualquer tipo -- útil sobretudo
+  // para obstáculos a mais/mal colocados, sem ter de "Repor" tudo).
+  document.getElementById("btn-remover-bloco").addEventListener("click", () => {
+    if (!selBlockId) { alert("Seleciona primeiro um bloco no canvas (ou nas listas ao lado)."); return; }
+    canvasBlocks = canvasBlocks.filter(b => b.id !== selBlockId);
+    selBlockId = null;
+    desenharBlocks();
+  });
+
+  // Racks manuais: fila de racks VAZIOS (sandbox de capacidade) -- a
+  // largura/altura do bloco vem das dimensões REAIS da tipologia (folha
+  // «Racks», já em rackTypesCache), para o retângulo no canvas já nascer com
+  // o tamanho físico certo, sem o utilizador ter de o calcular à mão.
+  let _filaManualSeq = 1;
+  document.getElementById("btn-add-rack-manual").addEventListener("click", () => {
+    const tipoNome = document.getElementById("rack-manual-tipo").value;
+    const tipo = rackTypesCache.find(r => r.nome === tipoNome);
+    if (!tipo) { alert("Sem tipologias de rack carregadas ainda -- espera um instante e tenta outra vez."); return; }
+    const n = Math.max(parseInt(document.getElementById("rack-manual-n").value) || 1, 1);
+    const dupla = document.getElementById("rack-manual-dupla").checked;
+    const w = n * tipo.larg_m;
+    const h = tipo.prof_m * (dupla ? 2 : 1);
+    const id = `rack_manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const nome = `${tipo.nome} (fila ${_filaManualSeq})`;
+    _filaManualSeq++;
+    canvasBlocks.push({
+      id, type: "rack_manual", nome, rack_tipo: tipo.nome, n, dupla,
+      w, h, x: 0, y: 0, rot: 0,
+    });
+    selBlockId = id;
+    desenharBlocks();
   });
 
   // 1 · Gerar racks: corre o pipeline, carrega os blocos e mostra SÓ a área do bloco de racks (sem 3D)
@@ -1887,10 +2279,21 @@ function inicializarCanvas() {
           margem_estrutural_pct: 0,
           largura_max_m: parseFloat(document.getElementById("largura-max").value) || 0,
           profundidade_max_m: parseFloat(document.getElementById("profundidade-max").value) || 0,
+          carros_alvo: parseFloat(document.getElementById("carros-alvo").value) || 0,
         }),
       });
       lastGerarData = await resp.json();
-      canvasBlocks = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b }));
+      // Obstáculos e racks manuais são elementos FIXOS/independentes do
+      // stock (ver painéis respetivos) -- ao contrário dos racks/zonas (que
+      // "Gerar racks" volta sempre a colocar na grelha por omissão), não
+      // fazem sentido perder-se só porque se gerou o bloco de racks outra vez.
+      const fixosExistentes = canvasBlocks.filter(b => b.type === "obstaculo" || b.type === "rack_manual");
+      canvasBlocks = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b })).concat(fixosExistentes);
+      // Geometria real (posições/corredores/espaço livre) do bloco de racks,
+      // no referencial local do próprio bloco -- anexada ao bloco "racking"
+      // para desenharBlocks() a desenhar por cima do retângulo único de sempre.
+      const blocoRacks = canvasBlocks.find(b => b.type === "racking");
+      if (blocoRacks) blocoRacks.geom = lastGerarData.racking_geometria || null;
       selBlockId = null;
       desenharBlocks();
       const rb = lastGerarData.racking_block;
@@ -1938,8 +2341,10 @@ function inicializarCanvas() {
   document.getElementById("btn-rodar-zona").addEventListener("click", () => {
     const b = canvasBlocks.find(x => x.id === selBlockId);
     if (!b) { alert("Seleciona primeiro um bloco no canvas."); return; }
-    // zonas rodam de 45° em 45°; o bloco de racks só a 90° (layout interno é ortogonal)
-    b.rot = ((b.rot || 0) + (b.type === "racking" ? 90 : 45)) % 360;
+    // zonas rodam de 45° em 45°; racks (bloco principal ou fila manual) só a
+    // 90° (a estrutura interna deles é sempre ortogonal)
+    const passo90 = b.type === "racking" || b.type === "rack_manual";
+    b.rot = ((b.rot || 0) + (passo90 ? 90 : 45)) % 360;
     desenharBlocks();
   });
 
@@ -1958,11 +2363,21 @@ function inicializarCanvas() {
     btn.textContent = "A renderizar...";
     btn.disabled = true;
     try {
+      // Cubo (edifício real) como mais um "bloco" só para o backend o incluir
+      // na normalização do arranjo (min_x/min_y) e devolver a sua posição já
+      // alinhada com o resto -- nunca arrastável nem rodado, é referência fixa.
+      const cuboComp = parseFloat(document.getElementById("hangar-comp")?.value) || 0;
+      const cuboLarg = parseFloat(document.getElementById("hangar-larg")?.value) || 0;
+      const blocksComCubo = canvasBlocks.concat(
+        cuboComp > 0 && cuboLarg > 0
+          ? [{ id: "cubo_ref", type: "cubo", nome: "Cubo", w: cuboComp, h: cuboLarg, x: 0, y: 0, rot: 0 }]
+          : []
+      );
       const resp = await fetch(`${API}/render-layout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          blocks: canvasBlocks,
+          blocks: blocksComCubo,
           altura_armazem_m: parseFloat(document.getElementById("altura-armazem").value) || 0,
           altura_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
           // MESMO envelope do "Gerar racks": o render recalcula o pipeline, e sem
@@ -1970,6 +2385,8 @@ function inicializarCanvas() {
           // bloco do canvas -> fiadas cortadas a meio.
           largura_max_m: parseFloat(document.getElementById("largura-max").value) || 0,
           profundidade_max_m: parseFloat(document.getElementById("profundidade-max").value) || 0,
+          // Idem: TEM de ser o mesmo carros_alvo do "Gerar racks", ver nota no body.
+          carros_alvo: parseFloat(document.getElementById("carros-alvo").value) || 0,
         }),
       });
       const data = await resp.json();
@@ -1987,10 +2404,24 @@ function inicializarCanvas() {
       // garante o BEN real disponível ANTES de desenhar (senão as zonas
       // apanhavam o carro procedural de fallback); se falhar, segue na mesma
       await carregarBen();
-      desenharLayout(data.layout);
+      // Racks manuais entram na MESMA chamada que os reais -- desenharLayout
+      // chama limparRacks() internamente, por isso não pode ser chamada duas
+      // vezes (a 2ª apagava o que a 1ª tinha acabado de desenhar). São
+      // estrutura idêntica a um rack real, só sem caixas lá dentro (ver
+      // layout.gerar_fila_manual / _serializar_layout).
+      desenharLayout(data.layout.concat(data.racks_manuais || []));
+      desenharLayoutFantasma(data.layout_fantasma);
       desenharPilhasChao(data.pilhas_chao);
       desenharZonas(data.zonas_layout);
-      ajustarCenaECamera(data.layout, data.zonas_layout, data.pilhas_chao || []);
+      // As racks fantasma/manuais podem estender-se além do que os racks
+      // reais por si só ocupam -- juntar ao cálculo das paredes/câmara, senão
+      // o preview fica cortado pela parede.
+      ajustarCenaECamera(data.layout.concat(data.layout_fantasma || [], data.racks_manuais || []),
+                        data.zonas_layout, data.pilhas_chao || [], data.cubo);
+      atualizarCuboMarcador(data.cubo);
+      // depois de ajustarCenaECamera: precisa de alturaEdificioAtual, definida
+      // por desenharParedes (chamada lá dentro) -- ver desenharObstaculos.
+      desenharObstaculos(data.obstaculos_layout);
       // operadores andam nos corredores REAIS que o backend calcula (data.corredores)
       _opsCtx = { layout: data.layout, zonas: data.zonas_layout, corredores: data.corredores || [],
                    pilhas: data.pilhas_chao || [] };
@@ -2002,7 +2433,9 @@ function inicializarCanvas() {
         <p><b>Área total do armazém (envolvente do arranjo): ${data.area_total_m2} m²</b>
           — ${data.largura_total_m} × ${data.profundidade_total_m} m</p>
         <p>Footprint de racks: ${data.area_racks_m2} m² · Zonas funcionais: ${data.area_zonas_m2} m²${
-          data.area_oversize_chao_m2 ? ` · Armazenagem ao chão: ${data.area_oversize_chao_m2} m²` : ""}</p>`;
+          data.area_oversize_chao_m2 ? ` · Armazenagem ao chão: ${data.area_oversize_chao_m2} m²` : ""}</p>` +
+        (data.avisos && data.avisos.length
+          ? `<p class="avisos">⚠ ${data.avisos.join("<br>⚠ ")}</p>` : "");
     } finally {
       btn.textContent = "2 · Renderizar layout 3D";
       btn.disabled = false;

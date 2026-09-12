@@ -190,7 +190,7 @@ const T_APANHA = 1.1;      // s parado a apanhar
 const T_ENTREGA = 1.6;     // s parado a entregar
 
 class Operador {
-  // comPorta = true -> arrasta porta-paletes (acede a porta-paletes/cantilever);
+  // comPorta = true -> arrasta porta-paletes (acede a tipologias pesadas);
   // false -> operador a pé, só prateleiras leves.
   constructor(pontos, destino, rng, comPorta, linhas, transversal) {
     this.linhas = linhas;             // linhas de circulação dos corredores
@@ -433,7 +433,7 @@ export function criarOperadores(scene, layout, zonasLayout, opcoes = {}) {
       ops.push(op); grupo.add(op.grupo);
     }
   }
-  // com porta-paletes -> porta-paletes/cantilever (tudo o resto)
+  // com porta-paletes -> tipologias pesadas (tudo o resto)
   if (pontosPorta.length) {
     for (let i = 0; i < nPorta; i++) {
       const op = new Operador(pontosPorta, destino, rng, true, linhas, transversal);

@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 
+from .boxing import pode_deitar
 from .models import RackType, PosicaoChao, WarehouseDimensioning, WarehouseLayout, Zona
 
 
@@ -12,15 +13,71 @@ def rack_footprint_m2(rack: RackType) -> float:
     return rack.larg_m * rack.prof_m
 
 
+def melhor_pilha_chao(comp_m: float, larg_m: float, alt_m: float, orientacao: str,
+                      unidades: int, altura_max_m: float, peso_max_kg: float,
+                      peso_kg: float
+                      ) -> tuple[float, float, float, int, int, str] | None:
+    """Escolhe a orientação de UM SKU numa pilha ao chão (block stacking).
+
+    Se a orientação permitir deitar (`boxing.pode_deitar`), testam-se as 3
+    escolhas de cota vertical -- não se força a menor cota como altura só
+    porque "painéis não se põem ao alto" é o caso comum: SKUs com
+    `Orientação_permitida = "Livre"` já dizem que É seguro reorientá-los, e
+    forçar sempre a maior footprint (2 cotas maiores no chão) desperdiçava
+    área nesses casos. Orientação travada (Base fixa/Não deitar) mantém o Z
+    medido como altura, como em `boxing.pieces_per_box`.
+
+    Escolhe-se a orientação que minimiza a ÁREA REAL para as `unidades` deste
+    SKU (pilhas = ceil(unidades / por_pilha); área = pilhas x footprint) --
+    não a densidade (peças por m²) em abstrato: com poucas unidades (ex.: 1),
+    uma orientação que empilha muito mais mas não reduz o nº de pilhas
+    necessárias (já cabia tudo numa pilha só) só piora a footprint à toa.
+
+    Devolve (comp_footprint, larg_footprint, altura_peca, por_pilha, pilhas,
+    limitado_por), ou None se a peça não tiver dimensões válidas.
+    """
+    dims = (comp_m, larg_m, alt_m)
+    eixos = range(3) if pode_deitar(orientacao) else (2,)  # travada: Z medido = altura
+
+    melhor = None
+    melhor_area = None
+    for iv in eixos:
+        altura_peca = dims[iv]
+        plano_a, plano_b = (dims[j] for j in range(3) if j != iv)
+        footprint = plano_a * plano_b
+        if altura_peca <= 0 or footprint <= 0:
+            continue
+
+        # sem rack, não há "nível" com teto físico: uma peça mais alta que
+        # altura_max_m ainda é colocável ao chão sozinha (só não empilha mais
+        # nenhuma por cima) -- por isso o mínimo de 1 fica, não se rejeita a
+        # orientação (ao contrário do nível de rack em _oversize_plano_altura,
+        # que TEM um teto físico e por isso rejeita).
+        por_altura = max(int(altura_max_m / altura_peca), 1) if altura_max_m > 0 else 1
+        por_peso = (max(int(peso_max_kg / peso_kg), 1)
+                    if peso_max_kg > 0 and peso_kg > 0 else por_altura)
+        por_pilha = max(min(por_altura, por_peso), 1)
+
+        pilhas = -(-unidades // por_pilha)        # ceil
+        area = pilhas * footprint
+        if melhor_area is None or area < melhor_area:
+            melhor_area = area
+            limitado_por = "altura" if por_altura <= por_peso else "peso"
+            melhor = (plano_a, plano_b, altura_peca, por_pilha, pilhas, limitado_por)
+    return melhor
+
+
 def area_oversize_chao(artigos_stock: list[tuple], altura_max_m: float,
                        peso_max_kg: float, acesso_pct: float = 0.0) -> tuple[float, list[dict]]:
     """Área de chão para peças volumosas arrumadas EM PILHA, sem rack
     ("block stacking"). Alternativa à wide-span quando são poucas referências.
 
-    artigos_stock: [(sku, comp_m, larg_m, alt_m, peso_kg, unidades), ...]
+    artigos_stock: [(sku, comp_m, larg_m, alt_m, peso_kg, unidades, orientacao), ...]
 
-    A peça assenta DEITADA (menor cota = altura, as duas maiores no chão) e
-    empilham-se peças DO MESMO SKU. Dois limites, vale o menor:
+    A orientação da peça (ver `melhor_pilha_chao`) decide qual cota fica
+    vertical -- deitada por omissão, mas de pé quando isso render mais peças
+    por m² e a orientação não estiver travada. Empilham-se peças DO MESMO
+    SKU; dois limites por pilha, vale o menor:
       - altura_max_m: alcance do operador / estabilidade da pilha;
       - peso_max_kg: carga que a peça do fundo aguenta.
 
@@ -30,26 +87,22 @@ def area_oversize_chao(artigos_stock: list[tuple], altura_max_m: float,
     """
     detalhe = []
     area_pilhas = 0.0
-    for sku, comp_m, larg_m, alt_m, peso_kg, unidades in artigos_stock:
+    for sku, comp_m, larg_m, alt_m, peso_kg, unidades, orientacao in artigos_stock:
         if unidades <= 0 or min(comp_m, larg_m, alt_m) <= 0:
             continue
-        cotas = sorted([comp_m, larg_m, alt_m], reverse=True)
-        footprint = cotas[0] * cotas[1]
-        altura_peca = cotas[2]
-
-        por_altura = max(int(altura_max_m / altura_peca), 1) if altura_max_m > 0 else 1
-        por_peso = (max(int(peso_max_kg / peso_kg), 1)
-                    if peso_max_kg > 0 and peso_kg > 0 else por_altura)
-        por_pilha = max(min(por_altura, por_peso), 1)
-
-        pilhas = -(-unidades // por_pilha)      # ceil
+        escolha = melhor_pilha_chao(comp_m, larg_m, alt_m, orientacao, unidades,
+                                    altura_max_m, peso_max_kg, peso_kg)
+        if escolha is None:
+            continue
+        plano_a, plano_b, altura_peca, por_pilha, pilhas, limitado_por = escolha
+        footprint = plano_a * plano_b
         area = pilhas * footprint
         area_pilhas += area
         detalhe.append({
             "sku": sku, "unidades": unidades,
             "footprint_peca_m2": round(footprint, 3),
             "por_pilha": por_pilha, "pilhas": pilhas,
-            "limitado_por": "altura" if por_altura <= por_peso else "peso",
+            "limitado_por": limitado_por,
             "peso_pilha_kg": round(por_pilha * peso_kg, 1),
             "area_m2": round(area, 2),
         })

@@ -4,6 +4,7 @@ __pycache__/
 dados/resultados.xlsx
 # outputs do pipeline (regerados a cada execucao)
 dados/pecas_tipo_caixa.xlsx
+dados/cenarios/
 # backups locais do master data
 dados/*_antigo.xlsx
 ~$*

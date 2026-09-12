@@ -32,27 +32,62 @@ def _ws(wb: openpyxl.Workbook, nome: str):
 
 
 def load_articles(path: Path) -> list[Article]:
-    """Folha «Peças» -> list[Article]."""
+    """Folha «Peças» -> list[Article].
+
+    Colunas lidas pelo NOME do cabeçalho (linha 1), não por posição fixa: a
+    folha pode ter colunas extra inseridas a meio -- ler por posição lia
+    valores da coluna errada nesses casos, silenciosamente.
+
+    `Article.stock_max_un` sai daqui como um placeholder (= 'Stock_máx_un'
+    bruto); o valor definitivo é decidido pelo Passo 0 do pipeline
+    (boxing.aplicar_stock_autonomia), não por esta função -- ver
+    Config.autonomia_minima_carros."""
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = _ws(wb, "Peças")
     rows = list(ws.iter_rows(values_only=True))
 
+    header = [str(c).strip() if c else "" for c in rows[0]]
+    idx = {name: i for i, name in enumerate(header)}
+
+    def col(name, required=True):
+        if name not in idx:
+            if required:
+                raise ValueError(f"Coluna '{name}' não encontrada na folha «Peças»")
+            return None
+        return idx[name]
+
+    i_sku = col("SKU")
+    i_desc = col("Descrição")
+    i_comp = col("Comprimento_m")
+    i_larg = col("Largura_m")
+    i_alt = col("Altura_m")
+    i_peso = col("Peso_kg")
+    # 'Stock_máx_un' é só REFERÊNCIA agora (Article.stock_atual_un): o stock que
+    # de facto alimenta o dimensionamento (Article.stock_max_un) é decidido pelo
+    # Passo 0 (boxing.stock_para_autonomia), a partir de Peças_por_carro e
+    # Config.autonomia_minima_carros -- não se lê mais pronto do master data
+    # (era o antigo 'Stock_máx_10un_a_utilizar' da v2, calculado à mão fora do
+    # código; ver CLAUDE.md). Colunas 'Stock_máx_10un_teórico'/'Diferença .../
+    # 'Stock_máx_10un_a_utilizar' que ainda existam na folha ficam por ler.
+    i_stock = col("Stock_máx_un")
+    i_pecas_carro = col("Peças_por_carro")
+    i_orient = col("Orientação_permitida")
+    i_empilh = col("Empilhável")
+    i_frag = col("Fragilidade")
+    i_geom = col("Geometria")
+    i_classe = col("Classe")
+
     articles = []
     skus_sem_geometria = []
     for r in rows[1:]:
-        # Column positions (0-indexed): fixed order regardless of encoding issues
-        # 0: SKU, 1: Descrição, 2: Comprimento_m, 3: Largura_m, 4: Altura_m,
-        # 5: Peso_kg, 6: Stock_máx_un, 7: Peças_por_carro, 8: Orientação_permitida,
-        # 9: Empilhável, 10: Fragilidade, 11: Geometria, 12: Volume_unit_m³,
-        # 13: Subtipo_LONGO, 14: Classe
-        if not r or r[0] is None:
+        if not r or r[i_sku] is None:
             continue
 
-        sku = str(r[0])
-        desc = str(r[1]) if r[1] else ""
-        comp = float(r[2]) if r[2] else 0.0
-        larg = float(r[3]) if r[3] else 0.0
-        alt = float(r[4]) if r[4] else 0.0
+        sku = str(r[i_sku])
+        desc = str(r[i_desc]) if r[i_desc] else ""
+        comp = float(r[i_comp]) if r[i_comp] else 0.0
+        larg = float(r[i_larg]) if r[i_larg] else 0.0
+        alt = float(r[i_alt]) if r[i_alt] else 0.0
 
         # Heurística temporária: peças sem geometria na folha (0x0x0) fazem o
         # boxing cair no fallback de 1 peça/palete (nenhuma caixa normal
@@ -64,12 +99,19 @@ def load_articles(path: Path) -> list[Article]:
             comp, larg, alt = 0.05, 0.05, 0.01
             skus_sem_geometria.append(sku)
 
-        peso_val = r[5]
+        peso_val = r[i_peso]
         peso_kg = float(peso_val) if peso_val is not None and str(peso_val) != "#N/A" else 0.0
 
-        stock = int(r[6]) if r[6] else 0
+        # ceil, NÃO int: pode ser fracionário (deriva de Peças_por_carro, que
+        # também o é). O int() truncava e SKUs com valor entre 0 e 1 ficavam a
+        # 0 -- 0 caixas, logo DESAPARECIAM dos resultados sem aviso, apesar de
+        # serem peças reais que precisam de espaço. Uma peça física não se
+        # guarda em frações e o stock é um TETO de dimensionamento: arredonda-se
+        # sempre para cima, como no resto do pipeline.
+        stock_val = r[i_stock]
+        stock = math.ceil(float(stock_val)) if stock_val else 0
 
-        pecas_por_carro_val = r[7]
+        pecas_por_carro_val = r[i_pecas_carro]
         if pecas_por_carro_val is None or str(pecas_por_carro_val) == "#N/A":
             raise ValueError(f"SKU {sku}: Peças_por_carro is required but missing or #N/A")
         # float, NÃO int: o valor é fracionário por natureza (0.5 = 1 peça a cada
@@ -78,14 +120,13 @@ def load_articles(path: Path) -> list[Article]:
         # ceil(0 / n) = 0. Também perdia a fração em 1.5, 17.85, etc.
         pecas_por_carro = float(pecas_por_carro_val)
 
-        orient = str(r[8]) if r[8] else "Livre"
-        empilh = r[9]
+        orient = str(r[i_orient]) if r[i_orient] else "Livre"
+        empilh = r[i_empilh]
         empilhamento = _parse_empilhamento(empilh)
-        frag = str(r[10]) if r[10] else "Normal"
-        geom = str(r[11]) if r[11] else "Regular"
+        frag = str(r[i_frag]) if r[i_frag] else "Normal"
+        geom = str(r[i_geom]) if r[i_geom] else "Regular"
 
-        subtipo_longo = str(r[13]).strip() if r[13] else ""
-        classe = str(r[14]).strip() if r[14] else "RIGIDO"
+        classe = str(r[i_classe]).strip() if r[i_classe] else "RIGIDO"
 
         articles.append(Article(
             sku=sku,
@@ -94,14 +135,19 @@ def load_articles(path: Path) -> list[Article]:
             larg_m=larg,
             alt_m=alt,
             peso_kg=peso_kg,
+            # stock_max_un = stock_atual_un aqui é só um placeholder inicial:
+            # quem decide o valor definitivo é o Passo 0 (boxing.
+            # aplicar_stock_autonomia), chamado logo a seguir no pipeline
+            # (main.run). Fica igual ao atual só para quem chamar load_articles
+            # diretamente sem passar pelo Passo 0 não ficar com stock a zero.
             stock_max_un=stock,
+            stock_atual_un=stock,
             pecas_por_carro=pecas_por_carro,
             orientacao=orient,
             empilhamento=empilhamento,
             fragilidade=frag,
             geometria=geom,
             classe=classe,
-            subtipo_longo=subtipo_longo,
         ))
 
     if skus_sem_geometria:
@@ -141,7 +187,6 @@ def load_rack_types(path: Path) -> list[RackType]:
     ws = _ws(wb, "Racks")
     rows = list(ws.iter_rows(values_only=True))
     header = [str(c).strip() if c else "" for c in rows[0]]
-    braco_col = header.index("Comp_braco_m") if "Comp_braco_m" in header else None
     corredor_col = header.index("Corredor_m") if "Corredor_m" in header else None
     racks = []
     for r in rows[1:]:
@@ -155,7 +200,6 @@ def load_rack_types(path: Path) -> list[RackType]:
                 aceita.append(LoadType(t))
             except ValueError:
                 pass  # ignora tokens desconhecidos
-        comp_braco = float(r[braco_col]) if braco_col is not None and r[braco_col] else 0.0
         corredor = float(r[corredor_col]) if corredor_col is not None and r[corredor_col] else 0.0
         racks.append(RackType(
             nome=str(nome),
@@ -165,7 +209,6 @@ def load_rack_types(path: Path) -> list[RackType]:
             niveis=int(niveis),
             aceita=aceita,
             footprint_m2=float(footprint) if footprint else 0.0,
-            comp_braco_m=comp_braco,
             corredor_m=corredor,
         ))
     return racks
@@ -230,8 +273,13 @@ def write_results(path: Path,
                   avisos: list[str] | None = None,
                   warehouse_layout=None,
                   zonas: list[Zona] | None = None,
-                  resumo_area=None) -> None:
-    """Escreve resultados.xlsx com sheets: Lógica, Resumo, Detalhe (e Avisos, se houver)."""
+                  resumo_area=None,
+                  articles: list[Article] | None = None,
+                  justificacoes: list | None = None,
+                  autonomia_resultados: list | None = None) -> None:
+    """Escreve resultados.xlsx com sheets: Lógica, Resumo, Detalhe, Autonomia
+    (se articles for dado), Validação (se justificacoes for dado) e Avisos
+    (se houver)."""
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
 
@@ -256,10 +304,7 @@ def write_results(path: Path,
     texto(ws_log, "Transforma o stock máximo de cada artigo em nº de racks e área de chão.", 2)
 
     titulo(ws_log, "Passo 1 — Repacking (boxing.py)", 4)
-    texto(ws_log, "Geometria = 'Comprida' e NÃO é painel/volumoso → LONGO (cantilever), sem caixa.", 5)
-    texto(ws_log, "Painéis largos/finos (Subtipo_LONGO=PAINEL_GRANDE) e volumosos (VOLUMOSO_OVERSIZE) NÃO", 6)
-    texto(ws_log, "vão para cantilever (não são material 1D apoiado em braços) — seguem o best-fit normal.", 7)
-    texto(ws_log, "Restantes: best-fit entre S/M/L/PALLET — escolhe a caixa que minimiza o nº total de", 8)
+    texto(ws_log, "Best-fit entre S/M/L/MEIA/PALLET — escolhe a caixa que minimiza o nº total de", 8)
     texto(ws_log, "unidades de carga para o stock máximo (não é 'a 1ª onde cabe', testa todas as opções).", 9)
     texto(ws_log, "Plano horizontal (comp x larg): envelope 2D, testa as 2 orientações do artigo no plano.", 10)
     texto(ws_log, "Orientação 'Livre' (a maioria): testa ainda as 3 cotas como altura, fica com a que rende mais;", 11)
@@ -273,7 +318,6 @@ def write_results(path: Path,
     texto(ws_log, "Cada tipo de carga escolhe, entre os racks compatíveis, o de menor m² por unidade", 19)
     texto(ws_log, "(footprint do rack / capacidade) — não é 'o 1º rack da tabela que aceita'.", 20)
     texto(ws_log, "Capacidade do rack (S/M/L/PALLET): envelope 2D por nível × nº de níveis.", 21)
-    texto(ws_log, "Capacidade cantilever (LONGO): floor(comp_braço / comp_artigo_máx) × nº de níveis.", 22)
     texto(ws_log, "Compatibilidade carga ↔ rack via campo 'Aceita' da sheet Racks.", 23)
     texto(ws_log, "Se um tipo de carga não tiver nenhum rack compatível viável, fica registado na sheet", 24)
     texto(ws_log, "'Avisos' (se existir) em vez de ser silenciosamente excluído do resultado.", 25)
@@ -307,7 +351,6 @@ def write_results(path: Path,
     par(ws_log, "Fator de enchimento (todas as classes)",
         "floor(peças_plano_teórico × 70%) — folgas de manuseio/encaixe imperfeito", 49)
     par(ws_log, "Packing por nível de rack", "Envelope 2D (2 orientações, melhor escolhida)", 50)
-    par(ws_log, "Capacidade cantilever", "floor(comp_braço / comp_max_LONGO) × níveis", 51)
     par(ws_log, "Empilhamento NAO_EMPILHAVEL", "1 peça de altura, nunca empilha", 52)
     par(ws_log, "Empilhamento EMPILHAVEL",
         "altura cheia somada: floor(altura_disponível / altura_artigo), sem nesting", 53)
@@ -405,6 +448,78 @@ def write_results(path: Path,
     ws_det.column_dimensions["D"].width = 30
     ws_det.column_dimensions["E"].width = 14
     ws_det.column_dimensions["F"].width = 16
+
+    # ---------------------------------------------------------------- Autonomia
+    # Autonomia em carros por SKU (stock usado / peças_por_carro) -- um SKU
+    # por linha, tal como BoxAssignment já é (não repete por caixa/rack como
+    # a folha Detalhe). Serve de referência para medir o efeito de dar
+    # autonomia extra a SKUs específicos (racks fantasma, Passo 4): a mesma
+    # coluna, corrida antes/depois, mostra exatamente quem subiu e quanto.
+    if articles:
+        article_idx = {a.sku: a for a in articles}
+        autonomia_idx = {r.sku: r for r in (autonomia_resultados or [])}
+        ws_aut = wb.create_sheet("Autonomia")
+        hdr_row(ws_aut, ["SKU", "Descrição", "Tipo de carga",
+                        "Stock atual (un)", "Stock teórico p/ autonomia mínima (un)",
+                        "Stock usado (un)", "Peças/carro", "Autonomia (carros)",
+                        "Override manual?"])
+        ws_aut.freeze_panes = "A2"
+        for a in assignments:
+            art = article_idx.get(a.sku)
+            if art is None:
+                continue
+            r = autonomia_idx.get(a.sku)
+            pecas_carro = art.pecas_por_carro
+            autonomia = round(art.stock_max_un / pecas_carro, 2) if pecas_carro > 0 else None
+            ws_aut.append([
+                a.sku, art.descricao,
+                a.load_type.value if hasattr(a.load_type, "value") else a.load_type,
+                r.stock_atual_un if r else art.stock_atual_un,
+                r.stock_teorico_un if r else "-",
+                art.stock_max_un, pecas_carro, autonomia if autonomia is not None else "-",
+                ("Sim" if r.override_manual else "Não") if r else "-",
+            ])
+        larguras_aut = [22, 30, 14, 16, 30, 16, 14, 18, 16]
+        for i, w in enumerate(larguras_aut, 1):
+            ws_aut.column_dimensions[get_column_letter(i)].width = w
+
+    # --------------------------------------------------------------- Validação
+    # PROVA do Passo 1: para cada SKU, o rasto de cálculo que justifica a
+    # unidade de carga da sheet 'Detalhe' -- dimensões, orientação vencedora,
+    # peças/plano, peças/altura, corte por peso (ou o critério de admissão
+    # geométrico, para OVERSIZE). Não é redundante com a Detalhe: a escolha
+    # é por SKU, não por posição, por isso 1 linha por SKU (como a
+    # Autonomia) em vez de repetir o mesmo cálculo em cada rack ocupado.
+    if justificacoes:
+        ws_val = wb.create_sheet("Validação")
+        hdr_row(ws_val, [
+            "SKU", "Descrição", "Tipo de carga",
+            "Comp_m", "Larg_m", "Alt_m", "Peso_kg",
+            "Orientação usada", "Caixa int. Comp_m", "Caixa int. Larg_m", "Caixa int. Alt_m",
+            "Peças/plano (teórico)", "Peças/plano (aplicado)", "Peças/altura",
+            "Peças/peso", "Fator limitante", "Peças/unidade (final)",
+            "Stock usado (un)", "Nº de unidades", "Critério aplicado",
+        ])
+        ws_val.freeze_panes = "A2"
+        for j in justificacoes:
+            ws_val.append([
+                j.sku, j.descricao,
+                j.load_type.value if hasattr(j.load_type, "value") else j.load_type,
+                round(j.comp_m, 3), round(j.larg_m, 3), round(j.alt_m, 3), round(j.peso_kg, 2),
+                j.orientacao_usada,
+                round(j.caixa_int_comp_m, 3) if j.caixa_int_comp_m is not None else "-",
+                round(j.caixa_int_larg_m, 3) if j.caixa_int_larg_m is not None else "-",
+                round(j.caixa_int_alt_m, 3) if j.caixa_int_alt_m is not None else "-",
+                j.pecas_por_plano_teorico if j.pecas_por_plano_teorico is not None else "-",
+                j.pecas_por_plano if j.pecas_por_plano is not None else "-",
+                j.pecas_por_altura if j.pecas_por_altura is not None else "-",
+                j.pecas_por_peso if j.pecas_por_peso is not None else "-",
+                j.fator_limitante, j.pecas_por_unidade, j.stock_max_un, j.num_unidades,
+                j.criterio,
+            ])
+        larguras = [22, 30, 14, 10, 10, 10, 10, 26, 16, 16, 16, 18, 18, 14, 12, 26, 18, 16, 14, 90]
+        for i, w in enumerate(larguras, 1):
+            ws_val.column_dimensions[get_column_letter(i)].width = w
 
     # ------------------------------------------------------------------ Avisos
     if avisos:
