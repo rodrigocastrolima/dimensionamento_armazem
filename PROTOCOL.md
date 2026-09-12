@@ -6,7 +6,8 @@ A warehouse-sizing engine: given a client's parts list, box/pallet catalog,
 rack typologies, and functional zones, it decides how each part gets
 packed, how many racks are needed, lays them out physically (aisles,
 double rows, corridors), and renders the result in 3D — see
-`docs/LOGICA_BACKEND.md` for the full pipeline.
+`docs/LOGICA_BACKEND.md` for the full pipeline, and `DEPLOYMENT.md` for
+running it somewhere other than a laptop.
 
 This document says what part of that is CORE (works the same for any
 client) versus CLIENT-SPECIFIC (changes per client), how to onboard a new

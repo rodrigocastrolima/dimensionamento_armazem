@@ -68,6 +68,39 @@ this as a manual step.
 
 ---
 
+## 2. Verify the Docker build (Phase 6 — deployment)
+
+No Docker is installed in the environment this was written in (checked:
+no `docker` on `PATH`). The `Dockerfile` is a straightforward
+`python:3.12-slim` + `pip install -r requirements.txt` + copy + run, and
+was reviewed carefully, but I could not actually run:
+```bash
+docker build -t warehouse-sizing .
+docker run -p 8000:8000 --env-file .env warehouse-sizing
+curl http://localhost:8000/healthz
+```
+Please run this once and tell me if it fails — I'll fix whatever the
+error shows.
+
+## 3. Pick and set up a hosting platform (Phase 6 — deployment)
+
+The Dockerfile + `$HOST`/`$PORT` env vars are the generic part of
+deployment; actually hosting this needs an account somewhere (a VM, a
+container platform, whatever your team already uses) that I don't have
+access to create. Once you've picked one:
+1. Build and push the image there (or point its build step at this repo).
+2. Set the environment variables from `.env.example` in that platform's
+   secret/env config — at minimum `WAREHOUSE_CLIENT`; `DATABASE_URL` too,
+   once item 1 above is done and a client is actually on Supabase.
+3. Point it at `/healthz` for its health check, if it supports one.
+
+See `DEPLOYMENT.md` for the full picture, including why an
+`"excel"`-data_source client needs extra thought (its workbook is
+deliberately not in the image by default — see that doc's "data
+persistence" section) and why a `"supabase"`-data_source client doesn't.
+
+---
+
 ## Template for future entries
 
 Each new blocked item during later phases gets its own numbered section

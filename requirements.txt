@@ -1,11 +1,15 @@
 # --- núcleo ---
 openpyxl>=3.1        # ler/escrever o master data e resultados
-py3dbp>=1.1          # Passo 1: empacotamento 3D (peças por caixa/palete)
 rectpack>=0.2        # Passo 2: footprint 2D (caixas por nível de rack)
 
-# --- opcional (refinamentos) ---
-ortools>=9.0         # minimizar nº de racks via bin packing (CP-SAT)
-pandas>=2.0          # conveniência na leitura de tabelas
+# NOTA (Phase 6, deployment): `py3dbp` (empacotamento 3D), `ortools`
+# (bin-packing CP-SAT) e `pandas` estavam listados aqui mas NENHUM é
+# importado em lado nenhum do código (`grep -r "import py3dbp\|import
+# ortools\|import pandas"` não encontra nada) -- ortools em particular é
+# grande (binários nativos) e infla desnecessariamente a imagem Docker.
+# Removidos por serem peso morto confirmado; se algum dia forem mesmo
+# precisos (ex.: minimização de racks por CP-SAT), voltam a entrar aqui
+# quando o código que os usa for escrito, não antes.
 
 # --- dados (opcional) ---
 # só precisa disto quem tiver um dados/clients/<nome>.json com

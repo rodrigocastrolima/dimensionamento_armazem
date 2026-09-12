@@ -37,6 +37,16 @@ STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Simulador de Armazém")
 
 
+@app.get("/healthz")
+def healthz():
+    """Health check para deployment (load balancer / readiness probe --
+    ver Dockerfile e DEPLOYMENT.md). Não toca em dados: só confirma que o
+    processo está de pé e qual cliente/origem de dados está carregado --
+    útil para diagnosticar rápido "isto é o container certo?" sem abrir
+    o /api/articles inteiro."""
+    return {"status": "ok", "client": cfg.client_name, "data_source": cfg.data_source}
+
+
 # --------------------------------------------------------------------- dados
 
 @app.get("/api/articles")

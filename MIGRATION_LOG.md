@@ -156,8 +156,32 @@ before this branch. See `NEEDS_HUMAN.md` for anything blocked on a human.
       structural, not a config value, per the explicit instruction not to
       overclaim), and a definition of done.
 
-## Phase 6 — deployment readiness (if time allows)
-- [ ] Minimal deploy path + `NEEDS_HUMAN.md` entries.
+## Phase 6 — deployment readiness
+- [x] `warehouse/web.py`: `GET /healthz` (status/client/data_source) for a
+      load balancer/orchestrator readiness probe.
+- [x] `run_web.py`: reads `$HOST`/`$PORT` now (falls back to the same
+      `127.0.0.1:8000` when unset — `.claude/launch.json`'s local preview
+      is unaffected).
+- [x] `Dockerfile` + `.dockerignore` — containerizes the app
+      (`python:3.12-slim`, install requirements, `CMD ["python", "run_web.py"]`).
+      `.dockerignore` deliberately excludes real client data by default
+      (same reasoning as the git `.gitignore`, Phase 4) — see
+      `DEPLOYMENT.md` for the explicit opt-in paths for an
+      `"excel"`-data_source client (bake in / mount) vs. the recommended
+      path (migrate to Supabase, container needs no local file at all).
+- [x] `.env.example` documents every env var the app reads.
+- [x] `DEPLOYMENT.md` written: build/run instructions, the
+      data-persistence tradeoff above, what's still needed from a human.
+- [x] `requirements.txt`: removed `py3dbp`/`ortools`/`pandas` — confirmed
+      by repo-wide grep that none are imported anywhere; `ortools`
+      especially would have bloated every image build for zero benefit.
+- [x] `NEEDS_HUMAN.md`: added verifying the actual `docker build` (no
+      Docker in this environment) and picking/setting up a hosting
+      platform (needs an account I don't have).
+- Verified: pytest 59/59 unchanged; `/healthz` returns 200 with the
+  expected body via FastAPI TestClient; `$HOST`/`$PORT` override and
+  default-preservation both confirmed directly. Docker build itself is
+  NOT verified — see `NEEDS_HUMAN.md` #2.
 
 ## Finish
 - [ ] `MIGRATION_REPORT.md` written.
