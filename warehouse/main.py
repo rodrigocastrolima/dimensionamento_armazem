@@ -9,7 +9,7 @@ import argparse
 import os
 from pathlib import Path
 
-from . import io_excel, boxing, racking, area, layout as layout_mod
+from . import io_excel, data_access, boxing, racking, area, layout as layout_mod
 from .config import Config
 from .models import Article
 
@@ -40,12 +40,12 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
     escalado, sem reescrever o Excel nem voltar a decidir a autonomia mínima).
     None (default) = comportamento normal: lê do master_data e o Passo 0
     (boxing.aplicar_stock_autonomia) decide o stock_max_un de cada artigo."""
-    catalogo = io_excel.load_catalog(cfg.master_data)          # S/M/L + PALLET
+    catalogo = data_access.load_catalog(cfg)          # S/M/L + PALLET
     autonomia_resultados = None
     if articles is None:
-        articles = io_excel.load_articles(cfg.master_data)
+        articles = data_access.load_articles(cfg)
         articles, autonomia_resultados = boxing.aplicar_stock_autonomia(articles, catalogo, cfg)  # Passo 0
-    rack_types = io_excel.load_rack_types(cfg.master_data)
+    rack_types = data_access.load_rack_types(cfg)
     # ANTES de com_par_oversize: a tipologia sintética "(emparelhada)" também
     # casaria a própria chave (herda o nome base), mascarando exatamente o
     # caso "chave configurada, nenhuma tipologia real corresponde" que este
@@ -71,7 +71,7 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
 
     avisos = avisos_config + avisos_estimativa + avisos_alocacao
 
-    zonas = io_excel.load_zones(cfg.master_data)
+    zonas = data_access.load_zones(cfg)
 
     # OVERSIZE ao chão (só se não houver tipologia wide-span NEM par emparelhado:
     # o rack tem prioridade). Antes do layout, para as pilhas entrarem como

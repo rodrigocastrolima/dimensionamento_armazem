@@ -11,9 +11,10 @@ from __future__ import annotations
 import argparse
 import copy
 import math
+import os
 from pathlib import Path
 
-from . import boxing, io_excel, main as main_mod
+from . import boxing, data_access, main as main_mod
 from .config import Config
 from .models import Article
 
@@ -36,7 +37,10 @@ def aplicar_autonomia(articles: list[Article], carros_alvo: float,
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Área de armazém para diferentes autonomias (nº de carros)")
-    p.add_argument("--data", type=Path, help="master data .xlsx")
+    p.add_argument("--client", default=os.environ.get("WAREHOUSE_CLIENT", "sia"),
+                   help="nome do cliente (dados/clients/<nome>.json); default 'sia' "
+                        "ou $WAREHOUSE_CLIENT")
+    p.add_argument("--data", type=Path, help="master data .xlsx (substitui o do cliente)")
     p.add_argument("--carros", type=float, nargs="+", required=True,
                    help="um ou mais valores de autonomia-alvo em carros (ex.: --carros 10 15 20)")
     p.add_argument("--carros-base", type=float, default=10.0,
@@ -49,7 +53,7 @@ def main() -> None:
                    help="altura da zona de picking em metros")
     args = p.parse_args()
 
-    cfg = Config()
+    cfg = Config.for_client(args.client)
     if args.data:
         cfg.master_data = args.data
     if args.altura:
@@ -58,8 +62,8 @@ def main() -> None:
         cfg.altura_picking_m = args.picking
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    catalogo = io_excel.load_catalog(cfg.master_data)
-    base_articles = io_excel.load_articles(cfg.master_data)
+    catalogo = data_access.load_catalog(cfg)
+    base_articles = data_access.load_articles(cfg)
     base_articles, _ = boxing.aplicar_stock_autonomia(base_articles, catalogo, cfg)  # Passo 0
 
     linhas_resumo = []

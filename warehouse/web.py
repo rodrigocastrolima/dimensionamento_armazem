@@ -13,12 +13,12 @@ import math
 import os
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import boxing, io_excel, racking, area, layout as layout_mod
+from . import boxing, io_excel, data_access, racking, area, layout as layout_mod
 from .cenario_autonomia import aplicar_autonomia
 from .config import Config
 from .models import LoadType
@@ -41,8 +41,8 @@ app = FastAPI(title="Simulador de Armazém")
 
 @app.get("/api/articles")
 def get_articles():
-    articles = io_excel.load_articles(cfg.master_data)
-    catalogo = io_excel.load_catalog(cfg.master_data)
+    articles = data_access.load_articles(cfg)
+    catalogo = data_access.load_catalog(cfg)
     articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, cfg)  # Passo 0
     return [
         {
@@ -61,7 +61,7 @@ def get_articles():
 
 @app.get("/api/boxes")
 def get_boxes():
-    boxes = io_excel.load_catalog(cfg.master_data)
+    boxes = data_access.load_catalog(cfg)
     return [
         {
             "nome": b.nome.value,
@@ -75,7 +75,7 @@ def get_boxes():
 
 @app.get("/api/racks")
 def get_racks():
-    racks = io_excel.load_rack_types(cfg.master_data)
+    racks = data_access.load_rack_types(cfg)
     return [
         {
             "nome": r.nome, "larg_m": r.larg_m, "prof_m": r.prof_m,
@@ -91,7 +91,7 @@ def get_racks():
 
 @app.get("/api/zones")
 def get_zones():
-    zonas = io_excel.load_zones(cfg.master_data)
+    zonas = data_access.load_zones(cfg)
     return [
         {
             "nome": z.nome, "categoria": z.categoria,
@@ -258,12 +258,12 @@ def gerar(body: GerarRequest):
         largura_max_m=body.largura_max_m,
         profundidade_max_m=body.profundidade_max_m)
 
-    articles = io_excel.load_articles(cfg.master_data)
-    catalogo = io_excel.load_catalog(cfg.master_data)
+    articles = data_access.load_articles(cfg)
+    catalogo = data_access.load_catalog(cfg)
     articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, local_cfg)  # Passo 0
     if body.carros_alvo > 0:
         articles = aplicar_autonomia(articles, body.carros_alvo)
-    rack_types = io_excel.load_rack_types(cfg.master_data)
+    rack_types = data_access.load_rack_types(cfg)
     # ANTES de com_par_oversize -- ver a mesma nota em main.run.
     avisos_config = racking.verificar_chaves_substring_sem_correspondencia(rack_types, local_cfg)
     rack_types = racking.com_par_oversize(rack_types, local_cfg)
@@ -272,9 +272,15 @@ def gerar(body: GerarRequest):
     article_idx = {a.sku: a for a in articles}
 
     assignments = boxing.plan_all(articles, catalogo, local_cfg)
-    io_excel.write_pecas_com_caixa(cfg.master_data,
-                                   cfg.master_data.parent / "pecas_tipo_caixa.xlsx",
-                                   assignments)
+    # Ficheiro de download "Peças + Tipo_Caixa" -- feature do fluxo Excel
+    # (copia a folha "Peças" original e acrescenta uma coluna): não tem
+    # equivalente ainda com data_source="supabase" (não há "folha original"
+    # para copiar). Guarda-se para não rebentar num cliente que não tem
+    # master_data a apontar para um .xlsx real -- ver /api/download/pecas-caixas.
+    if cfg.data_source == "excel":
+        io_excel.write_pecas_com_caixa(cfg.master_data,
+                                       cfg.master_data.parent / "pecas_tipo_caixa.xlsx",
+                                       assignments)
 
     requirements, avisos_estimativa = racking.racks_needed(
         assignments, rack_types, catalogo_por_tipo, local_cfg,
@@ -286,7 +292,7 @@ def gerar(body: GerarRequest):
 
     avisos = avisos_config + avisos_estimativa + avisos_alocacao
 
-    zonas = io_excel.load_zones(cfg.master_data)
+    zonas = data_access.load_zones(cfg)
 
     # OVERSIZE ao chão: só existe quando NÃO há tipologia wide-span NEM par
     # emparelhado (o rack tem prioridade). A área vem das cotas + stock, não de
@@ -482,7 +488,15 @@ def gerar(body: GerarRequest):
 
 @app.get("/api/download/pecas-caixas")
 def download_pecas_caixas():
-    """Excel com a folha «Peças» original + coluna Tipo_Caixa (gerado no /api/gerar)."""
+    """Excel com a folha «Peças» original + coluna Tipo_Caixa (gerado no /api/gerar).
+
+    Só existe no fluxo Excel (ver a mesma nota em gerar()) -- um cliente
+    data_source='supabase' não tem uma "folha original" para copiar."""
+    if cfg.data_source != "excel":
+        raise HTTPException(
+            status_code=404,
+            detail="Download 'pecas_tipo_caixa.xlsx' só está disponível para "
+                    "clientes com data_source='excel'.")
     path = cfg.master_data.parent / "pecas_tipo_caixa.xlsx"
     return FileResponse(
         path, filename="pecas_tipo_caixa.xlsx",
@@ -505,12 +519,12 @@ def render_layout(body: ArrangeRequest):
         largura_max_m=body.largura_max_m,
         profundidade_max_m=body.profundidade_max_m)
 
-    articles = io_excel.load_articles(cfg.master_data)
-    catalogo = io_excel.load_catalog(cfg.master_data)
+    articles = data_access.load_articles(cfg)
+    catalogo = data_access.load_catalog(cfg)
     articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, local_cfg)  # Passo 0
     if body.carros_alvo > 0:
         articles = aplicar_autonomia(articles, body.carros_alvo)
-    rack_types = io_excel.load_rack_types(cfg.master_data)
+    rack_types = data_access.load_rack_types(cfg)
     rack_types = racking.com_par_oversize(rack_types, local_cfg)
     catalogo_por_tipo = {b.nome: b for b in catalogo}
     rack_by_name = {r.nome: r for r in rack_types}

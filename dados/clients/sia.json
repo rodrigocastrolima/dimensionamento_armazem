@@ -1,6 +1,7 @@
 {
   "_comment": "Valores CLIENT-SPECIFIC para o cliente SIA (linha de montagem BEN, EV). Extraidos do warehouse/config.py hardcoded anterior -- ver auditoria CORE vs CLIENT-SPECIFIC. Carregado via Config.for_client('sia').",
 
+  "data_source": "excel",
   "master_data": "dados/master_data_classificado_v3.xlsx",
   "output": "dados/resultados.xlsx",
 

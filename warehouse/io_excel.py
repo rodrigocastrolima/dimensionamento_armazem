@@ -31,6 +31,28 @@ def _ws(wb: openpyxl.Workbook, nome: str):
     return wb[nome]
 
 
+# Fallback genérico para peças sem geometria (0x0x0 -- ver dimensao_segura).
+# Partilhado por qualquer backend de dados (Excel aqui, Supabase em
+# db_supabase.py): a mesma regra de negócio, não duas cópias que podem divergir.
+_DIM_MINIMA_M = (0.05, 0.05, 0.01)
+
+
+def dimensao_segura(comp: float, larg: float, alt: float) -> tuple[float, float, float, bool]:
+    """Substitui dimensões 0x0x0 por um fallback pequeno genérico.
+
+    Uma peça sem geometria faz o boxing cair no fallback de 1 peça/palete
+    (nenhuma caixa normal "cabe" com dimensão 0), o que explode o nº de
+    unidades e trava o packer 2D em allocate_to_racks. Assume-se um item
+    pequeno genérico só para destravar o cálculo -- resultado pouco fiável
+    para estas peças, a corrigir com a geometria real na origem dos dados.
+
+    Devolve (comp, larg, alt, foi_substituida) -- o chamador decide como
+    reportar a substituição (ver load_articles/db_supabase.load_articles)."""
+    if comp <= 0 or larg <= 0 or alt <= 0:
+        return (*_DIM_MINIMA_M, True)
+    return comp, larg, alt, False
+
+
 def load_articles(path: Path) -> list[Article]:
     """Folha «Peças» -> list[Article].
 
@@ -89,14 +111,8 @@ def load_articles(path: Path) -> list[Article]:
         larg = float(r[i_larg]) if r[i_larg] else 0.0
         alt = float(r[i_alt]) if r[i_alt] else 0.0
 
-        # Heurística temporária: peças sem geometria na folha (0x0x0) fazem o
-        # boxing cair no fallback de 1 peça/palete (nenhuma caixa normal
-        # "cabe" com dimensão 0), o que explode o nº de unidades e trava o
-        # packer 2D em allocate_to_racks. Assume-se um item pequeno genérico
-        # só para destravar o cálculo -- resultado pouco fiável para estas
-        # peças, a corrigir com a geometria real na folha.
-        if comp <= 0 or larg <= 0 or alt <= 0:
-            comp, larg, alt = 0.05, 0.05, 0.01
+        comp, larg, alt, sem_geometria = dimensao_segura(comp, larg, alt)
+        if sem_geometria:
             skus_sem_geometria.append(sku)
 
         peso_val = r[i_peso]

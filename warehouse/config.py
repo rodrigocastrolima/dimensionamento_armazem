@@ -28,6 +28,7 @@ _CLIENTS_DIR = Path(__file__).resolve().parent.parent / "dados" / "clients"
 # para um cliente não poder, por engano, injetar um campo CORE (ex.:
 # fill_factor_plano) através do ficheiro errado.
 _CLIENT_FIELD_CONVERTERS = {
+    "data_source": str,
     "master_data": Path,
     "output": Path,
     "autonomia_minima_carros": float,
@@ -48,8 +49,20 @@ class Config:
     # por quem constrói Config() diretamente, ex. testes/racking.py:648).
     client_name: str = ""
 
+    # De onde vêm os dados deste cliente: "excel" (master_data, comportamento
+    # de sempre) ou "supabase" (client_name identifica as linhas nas tabelas
+    # clients/articles/box_catalog/rack_types/zones -- ver
+    # warehouse/data_access.py e supabase/README.md). Escolhido por
+    # configuração, não por código: o resto do pipeline recebe sempre os
+    # mesmos dataclasses (Article/BoxType/RackType/Zona) de qualquer origem.
+    data_source: str = "excel"
+
     # caminhos (fallback de um Config() nu -- ver nota no topo do ficheiro;
-    # o valor real de cada cliente vem de dados/clients/<nome>.json)
+    # o valor real de cada cliente vem de dados/clients/<nome>.json).
+    # master_data só é lido quando data_source == "excel"; output (o
+    # resultados.xlsx que o pipeline ESCREVE) é sempre um ficheiro, mesmo
+    # com data_source == "supabase" -- a origem dos dados de entrada e o
+    # relatório de saída são eixos independentes.
     master_data: Path = Path("dados/master_data_classificado_v3.xlsx")
     output: Path = Path("dados/resultados.xlsx")
 
@@ -374,4 +387,10 @@ class Config:
         for campo, conversor in _CLIENT_FIELD_CONVERTERS.items():
             if campo in data:
                 setattr(cfg, campo, conversor(data[campo]))
+
+        if cfg.data_source not in ("excel", "supabase"):
+            raise ValueError(
+                f"dados/clients/{name}.json: data_source='{cfg.data_source}' "
+                f"desconhecido -- só 'excel' ou 'supabase' (ver warehouse/data_access.py)."
+            )
         return cfg

@@ -71,12 +71,39 @@ before this branch. See `NEEDS_HUMAN.md` for anything blocked on a human.
       Full suite: 48/48 passed.
 
 ## Phase 3 — Supabase data layer
-- [ ] SQL migration files: `clients`, `articles`, `box_catalog`, `rack_types`,
-      `zones`.
-- [ ] Data-access layer selectable Excel vs Supabase by config.
-- [ ] One-time import script (SIA workbook → Supabase).
-- [ ] Row-count verification against the Excel loader.
-- [ ] `NEEDS_HUMAN.md` entries if no project/credentials exist.
+- [x] SQL migration files: `supabase/migrations/0001_clients.sql` through
+      `0005_zones.sql` — mirror `articles`/`box_catalog`/`rack_types`/`zones`
+      field-for-field against `warehouse/models.py`'s dataclasses, plus
+      `clients` for multi-tenancy (`client_slug` FK, matches the Phase 1
+      `dados/clients/<slug>.json` naming). `supabase/README.md` explains the
+      access model and why RLS is deliberately not enabled (server-side
+      direct-Postgres access only, no browser-facing app on top yet).
+- [x] `Config.data_source: str = "excel"` (new client-config field, default
+      "excel" — zero behavior change until a client's JSON opts in).
+- [x] `warehouse/data_access.py` — the Excel/Supabase switch; `main.py`,
+      `web.py`, `cenario_autonomia.py` now all call it instead of
+      `io_excel.load_*` directly.
+- [x] `warehouse/db_supabase.py` — Supabase-backed reader, returns the exact
+      same `Article`/`BoxType`/`RackType`/`Zona` dataclasses as `io_excel.py`.
+      `psycopg` import is lazy (only paid for by clients who use it).
+      Reuses `io_excel.dimensao_segura` (extracted as a shared helper) so
+      the sem-geometria fallback behaves identically on both backends, and
+      the Phase-2 "unrecognized token in Aceita" warning too.
+- [x] `warehouse/import_to_supabase.py` — one-time import + built-in
+      verification (rereads via `db_supabase.load_*`, the actual pipeline
+      path, and diffs every field against what `io_excel` read — not just
+      row counts). Dry-run against the real SIA workbook confirms exact
+      counts: 445 articles, 6 box_catalog, 2 rack_types, 5 zones.
+- [x] `NEEDS_HUMAN.md` created: no Supabase project/credentials exist in
+      this environment (checked: no `$DATABASE_URL`, no `.env` anywhere) —
+      the 3 manual steps are there (create project, apply migrations, set
+      `$DATABASE_URL`). SIA's `dados/clients/sia.json` stays on
+      `"data_source": "excel"` until a human runs the import and flips it.
+- Verified: pytest 59/59 (10 new tests: `test_db_supabase.py`,
+  `test_import_to_supabase.py`, mocked-connection only, no real DB in this
+  environment); full pipeline + `/api/gerar` + `cenario_autonomia.py` CLI
+  all re-run end-to-end through the new `data_access` layer, totals
+  unchanged (89.9/194.4/298.3 m²).
 
 ## Phase 4 — repo cleanup
 - [ ] `.gitignore` excludes live client workbooks / real data.

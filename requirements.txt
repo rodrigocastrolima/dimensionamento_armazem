@@ -7,6 +7,12 @@ rectpack>=0.2        # Passo 2: footprint 2D (caixas por nível de rack)
 ortools>=9.0         # minimizar nº de racks via bin packing (CP-SAT)
 pandas>=2.0          # conveniência na leitura de tabelas
 
+# --- dados (opcional) ---
+# só precisa disto quem tiver um dados/clients/<nome>.json com
+# "data_source": "supabase" -- ver warehouse/db_supabase.py e
+# supabase/README.md. Quem continua no Excel nunca instala isto.
+psycopg[binary]>=3.1  # ligação Postgres/Supabase da camada de acesso a dados
+
 # --- web (warehouse/web.py) ---
 fastapi>=0.110        # API do simulador
 uvicorn>=0.29          # servidor ASGI

@@ -1,6 +1,7 @@
 {
-  "_comment": "Ponto de partida para um cliente novo. Copia este ficheiro para dados/clients/<nome-do-cliente>.json, substitui master_data pelo caminho do Excel desse cliente (mesmo formato de sheets/colunas que master_data_classificado_v3.xlsx -- ver docs/LOGICA_BACKEND.md), e ajusta os overrides/chaves abaixo aos nomes reais que esse cliente usa na folha 'Racks'. Um Config.for_client('<nome>') com este ficheiro instancia sem erro, mas master_data aponta para um caminho placeholder -- correr o pipeline com ele falha alto e claro em io_excel, como é suposto.",
+  "_comment": "Ponto de partida para um cliente novo. Copia este ficheiro para dados/clients/<nome-do-cliente>.json. Se o cliente usa Excel (data_source='excel', o normal): substitui master_data pelo caminho do Excel desse cliente (mesmo formato de sheets/colunas que master_data_classificado_v3.xlsx -- ver docs/LOGICA_BACKEND.md). Se o cliente já está no Supabase (data_source='supabase' -- ver supabase/README.md): master_data/output continuam só a servir para onde o pipeline ESCREVE o relatorio resultados.xlsx, client_name (o nome deste ficheiro) e' o que identifica as linhas dele nas tabelas. Em ambos os casos, ajusta os overrides/chaves abaixo aos nomes reais que esse cliente usa na folha/tabela 'Racks'. Um Config.for_client('<nome>') com este ficheiro instancia sem erro, mas master_data aponta para um caminho placeholder -- correr o pipeline com ele falha alto e claro em io_excel, como e' suposto.",
 
+  "data_source": "excel",
   "master_data": "dados/clients/_template_master_data.xlsx",
   "output": "dados/clients/_template_resultados.xlsx",
 
