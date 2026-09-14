@@ -210,6 +210,54 @@ def test_assenta_na_palete():
     assert not boxing._assenta_na_palete(art(0.9, 0.9, 0.9), P, 0.25)
 
 
+# ------------------------------------------- pallet_ultimo_recurso (Config)
+# Decisão de negócio por cliente: trocar chão por movimentabilidade -- caixas
+# pequenas em vez de paletes sempre que fisicamente possível, mesmo custando
+# mais unidades de carga.
+
+def test_pallet_ultimo_recurso_prefere_caixa_pequena_quando_cabe():
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cat = _catalogo_minimo()
+    # peça pequena o suficiente para caber na S (0.40x0.30x0.24 util) e,
+    # claro, também na palete (1.20x0.80x1.50) -- com stock alto a palete
+    # minimiza sempre o nº de unidades (é maior), por isso o default
+    # (pallet_ultimo_recurso=False) escolhe PALLET.
+    art = Article(sku="x", descricao="", comp_m=0.10, larg_m=0.10, alt_m=0.10,
+                  peso_kg=0.5, stock_max_un=500, pecas_por_carro=1,
+                  empilhamento=Empilhamento.EMPILHAVEL)
+
+    lt_default, _ = boxing.choose_load(art, cat, Config())
+    assert lt_default == LoadType.PALLET
+
+    lt_recurso, _ = boxing.choose_load(art, cat, Config(pallet_ultimo_recurso=True))
+    assert lt_recurso == LoadType.S      # mesma peça, PALLET excluída da competição
+
+
+def test_pallet_ultimo_recurso_ainda_cai_em_pallet_se_nada_mais_couber():
+    """A palete continua a ser o fallback -- pallet_ultimo_recurso nunca perde
+    stock: só evita a palete QUANDO há alternativa menor que serve."""
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cat = _catalogo_minimo()
+    # 1.05 x 1.31 x 0.75 -- maior que a S em todas as orientações, mas assenta
+    # na palete (mesmo caso do test_peca_que_assenta_mas_nao_cabe_de_pe_fica_em_palete).
+    art = Article(sku="OK", descricao="", comp_m=1.05, larg_m=1.31, alt_m=0.75,
+                  peso_kg=7.85, stock_max_un=50, pecas_por_carro=1,
+                  orientacao="Base fixa", empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    lt, ppu = boxing.choose_load(art, cat, Config(pallet_ultimo_recurso=True))
+    assert lt == LoadType.PALLET and ppu == 1
+
+
+def test_pallet_ultimo_recurso_off_por_omissao_nao_muda_nada():
+    """Config() nu (sem cliente) continua com o comportamento de sempre --
+    ver também os testes de choose_load/best-fit já existentes."""
+    from warehouse.config import Config
+    assert Config().pallet_ultimo_recurso is False
+
+
 # --------------------------------------------------------- envelope do bloco
 # Config.largura_max_m / profundidade_max_m: restrição de FORMA, não de
 # capacidade -- nunca se perdem posições, avisa-se quando não cabe.

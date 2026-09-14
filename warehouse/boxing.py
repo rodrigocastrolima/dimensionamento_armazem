@@ -201,15 +201,23 @@ def choose_load(article: Article, catalogo: list[BoxType],
                 cfg: Config) -> tuple[LoadType, int]:
     """Decide o tipo de carga e devolve (LoadType, peças_por_unidade).
 
-    Best-fit entre S/M/L/PALLET: testa todas as candidatas onde caiba pelo
-    menos 1 peça e escolhe a que minimiza nº de unidades de carga para o
+    Best-fit entre S/M/L/MEIA/PALLET: testa todas as candidatas onde caiba
+    pelo menos 1 peça e escolhe a que minimiza nº de unidades de carga para o
     stock máximo (ceil(stock_max_un / peças_por_unidade)). Em empate,
-    fica com a caixa fisicamente mais pequena (S < M < L < PALLET).
+    fica com a caixa fisicamente mais pequena (S < M < L < MEIA < PALLET).
     Se não couber em nenhuma -> OVERSIZE ou PALLET (ver fallback abaixo).
+
+    `cfg.pallet_ultimo_recurso` (decisão de negócio por cliente, ver
+    Config): quando True, a PALLET não compete no best-fit -- só entra pelo
+    fallback abaixo, ou seja, só é escolhida se NENHUMA caixa mais pequena
+    couber. Troca chão por movimentabilidade (caixas menores são mais fáceis
+    de mover à mão/porta-paletes do que uma palete cheia).
     """
     catalogo_idx = {b.nome: b for b in catalogo}
     # ordem crescente de tamanho: em empate no nº de unidades ganha a menor
-    candidatas = _CAIXAS + [LoadType.MEIA, LoadType.PALLET]
+    candidatas = _CAIXAS + [LoadType.MEIA]
+    if not cfg.pallet_ultimo_recurso:
+        candidatas = candidatas + [LoadType.PALLET]
 
     melhor: tuple[LoadType, int] | None = None
     melhor_num_unidades = None
@@ -229,8 +237,14 @@ def choose_load(article: Article, catalogo: list[BoxType],
     if melhor is not None:
         return melhor
 
-    # Não coube em nenhuma unidade de carga. O fallback antigo devolvia
-    # (PALLET, 1) sem verificar nada, o que MENTIA em dois sentidos:
+    # Chega aqui em dois casos: não coube em NENHUMA caixa pequena, ou coube
+    # mas a PALLET foi excluída de propósito da competição
+    # (cfg.pallet_ultimo_recurso). Em qualquer um dos dois, a palete ainda é
+    # tentada como último recurso antes de OVERSIZE -- nunca se perde stock
+    # só porque a política do cliente evita paletes quando há alternativa.
+    #
+    # O fallback antigo devolvia (PALLET, 1) sem verificar nada, o que MENTIA
+    # em dois sentidos:
     #   - peças maiores que a footprint da palete (em qualquer orientação)
     #     apareciam como "1 por palete", escondendo que são oversize e não
     #     assentam -- subdimensionando a área e sem gerar aviso;

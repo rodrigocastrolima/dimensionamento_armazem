@@ -32,6 +32,7 @@ _CLIENT_FIELD_CONVERTERS = {
     "master_data": Path,
     "output": Path,
     "autonomia_minima_carros": float,
+    "pallet_ultimo_recurso": bool,
     "capacidade_override_sku": dict,
     "stock_autonomia_override_sku": dict,
     "oversize_racks": tuple,
@@ -76,6 +77,22 @@ class Config:
     # estratégias de volume mínimo dão blocos maiores. Não reintroduzir como
     # parâmetro: parecia configurável, mas ninguém o lia.
     pallet_threshold_unidades: int = 6   # acima disto em caixas L -> palete
+
+    # Decisão de negócio (não de espaço): usar a PALETE só como ÚLTIMO recurso
+    # em vez de a deixar competir normalmente no best-fit de boxing.choose_load.
+    # Por omissão (False) o motor continua a escolher a palete sempre que ela
+    # minimiza o nº de unidades de carga (comportamento validado como o que
+    # minimiza chão -- ver a nota acima). Ligar isto TROCA chão por
+    # movimentabilidade: caixas L/MEIA/M/S/XS são mais fáceis e seguras de
+    # movimentar à mão/porta-paletes do que uma palete cheia, o que pode
+    # compensar custar mais área num armazém já grande. Um SKU só continua em
+    # PALLET se não couber fisicamente em NENHUMA caixa mais pequena -- o
+    # mesmo fallback que já existia para decidir OVERSIZE não muda.
+    #
+    # CLIENT-SPECIFIC: é uma escolha operacional de CADA cliente (não uma
+    # verdade universal do algoritmo) -- vive em dados/clients/<nome>.json,
+    # não aqui.
+    pallet_ultimo_recurso: bool = False
 
     # Empilhamento de artigos (dentro de caixa/palete), eixo da altura.
     # Classificação em 3 vias vinda da coluna 'Empilhável' (ver Empilhamento):

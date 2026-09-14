@@ -444,8 +444,42 @@ fator único não distingue corredor de empilhador (2.5 m) de picking manual
 (1.2 m), e subestimava — nos dados atuais os corredores dão ~108% da footprint,
 não 60%.
 
+## Decisão fechada: `pallet_ultimo_recurso` (SIA, 2026-09) — caixas pequenas em vez de paletes
+`Config.pallet_ultimo_recurso` (`bool`, default `False`, CLIENT-SPECIFIC —
+vive em `dados/clients/<nome>.json`, não em `config.py`): quando `True`, a
+PALLET deixa de competir no best-fit de `boxing.choose_load` — só entra pelo
+mesmo fallback que já existia para OVERSIZE (peça não cabe em nada mais
+pequeno → tenta a palete → senão OVERSIZE). Nunca perde stock: um SKU só
+continua em PALLET se não couber fisicamente em nenhuma caixa mais pequena.
+
+Porquê: decisão de negócio da SIA, não uma correção ao algoritmo — caixas
+L/MEIA/M/S/XS são mais fáceis e seguras de movimentar à mão/porta-paletes do
+que uma palete cheia, e o armazém é grande o suficiente para absorver o
+custo de área. Testado exaustivamente antes de ligar (conversa com o
+consultor, comparando PALLET→L/MEIA com e sem forçar stock a recalcular):
+**mais espaço, não menos** — 672→815 unidades de carga, 35→47 racks,
+298,3→348,3 m² (+16,8%). É um trade-off consciente (chão por
+movimentabilidade), validado com o cliente antes de ligar, não um bug.
+
+Junto com isto, `Aceita` do "Rack Porta-Paletes" na folha «Racks» do master
+data da SIA deixou de incluir `L` (agora só `PALLET, MEIA`) — força toda a
+caixa L a ir só para a "Prateleira Leve" (único rack que ainda aceita L).
+É edição de DADOS, não de código — `Prateleira Leve.Aceita` já incluía `L`,
+por isso nenhuma alteração ao motor de alocação foi precisa, só a este valor
+na folha «Racks». Backup do ficheiro antes desta edição:
+`dados/archive/master_data_classificado_v3.xlsx.pre-L-removal.bak`.
+
+Não reintroduzir PALLET a competir livremente para a SIA sem confirmar de
+novo com o cliente — a mudança é deliberada, o algoritmo em si não mudou de
+opinião sobre o que minimiza chão (continua documentado acima, `Regra de
+escolha de caixa`).
+
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.
-- Domínio em pt-PT. Packing: `py3dbp` (3D) e `rectpack` (2D); `ortools` só para
-  refinamento de minimização de racks.
+- Domínio em pt-PT. Packing: `rectpack` (2D, footprint por nível de rack).
+  `py3dbp`/`ortools`/`pandas` estiveram listados em `requirements.txt` mas
+  nunca foram importados em código nenhum — removidos (ver
+  MIGRATION_LOG.md, Phase 6). Se algum dia forem mesmo precisos (ex.:
+  minimização de racks por CP-SAT), voltam quando o código que os usa for
+  escrito, não antes.
 - Pipeline em `main.run()` legível: 1 → 2 → 3. Testes: `python -m pytest`.
