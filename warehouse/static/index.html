@@ -2099,7 +2099,7 @@ function inicializarCanvas() {
       const tot = lastGerarData.totais_por_carga;
       const soma = Object.values(tot).reduce((a, s) => a + s, 0);
       html += `<br><br><b>Caixas (unidades de carga)</b><br>`;
-      for (const tipo of ["XS", "S", "M", "L", "MEIA", "PALLET"]) {
+      for (const tipo of ["XS", "S", "M", "L", "MEIA", "PALLET", "OVERSIZE"]) {
         if (tot[tipo]) html += `${tipo}: ${tot[tipo]}<br>`;
       }
       html += `<b>Total: ${soma}</b>`;
