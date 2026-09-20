@@ -2305,6 +2305,12 @@ function inicializarCanvas() {
                  `(ocupado: ${lastGerarData.area_racks_m2} m²${temChao ? ", racks + pilhas" : ""}; ` +
                  `corredores internos incluídos no bloco)` +
                  ` · <a href="/api/download/pecas-caixas" download style="color:#7fb3f0">⬇ Excel peças → tipo de caixa</a>`;
+      // resultados.xlsx: só se o backend o conseguiu mesmo escrever (o caso
+      // típico de falha é estar aberto no Excel) -- ver /api/gerar. Sem isto,
+      // o link aparecia sempre e dava 404 ou servia uma versão antiga.
+      if (lastGerarData.resultados_excel) {
+        html += ` · <a href="/api/download/resultados" download style="color:#7fb3f0">⬇ Excel resultados (dimensionamento)</a>`;
+      }
       // Peças volumosas em pilha no chão (sem rack): área calculada das cotas +
       // stock, reportada à parte porque não tem posições de rack nem corredores.
       const achao = lastGerarData.area_oversize_chao_m2 || 0;

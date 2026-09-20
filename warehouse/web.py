@@ -270,9 +270,18 @@ def gerar(body: GerarRequest):
 
     articles = data_access.load_articles(cfg)
     catalogo = data_access.load_catalog(cfg)
-    articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, local_cfg)  # Passo 0
+    articles, autonomia_resultados = boxing.aplicar_stock_autonomia(
+        articles, catalogo, local_cfg)  # Passo 0
     if body.carros_alvo > 0:
         articles = aplicar_autonomia(articles, body.carros_alvo)
+        # O rasto do Passo 0 foi calculado ANTES deste reescalamento, por isso
+        # o "stock teórico p/ autonomia mínima" que traz já não corresponde ao
+        # stock que o resto do pipeline usa. Descarta-se -- mesma escolha do
+        # cenario_autonomia.py, que injeta articles já escalados e passa
+        # autonomia_resultados=None. A folha Autonomia continua a sair, com o
+        # stock usado real e "-" nas colunas do Passo 0, em vez de mostrar
+        # dois números que não batem certo.
+        autonomia_resultados = None
     rack_types = data_access.load_rack_types(cfg)
     # ANTES de com_par_oversize -- ver a mesma nota em main.run.
     avisos_config = racking.verificar_chaves_substring_sem_correspondencia(rack_types, local_cfg)
@@ -282,6 +291,7 @@ def gerar(body: GerarRequest):
     article_idx = {a.sku: a for a in articles}
 
     assignments = boxing.plan_all(articles, catalogo, local_cfg)
+    justificacoes = boxing.justificar_all(articles, catalogo, local_cfg, assignments)
     # Ficheiro de download "Peças + Tipo_Caixa" -- feature do fluxo Excel
     # (copia a folha "Peças" original e acrescenta uma coluna): não tem
     # equivalente ainda com data_source="supabase" (não há "folha original"
@@ -363,6 +373,30 @@ def gerar(body: GerarRequest):
     resumo = area.resumo_area_total(dim, warehouse_layout, zonas,
                                     local_cfg.margem_estrutural_pct, area_chao_m2)
 
+    # resultados.xlsx -- MESMA folha-a-folha que o CLI (main.run) produz: até
+    # agora só saía por `python -m warehouse.main`, e quem usava o botão no
+    # browser ficava sem Lógica/Resumo/Detalhe/Autonomia/Validação/Avisos.
+    # Usa local_cfg (não cfg) para o ficheiro refletir a altura/picking/margem
+    # que o utilizador pôs no formulário, não os defaults do cliente.
+    #
+    # Falhar a escrita NÃO pode rebentar o /api/gerar: o caso normal é o
+    # ficheiro estar aberto no Excel (PermissionError no Windows), e perder o
+    # dimensionamento todo por causa disso seria pior do que ficar sem o
+    # download. Vira aviso, que já tem sítio próprio na resposta e na UI.
+    resultados_escrito = False
+    try:
+        io_excel.write_results(
+            local_cfg.output, assignments, requirements, dim,
+            io_excel.flatten_posicoes_para_detalhe(posicoes), avisos,
+            warehouse_layout, zonas, resumo, articles, justificacoes,
+            autonomia_resultados)
+        resultados_escrito = True
+    except OSError as e:
+        avisos = avisos + [
+            f"Não foi possível escrever {local_cfg.output.name}: {e}. "
+            "O dimensionamento está correto -- só o download do Excel é que "
+            "não ficou disponível (o ficheiro costuma estar aberto no Excel)."]
+
     totais_carga: dict[str, int] = {}
     for a in assignments:
         totais_carga[a.load_type.value] = totais_carga.get(a.load_type.value, 0) + a.num_unidades
@@ -424,6 +458,9 @@ def gerar(body: GerarRequest):
         "margem_estrutural_m2": round(resumo.margem_estrutural_m2, 2),
         "area_bruta_total_m2": round(resumo.area_bruta_total_m2, 2),
         "avisos": avisos,
+        # Só com isto a True é que faz sentido a UI mostrar o link de download
+        # (ver /api/download/resultados).
+        "resultados_excel": resultados_escrito,
         "totais_por_carga": totais_carga,
         "requirements": [
             {
@@ -510,6 +547,24 @@ def download_pecas_caixas():
     path = cfg.master_data.parent / "pecas_tipo_caixa.xlsx"
     return FileResponse(
         path, filename="pecas_tipo_caixa.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.get("/api/download/resultados")
+def download_resultados():
+    """resultados.xlsx do último /api/gerar: folhas Lógica, Resumo, Detalhe,
+    Autonomia, Validação e Avisos.
+
+    Ao contrário do pecas_tipo_caixa.xlsx, este existe para qualquer
+    data_source: o write_results constrói o workbook de raiz a partir do
+    output do pipeline, nunca lê o master data."""
+    path = cfg.output
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"{path.name} ainda não foi gerado -- corre «Gerar racks» primeiro.")
+    return FileResponse(
+        path, filename=path.name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 

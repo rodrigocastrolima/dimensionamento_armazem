@@ -429,6 +429,27 @@ sem tocar no Excel) e as três rotas de `web.py` que chamam `load_articles`
 qualquer escala por `carros_alvo` — sem isso ficariam a dimensionar a partir do
 `Stock_máx_un` bruto (placeholder que `load_articles` agora devolve).
 
+### Ficheiros que o pipeline escreve
+`io_excel.write_results` (o `resultados.xlsx`: folhas Lógica, Resumo, Detalhe,
+Autonomia, Validação, Avisos) tem **dois** call sites e ambos têm de continuar a
+produzir a mesma folha: `main.run` (CLI) e `/api/gerar` (botão «Gerar racks»).
+Até 2026-09 só o CLI é que o escrevia, e quem usava o browser ficava sem o
+Excel todo — só com o `pecas_tipo_caixa.xlsx`, que é outra coisa (cópia da
+folha «Peças» + coluna `Tipo_Caixa`). O helper que achata as posições para a
+folha «Detalhe» vive em `io_excel.flatten_posicoes_para_detalhe` precisamente
+por ter os dois consumidores.
+
+Diferenças legítimas entre os dois: o `/api/gerar` usa a altura/picking/margem
+do formulário (`local_cfg`), o CLI usa as do cliente; e com `carros_alvo > 0` o
+`/api/gerar` passa `autonomia_resultados=None`, porque o rasto do Passo 0 é
+anterior ao reescalamento (a folha Autonomia sai na mesma, com "-" nas colunas
+do Passo 0 em vez de números que não batem certo).
+
+A escrita está dentro de `try/except OSError`: o modo de falha normal é o
+ficheiro estar aberto no Excel (`PermissionError`), e isso **não** pode rebentar
+o `/api/gerar` — vira aviso e `resultados_excel: false` na resposta, que é o que
+esconde o link de download na UI.
+
 ## Em aberto
 - 16 SKUs sem `Peso_kg` no master data (#N/A) — lidos como 0.0 na leitura
   (peso desconhecido não corta capacidade); falta confirmar se é o critério

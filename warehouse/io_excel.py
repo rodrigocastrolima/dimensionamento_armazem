@@ -300,6 +300,30 @@ def write_pecas_com_caixa(master_path: Path, out_path: Path,
     wb_out.save(out_path)
 
 
+def flatten_posicoes_para_detalhe(posicoes) -> list:
+    """Achata PosicaoChao -> linhas simples (rack_numero, rack_tipologia, sku,
+    descricao, load_type, pecas_nesta_caixa) para a sheet 'Detalhe' do Excel.
+    rack_numero é sintético: 1 por módulo físico, sequencial por tipologia.
+
+    Vive aqui (e não no main) porque tem dois consumidores -- o CLI
+    (main.run) e o /api/gerar do servidor web -- e ambos têm de produzir
+    exatamente a mesma folha 'Detalhe'."""
+    from types import SimpleNamespace
+    linhas = []
+    rack_numero = 0
+    for pos in posicoes:
+        for bloco in pos.blocos:
+            rack_numero += 1
+            for nivel in bloco.niveis:
+                for caixa in nivel.caixas:
+                    linhas.append(SimpleNamespace(
+                        rack_numero=rack_numero, rack_tipologia=pos.rack_nome,
+                        sku=caixa.sku, descricao=caixa.descricao,
+                        load_type=caixa.load_type, pecas_nesta_caixa=caixa.pecas_nesta_caixa,
+                    ))
+    return linhas
+
+
 def write_results(path: Path,
                   assignments: list[BoxAssignment],
                   requirements: list[RackRequirement],

@@ -14,26 +14,6 @@ from .config import Config
 from .models import Article
 
 
-def _flatten_para_excel(posicoes) -> list:
-    """Achata PosicaoChao -> linhas simples (rack_numero, rack_tipologia, sku,
-    descricao, load_type, pecas_nesta_caixa) para a sheet 'Detalhe' do Excel.
-    rack_numero é sintético: 1 por módulo físico, sequencial por tipologia."""
-    from types import SimpleNamespace
-    linhas = []
-    rack_numero = 0
-    for pos in posicoes:
-        for bloco in pos.blocos:
-            rack_numero += 1
-            for nivel in bloco.niveis:
-                for caixa in nivel.caixas:
-                    linhas.append(SimpleNamespace(
-                        rack_numero=rack_numero, rack_tipologia=pos.rack_nome,
-                        sku=caixa.sku, descricao=caixa.descricao,
-                        load_type=caixa.load_type, pecas_nesta_caixa=caixa.pecas_nesta_caixa,
-                    ))
-    return linhas
-
-
 def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTotal:
     """articles: se fornecido, substitui o load_articles + Passo 0 do
     master_data (usado por cenario_autonomia.py para injetar stock_max_un já
@@ -98,7 +78,7 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
     dim = area.floor_area(posicoes, rack_by_name, wl.pilhas_chao)
     resumo = area.resumo_area_total(dim, wl, zonas, cfg.margem_estrutural_pct, area_chao_m2)
 
-    slots = _flatten_para_excel(posicoes)
+    slots = io_excel.flatten_posicoes_para_detalhe(posicoes)
     io_excel.write_results(cfg.output, assignments, requirements, dim, slots, avisos, wl,
                            zonas, resumo, articles, justificacoes, autonomia_resultados)
     print(f"Area de racks: {dim.area_racks_m2:,.1f} m2")
