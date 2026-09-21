@@ -36,6 +36,19 @@
   #resumo { margin-top: 10px; font-size: 13px; }
   #resumo table { width: auto; min-width: 500px; }
   .avisos { color: #ff9f43; font-size: 12px; margin-top: 8px; }
+  /* Ocupação do armazém (painel «Informações»). A barra é sempre desenhada
+     sobre a MESMA largura total, para as leituras antes/depois de acrescentar
+     filas sandbox serem comparáveis a olho -- é o denominador que cresce. */
+  .ocup-bloco { margin-top: 12px; padding-top: 10px; border-top: 1px solid #3a3a3a; }
+  .ocup-destaque { font-size: 26px; font-weight: 700; line-height: 1.1; color: #e0e0e0; }
+  .ocup-destaque small { font-size: 12px; font-weight: 400; color: #999; }
+  .ocup-barra { height: 10px; background: #2a2a2a; border-radius: 5px; overflow: hidden;
+                margin: 6px 0 4px 0; }
+  .ocup-barra i { display: block; height: 100%; border-radius: 5px; transition: width .25s ease; }
+  .ocup-linhas { display: grid; grid-template-columns: 1fr auto; gap: 1px 10px;
+                 font-size: 12px; color: #bbb; margin-top: 8px; }
+  .ocup-linhas b { color: #e0e0e0; font-weight: 600; }
+  .ocup-sandbox { font-size: 11px; color: #fbbf24; margin-top: 8px; line-height: 1.5; }
   .legend { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; flex-wrap: wrap; }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
   .swatch { width: 12px; height: 12px; display: inline-block; border-radius: 2px; }
@@ -2060,13 +2073,87 @@ function inicializarCanvas() {
     desenharBlocks();
   }
 
+  // Ocupação do armazém: quanto do espaço de armazenagem CONSTRUÍDO está de
+  // facto usado. Os racks REAIS vêm já agregados do backend
+  // (racking.resumo_ocupacao) -- não se recontam aqui. As filas SANDBOX do
+  // canvas entram só no DENOMINADOR: nascem sempre vazias quando existe um
+  // bloco de racks (ver web.py, só "pedem emprestado" conteúdo real quando
+  // bloco_racks is None). É por isso que acrescentar sandbox faz a percentagem
+  // DESCER -- estás a desenhar capacidade que ainda não encheste.
+  //
+  // O nº de níveis de uma posição NÃO é o do catálogo: depende do pé-direito e
+  // dos tetos de empilhamento do cliente. Por isso vem do backend, por
+  // tipologia, em capacidade_por_tipologia (racking.capacidade_por_posicao) --
+  // aqui só se multiplica.
+  function calcularOcupacao() {
+    if (!lastGerarData || !lastGerarData.ocupacao) return null;
+    const t = lastGerarData.ocupacao.total;
+    const cap = lastGerarData.capacidade_por_tipologia || {};
+    const o = {
+      posicoesOcupadas: t.posicoes_ocupadas, posicoes: t.posicoes,
+      niveisOcupados: t.niveis_ocupados, niveis: t.niveis,
+      areaUsada: t.area_usada_m2, area: t.area_total_m2,
+      volumeUsado: t.volume_usado_m3, volume: t.volume_total_m3,
+      sbFilas: 0, sbPosicoes: 0, sbNiveis: 0, sbDesconhecidas: [],
+    };
+    for (const b of canvasBlocks) {
+      if (b.type !== "rack_manual") continue;
+      o.sbFilas++;
+      const c = cap[b.rack_tipo];
+      if (!c) { o.sbDesconhecidas.push(b.rack_tipo); continue; }
+      const nPos = (b.n || 0) * (b.dupla ? 2 : 1);
+      const nNiveis = nPos * c.niveis_por_posicao_total;
+      o.sbPosicoes += nPos; o.sbNiveis += nNiveis;
+      o.posicoes += nPos; o.niveis += nNiveis;
+      o.area += nNiveis * c.area_nivel_m2;
+      o.volume += nNiveis * c.volume_nivel_m3;
+    }
+    return o;
+  }
+
+  function blocoOcupacao() {
+    const o = calcularOcupacao();
+    if (!o || !o.niveis) return "";
+    const pct = (a, b) => (b > 0 ? (100 * a) / b : 0);
+    const pNiveis = pct(o.niveisOcupados, o.niveis);
+    // Ocupação ALTA é um alerta, não um sucesso: significa que não há para
+    // onde crescer. Daí o vermelho em cima e o verde em baixo, ao contrário
+    // do que uma barra de progresso normal sugeriria.
+    const cor = pNiveis >= 95 ? "#ef4444" : pNiveis >= 80 ? "#fbbf24" : "#22c55e";
+    const livres = o.niveis - o.niveisOcupados;
+    let html = `<div class="ocup-bloco"><b>Ocupação do armazém</b>`;
+    html += `<div class="ocup-destaque">${pNiveis.toFixed(1)}% <small>dos níveis</small></div>`;
+    html += `<div class="ocup-barra"><i style="width:${Math.min(pNiveis, 100).toFixed(1)}%;background:${cor}"></i></div>`;
+    html += `<div style="font-size:11px;color:#999">${o.niveisOcupados} de ${o.niveis} níveis ocupados · <b style="color:#bbb">${livres} livre${livres === 1 ? "" : "s"}</b></div>`;
+    html += `<div class="ocup-linhas">`;
+    html += `<span>Posições de chão</span><b>${o.posicoesOcupadas} / ${o.posicoes} · ${pct(o.posicoesOcupadas, o.posicoes).toFixed(1)}%</b>`;
+    html += `<span>Área de prateleira</span><b>${pct(o.areaUsada, o.area).toFixed(1)}%</b>`;
+    html += `<span>Volume</span><b>${pct(o.volumeUsado, o.volume).toFixed(1)}%</b>`;
+    html += `</div>`;
+    if (o.sbFilas) {
+      html += `<div class="ocup-sandbox">+ ${o.sbFilas} fila${o.sbFilas === 1 ? "" : "s"} sandbox: `
+            + `${o.sbPosicoes} posições, ${o.sbNiveis} níveis vazios (já contados acima)`;
+      if (o.sbDesconhecidas.length) {
+        html += `<br>⚠ sem capacidade conhecida: ${[...new Set(o.sbDesconhecidas)].join(", ")} `
+              + `— gera os racks outra vez`;
+      }
+      html += `</div>`;
+    }
+    return html + `</div>`;
+  }
+
   function atualizarInfo() {
     const el = document.getElementById("canvas-info");
     let html = "";
     const env = envolvente();
     if (env) {
-      html += `<b>Envolvente do arranjo</b><br>${env.w.toFixed(2)} × ${env.h.toFixed(2)} m = <b>${env.area.toFixed(2)} m²</b><br><br>`;
+      html += `<b>Envolvente do arranjo</b><br>${env.w.toFixed(2)} × ${env.h.toFixed(2)} m = <b>${env.area.toFixed(2)} m²</b><br>`;
     }
+    // Ocupação logo a seguir à área: são as duas leituras de topo do painel
+    // (quanto chão ocupo / quanto do que construí está cheio). Recalcula-se a
+    // cada desenharBlocks(), por isso segue as filas sandbox em tempo real.
+    html += blocoOcupacao();
+    html += `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #3a3a3a"></div>`;
     const b = canvasBlocks.find(x => x.id === selBlockId);
     if (b) {
       html += `<b>${b.nome}</b><br>`;

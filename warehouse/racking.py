@@ -937,3 +937,98 @@ def allocate_to_racks(assignments: list[BoxAssignment],
     for lista in posicoes_por_tipologia.values():
         resultado.extend(lista)
     return resultado, avisos
+
+
+# ------------------------------------------------------------------ ocupação
+
+def capacidade_por_posicao(rack: RackType, cfg: Config) -> dict:
+    """Capacidade de UMA posição de chão desta tipologia, com a configuração
+    atual (pé-direito, tetos de empilhamento, empilhamento nível a nível).
+
+    Existe para o front end poder contar a capacidade de uma fila de racks
+    SANDBOX (colocada à mão no canvas, ver layout.gerar_fila_manual) sem
+    reimplementar `blocos_empilhados`/`niveis_efetivos` em JavaScript: o nº de
+    níveis de uma posição NÃO é `rack.niveis` do catálogo, depende de
+    altura_armazem_m + Config.max_modulos_por_tipologia +
+    Config.empilhamento_por_nivel. Duplicar essa regra no cliente era garantir
+    que um dia divergia da do servidor.
+
+    A área/volume de um nível são os do packer 2D real (ver _cabe_no_nivel:
+    `packer.add_bin(rack.larg_m, rack.prof_m)`), não uma aproximação."""
+    blocos = blocos_empilhados(rack, cfg.altura_armazem_m,
+                               cfg.max_modulos_por_tipologia,
+                               cfg.empilhamento_por_nivel)
+    niveis = niveis_efetivos(rack, cfg.altura_armazem_m, cfg.empilhamento_por_nivel)
+    area_nivel = rack.larg_m * rack.prof_m
+    return {
+        "blocos_por_posicao": blocos,
+        "niveis_por_posicao": niveis,
+        "niveis_por_posicao_total": blocos * niveis,
+        "area_nivel_m2": round(area_nivel, 4),
+        "volume_nivel_m3": round(area_nivel * rack.alt_nivel_m, 4),
+    }
+
+
+def resumo_ocupacao(posicoes: list[PosicaoChao], rack_by_name: dict) -> dict:
+    """Quanto do espaço de armazenagem CONSTRUÍDO está de facto usado.
+
+    Três granularidades, porque sozinha nenhuma é honesta:
+    - `niveis`: um nível conta como ocupado se tiver ≥1 caixa. É o número que
+      um gestor de armazém reconhece, mas é otimista -- um nível com uma caixa
+      conta igual a um cheio.
+    - `area`: soma da footprint das caixas colocadas / soma de
+      (rack.larg_m x rack.prof_m) por nível. É a mesma área que o packer 2D usa
+      como bin, por isso 100% aqui significa mesmo "não cabe lá mais nada".
+    - `volume`: idem em 3D, contra rack.alt_nivel_m. `CaixaColocada.alt_m` JÁ é
+      a altura do stack inteiro (ver _empacotar_em_stacks, stack_height) --
+      multiplicar por num_boxes_in_stack contaria a dobrar.
+
+    Só olha para o que existe: não conta racks fantasma (preview) nem filas
+    sandbox (o front end acrescenta essas ao denominador, ver
+    capacidade_por_posicao)."""
+    por_tipologia: dict[str, dict] = {}
+    for pos in posicoes:
+        rack = rack_by_name.get(pos.rack_nome)
+        if rack is None:
+            continue
+        t = por_tipologia.setdefault(pos.rack_nome, {
+            "rack_nome": pos.rack_nome, "posicoes": 0, "posicoes_ocupadas": 0,
+            "niveis": 0, "niveis_ocupados": 0,
+            "area_total_m2": 0.0, "area_usada_m2": 0.0,
+            "volume_total_m3": 0.0, "volume_usado_m3": 0.0,
+            "unidades_carga": 0,
+        })
+        area_nivel = rack.larg_m * rack.prof_m
+        t["posicoes"] += 1
+        tem_caixa = False
+        for bloco in pos.blocos:
+            for nivel in bloco.niveis:
+                t["niveis"] += 1
+                t["area_total_m2"] += area_nivel
+                t["volume_total_m3"] += area_nivel * rack.alt_nivel_m
+                if nivel.caixas:
+                    t["niveis_ocupados"] += 1
+                    tem_caixa = True
+                for c in nivel.caixas:
+                    t["unidades_carga"] += c.num_boxes_in_stack
+                    t["area_usada_m2"] += c.comp_m * c.larg_m
+                    t["volume_usado_m3"] += c.comp_m * c.larg_m * c.alt_m
+        if tem_caixa:
+            t["posicoes_ocupadas"] += 1
+
+    total = {"rack_nome": "TOTAL", "posicoes": 0, "posicoes_ocupadas": 0,
+             "niveis": 0, "niveis_ocupados": 0,
+             "area_total_m2": 0.0, "area_usada_m2": 0.0,
+             "volume_total_m3": 0.0, "volume_usado_m3": 0.0, "unidades_carga": 0}
+    for t in por_tipologia.values():
+        for k, v in t.items():
+            if k != "rack_nome":
+                total[k] += v
+
+    def _arredonda(d: dict) -> dict:
+        return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in d.items()}
+
+    return {
+        "por_tipologia": [_arredonda(t) for t in por_tipologia.values()],
+        "total": _arredonda(total),
+    }

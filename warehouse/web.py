@@ -461,6 +461,17 @@ def gerar(body: GerarRequest):
         # Só com isto a True é que faz sentido a UI mostrar o link de download
         # (ver /api/download/resultados).
         "resultados_excel": resultados_escrito,
+        # Ocupação do espaço de armazenagem CONSTRUÍDO (níveis/área/volume).
+        # Conta só os racks reais; as filas sandbox que o utilizador põe no
+        # canvas entram do lado do cliente, via capacidade_por_tipologia.
+        "ocupacao": racking.resumo_ocupacao(posicoes, rack_by_name),
+        # Capacidade de UMA posição de chão, por tipologia, com esta config --
+        # inclui tipologias sem racks reais (o utilizador pode na mesma pôr uma
+        # fila sandbox dessas) e as sintéticas "(emparelhada)", que o
+        # /api/racks não conhece por ler a folha «Racks» tal e qual.
+        "capacidade_por_tipologia": {
+            r.nome: racking.capacidade_por_posicao(r, local_cfg) for r in rack_types
+        },
         "totais_por_carga": totais_carga,
         "requirements": [
             {
