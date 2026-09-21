@@ -339,12 +339,23 @@ def gerar(body: GerarRequest):
     avisos = avisos + warehouse_layout.avisos
     layout_json = _serializar_layout(warehouse_layout.posicoes, rack_by_name)
 
-    # Geometria real do bloco de racks (posições/corredores/espaço livre) no
-    # referencial LOCAL do próprio bloco (y0=0, sem o deslocamento das zonas)
-    # -- mesma chamada com zonas=None que /api/render-layout já faz para
-    # reposicionar o bloco no canvas. Serve só para o canvas 2D desenhar a
-    # forma real em vez de um retângulo único; não substitui warehouse_layout
-    # (que continua a ser a fonte da verdade da área/avisos).
+    # Geometria real do bloco de racks (posições + corredores) no referencial
+    # LOCAL do próprio bloco (y0=0, sem o deslocamento das zonas) -- mesma
+    # chamada com zonas=None que /api/render-layout já faz para reposicionar o
+    # bloco no canvas. Serve só para o canvas 2D desenhar a forma real em vez
+    # de um retângulo único; não substitui warehouse_layout (que continua a ser
+    # a fonte da verdade da área/avisos).
+    #
+    # `espacos_livres` NÃO vai aqui de propósito. Media-se que só cobre um dos
+    # três tipos de folga do bloco -- a sobra à direita da última fiada de cada
+    # prateleira -- e deixa de fora a folga vertical por baixo de um chunk mais
+    # raso que a sua prateleira e a cauda das fiadas incompletas. Nos dados da
+    # SIA isso eram 5.04 m² pintados de verde contra 24.93 m² de folga real,
+    # ou seja o verde dava a entender que o espaço livre estava mapeado quando
+    # a maior parte dele não estava. Até o cálculo cobrir os três casos, o
+    # canvas mostra só o que sabe: roxo = rack, cinzento = corredor, branco =
+    # por classificar. `WarehouseLayout.espacos_livres` mantém-se intacto --
+    # é outro consumidor (gerar_racks_fantasma, ver /api/render-layout).
     layout_local = layout_mod.gerar_layout(
         posicoes, rack_by_name, None,
         local_cfg.largura_max_m, local_cfg.profundidade_max_m,
@@ -359,11 +370,6 @@ def gerar(body: GerarRequest):
         "corredores": [
             {"x": c.x_m, "y": c.y_m, "w": c.comp_m, "h": c.larg_m}
             for c in layout_local.corredores
-        ],
-        "espacos_livres": [
-            {"rack_nome": e.rack_nome, "x": e.x_m, "y": e.y_m,
-             "w": e.comp_m, "h": e.larg_m}
-            for e in layout_local.espacos_livres
         ],
     }
 

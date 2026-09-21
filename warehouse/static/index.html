@@ -2149,12 +2149,13 @@ function inicializarCanvas() {
       g.setAttribute("transform", `rotate(${b.rot || 0} ${cx} ${cy})`);
 
       // Bloco de racks com geometria real (b.geom, vinda do backend --
-      // posições/corredores/espaço livre já calculados por layout.py): o
-      // rect exterior fica só de contorno (é o alvo de drag/rotação; tem de
-      // continuar a cobrir a área toda para o mousedown funcionar em
-      // qualquer ponto), e desenham-se por cima as formas reais -- racks
-      // sólidos, corredores mais claros, espaço livre a verde tracejado
-      // (a mesma cor que as racks fantasma vão usar mais tarde). Sem b.geom
+      // posições e corredores calculados por layout.py): o rect exterior fica
+      // só de contorno (é o alvo de drag/rotação; tem de continuar a cobrir a
+      // área toda para o mousedown funcionar em qualquer ponto), e desenham-se
+      // por cima as formas reais. Três leituras, e só três: roxo = posição de
+      // rack, cinzento = corredor, branco = por classificar. O verde do
+      // «espaço livre» foi retirado -- ver a nota em web.py, o cálculo só
+      // apanhava uma parte da folga e dava a impressão contrária. Sem b.geom
       // (zonas, ou fallback), mantém-se o retângulo único de sempre.
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       rect.setAttribute("x", x); rect.setAttribute("y", y);
@@ -2187,7 +2188,6 @@ function inicializarCanvas() {
           g.appendChild(el);
         };
         for (const c of b.geom.corredores) sub(c, "#e5e0ee", "#c9bfe0", null);
-        for (const e2 of b.geom.espacos_livres) sub(e2, "#dcfce7", "#4ade80", "4,3");
         for (const p of b.geom.posicoes) sub(p, "#d8cef0", "#7c3aed", null);
       }
 
@@ -2550,7 +2550,7 @@ function inicializarCanvas() {
       // fazem sentido perder-se só porque se gerou o bloco de racks outra vez.
       const fixosExistentes = canvasBlocks.filter(b => b.type === "obstaculo" || b.type === "rack_manual");
       canvasBlocks = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b })).concat(fixosExistentes);
-      // Geometria real (posições/corredores/espaço livre) do bloco de racks,
+      // Geometria real (posições e corredores) do bloco de racks,
       // no referencial local do próprio bloco -- anexada ao bloco "racking"
       // para desenharBlocks() a desenhar por cima do retângulo único de sempre.
       const blocoRacks = canvasBlocks.find(b => b.type === "racking");
