@@ -4,55 +4,203 @@
 <meta charset="utf-8">
 <title>Simulador de Armazém</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 0; background: #1e1e1e; color: #e0e0e0; }
-  header { padding: 12px 20px; background: #111; display: flex; align-items: center; gap: 20px; }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  nav { display: flex; gap: 8px; }
-  nav button { background: #2a2a2a; color: #ccc; border: 1px solid #444; padding: 6px 14px;
-               border-radius: 4px; cursor: pointer; font-size: 13px; }
-  nav button.active { background: #3a7bd5; color: white; border-color: #3a7bd5; }
-  .tab { display: none; padding: 16px 20px; }
+  /* ---------------------------------------------------------------- tokens
+     Uma paleta só, em variáveis, em vez de hexadecimais soltos por todo o
+     ficheiro. Mudar o tema passa a ser mudar estas linhas. */
+  :root {
+    --bg: #0f1115;
+    --surface: #161920;
+    --surface-2: #1c2029;
+    --surface-3: #232833;
+    --border: #262b36;
+    --border-strong: #333a48;
+    --text: #e6e9ef;
+    --text-dim: #9aa3b2;
+    --text-faint: #6b7280;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+    --ok: #22c55e;
+    --r: 6px;
+    --r-lg: 10px;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+         margin: 0; background: var(--bg); color: var(--text);
+         -webkit-font-smoothing: antialiased; font-size: 13px; }
+
+  /* ----------------------------------------------------------------- shell */
+  header { padding: 0 20px; background: var(--surface); display: flex; align-items: stretch;
+           gap: 28px; border-bottom: 1px solid var(--border); height: 52px; }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; letter-spacing: -0.01em;
+              display: flex; align-items: center; gap: 9px; color: var(--text); }
+  header h1::before { content: ""; width: 7px; height: 16px; border-radius: 2px;
+                      background: linear-gradient(180deg, var(--accent), #1d4ed8); }
+  nav { display: flex; gap: 2px; align-items: stretch; }
+  /* Separadores em sublinhado, não em botões azuis cheios: um tab bar lê-se
+     como navegação, uma fila de botões azuis lê-se como sete ações a competir. */
+  /* border-radius: 0 -- sem isto o raio da regra base de `button` arredondava
+     o sublinhado do separador ativo e ele lia-se como uma pastilha solta. */
+  nav button { background: none; color: var(--text-dim); border: none; border-radius: 0;
+               border-bottom: 2px solid transparent; padding: 0 14px; cursor: pointer;
+               font-size: 13px; font-family: inherit; font-weight: 500; transition: color .15s; }
+  nav button:hover { color: var(--text); }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab { display: none; padding: 18px 20px; }
   .tab.active { display: block; }
+
+  /* ---------------------------------------------------------------- tabelas */
   table { border-collapse: collapse; width: 100%; font-size: 12px; }
-  th, td { border: 1px solid #3a3a3a; padding: 4px 6px; text-align: left; }
-  th { background: #2a2a2a; position: sticky; top: 0; }
-  input { background: #2a2a2a; color: #e0e0e0; border: 1px solid #444; width: 100%;
-          box-sizing: border-box; padding: 2px 4px; font-size: 12px; }
-  tr.nova-linha td { background: #1a2e1a; }
-  .table-wrap { max-height: 75vh; overflow: auto; border: 1px solid #3a3a3a; }
-  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
-  button.action { background: #3a7bd5; color: white; border: none; padding: 8px 16px;
-                  border-radius: 4px; cursor: pointer; font-size: 13px; }
-  button.action:hover { background: #2d63ad; }
+  th, td { border-bottom: 1px solid var(--border); padding: 7px 10px; text-align: left; }
+  th { background: var(--surface-2); position: sticky; top: 0; font-weight: 600;
+       color: var(--text-dim); text-transform: uppercase; font-size: 10px;
+       letter-spacing: .05em; border-bottom: 1px solid var(--border-strong); }
+  tbody tr:hover td { background: rgba(255,255,255,.02); }
+  tr.nova-linha td { background: rgba(34,197,94,.08); }
+  .table-wrap { max-height: 75vh; overflow: auto; border: 1px solid var(--border);
+                border-radius: var(--r-lg); background: var(--surface); }
+
+  /* ----------------------------------------------------------------- inputs */
+  input, select { background: var(--surface-2); color: var(--text);
+                  border: 1px solid var(--border-strong); width: 100%;
+                  padding: 6px 8px; font-size: 12px; font-family: inherit;
+                  border-radius: var(--r); transition: border-color .15s, box-shadow .15s; }
+  input:focus, select:focus { outline: none; border-color: var(--accent);
+                              box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+  input[type=checkbox] { width: auto; accent-color: var(--accent); }
+  select { appearance: none; padding-right: 26px;
+           background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%239aa3b2' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+           background-repeat: no-repeat; background-position: right 9px center; }
+
+  /* ---------------------------------------------------------------- botões
+     Três níveis, e só isso: primário (a ação da página), normal (tudo o resto),
+     ghost (destrutivo/menor). `button.action` mantém-se como alias do primário
+     porque o JS do 3D adiciona/remove essa classe. */
+  button { font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer;
+           border-radius: var(--r); padding: 7px 12px; transition: background .15s, border-color .15s, color .15s;
+           background: var(--surface-3); color: var(--text); border: 1px solid var(--border-strong);
+           display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  button:hover { background: #2b3140; border-color: #3f4757; }
+  button:active { transform: translateY(0.5px); }
+  button svg { width: 14px; height: 14px; flex: none; opacity: .75; }
+  button.action, button.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent);
+                                      font-weight: 600; padding: 7px 15px; }
+  button.action:hover, button.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  button.action svg, button.btn-primary svg { opacity: .9; }
+  button.btn-ghost { background: none; border-color: transparent; color: var(--text-dim); }
+  button.btn-ghost:hover { background: var(--surface-3); color: var(--text); border-color: transparent; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  /* --------------------------------------------------------------- toolbars */
+  .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  /* Cabeçalho da página de layout: parâmetros em cima, ações em baixo --
+     em vez de 5 campos e 7 botões todos na mesma linha. */
+  .page-head { display: flex; flex-direction: column; gap: 12px; margin-bottom: 14px;
+               padding: 12px 14px; background: var(--surface); border: 1px solid var(--border);
+               border-radius: var(--r-lg); }
+  .params { display: flex; gap: 8px; flex-wrap: wrap; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field > label { font-size: 10px; font-weight: 600; letter-spacing: .05em;
+                   text-transform: uppercase; color: var(--text-faint); }
+  .input-unit { position: relative; display: flex; align-items: center; }
+  .input-unit input { width: 104px; padding-right: 34px; }
+  .input-unit span { position: absolute; right: 9px; font-size: 11px; color: var(--text-faint);
+                     pointer-events: none; }
+  .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .actions .sep { width: 1px; height: 20px; background: var(--border-strong); margin: 0 2px; }
+  .actions .grow { flex: 1; }
+
+  /* ----------------------------------------------------------------- cards */
+  .card { background: var(--surface); border: 1px solid var(--border);
+          border-radius: var(--r-lg); padding: 12px; }
+  .card h3 { margin: 0 0 10px 0; font-size: 10px; font-weight: 600; letter-spacing: .06em;
+             text-transform: uppercase; color: var(--text-faint); }
+  .card .lista { font-size: 11px; color: var(--text-dim); margin-top: 10px; line-height: 1.7; }
+  .card .lista button { padding: 1px 6px; font-size: 11px; }
+
+  /* ------------------------------------------------------------ 3D / viewer */
   .viewer-wrap { display: flex; gap: 12px; }
-  #viewer { flex: 1; height: calc(100vh - 170px); background: #111; border: 1px solid #3a3a3a; position: relative; overflow: hidden; }
-  .rotulo-zona { color: #fff; background: rgba(0,0,0,0.55); padding: 2px 6px; border-radius: 3px;
+  #viewer { flex: 1; height: calc(100vh - 170px); background: #111; border: 1px solid var(--border);
+            border-radius: var(--r-lg); position: relative; overflow: hidden; }
+  .rotulo-zona { color: #fff; background: rgba(0,0,0,0.6); padding: 2px 6px; border-radius: 3px;
                  font-size: 11px; white-space: nowrap; transform: translateY(-100%); pointer-events: none; }
-  #painel-rack { flex: none; width: 280px; height: calc(100vh - 170px); background: #181818; border: 1px solid #3a3a3a;
-                 padding: 10px; overflow-y: auto; font-size: 12px; }
+  #painel-rack { flex: none; width: 280px; height: calc(100vh - 170px); background: var(--surface);
+                 border: 1px solid var(--border); border-radius: var(--r-lg);
+                 padding: 12px; overflow-y: auto; font-size: 12px; }
   #painel-rack h4 { margin: 0 0 8px 0; font-size: 13px; }
-  #painel-rack .fechar { float: right; cursor: pointer; color: #999; }
+  #painel-rack .fechar { float: right; cursor: pointer; color: var(--text-faint); }
   #painel-rack table { font-size: 11px; }
-  #resumo { margin-top: 10px; font-size: 13px; }
+  #resumo { margin-top: 12px; font-size: 13px; }
   #resumo table { width: auto; min-width: 500px; }
-  .avisos { color: #ff9f43; font-size: 12px; margin-top: 8px; }
-  /* Ocupação do armazém (painel «Informações»). A barra é sempre desenhada
-     sobre a MESMA largura total, para as leituras antes/depois de acrescentar
-     filas sandbox serem comparáveis a olho -- é o denominador que cresce. */
-  .ocup-bloco { margin-top: 12px; padding-top: 10px; border-top: 1px solid #3a3a3a; }
-  .ocup-destaque { font-size: 26px; font-weight: 700; line-height: 1.1; color: #e0e0e0; }
-  .ocup-destaque small { font-size: 12px; font-weight: 400; color: #999; }
-  .ocup-barra { height: 10px; background: #2a2a2a; border-radius: 5px; overflow: hidden;
-                margin: 6px 0 4px 0; }
-  .ocup-barra i { display: block; height: 100%; border-radius: 5px; transition: width .25s ease; }
-  .ocup-linhas { display: grid; grid-template-columns: 1fr auto; gap: 1px 10px;
-                 font-size: 12px; color: #bbb; margin-top: 8px; }
-  .ocup-linhas b { color: #e0e0e0; font-weight: 600; }
-  .ocup-sandbox { font-size: 11px; color: #fbbf24; margin-top: 8px; line-height: 1.5; }
-  .legend { display: flex; gap: 14px; margin-top: 8px; font-size: 12px; flex-wrap: wrap; }
+
+  /* ----------------------------------------------------------------- avisos
+     Callout com barra lateral em vez de texto laranja solto: um aviso tem de
+     se ler como um aviso, não como mais uma linha de rodapé. */
+  .avisos { color: #fbbf24; font-size: 11.5px; margin-top: 10px; line-height: 1.55;
+            background: rgba(245,158,11,.07); border: 1px solid rgba(245,158,11,.22);
+            border-left: 3px solid var(--warn); border-radius: var(--r);
+            padding: 9px 12px; max-height: 96px; overflow-y: auto; }
+
+  /* -------------------------------------------------- ocupação do armazém
+     A barra é sempre desenhada sobre a MESMA largura total, para as leituras
+     antes/depois de acrescentar filas sandbox serem comparáveis a olho -- é o
+     denominador que cresce. */
+  .ocup-bloco { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .ocup-bloco > b:first-child { font-size: 10px; font-weight: 600; letter-spacing: .06em;
+                                text-transform: uppercase; color: var(--text-faint); }
+  .ocup-destaque { font-size: 30px; font-weight: 650; line-height: 1.05; color: var(--text);
+                   letter-spacing: -0.02em; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .ocup-destaque small { font-size: 11px; font-weight: 500; color: var(--text-faint);
+                         letter-spacing: 0; }
+  .ocup-barra { height: 6px; background: var(--surface-3); border-radius: 3px; overflow: hidden;
+                margin: 8px 0 6px 0; }
+  .ocup-barra i { display: block; height: 100%; border-radius: 3px; transition: width .3s ease; }
+  .ocup-linhas { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px;
+                 font-size: 11.5px; color: var(--text-dim); margin-top: 10px; }
+  .ocup-linhas b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ocup-sandbox { font-size: 11px; color: #fbbf24; margin-top: 10px; line-height: 1.5;
+                  background: rgba(245,158,11,.07); border-radius: var(--r); padding: 7px 9px; }
+
+  /* ---------------------------------------------- secções do painel de info
+     Todos os blocos do cartão «Informações» usam o mesmo rótulo e a mesma
+     grelha rótulo/valor da ocupação, em vez de <b>título</b> + linhas soltas. */
+  .info-sec { font-size: 10px; font-weight: 600; letter-spacing: .06em;
+              text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px; }
+  .info-destaque { font-size: 17px; font-weight: 650; color: var(--text);
+                   letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+  .info-destaque small { display: block; font-size: 11px; font-weight: 400;
+                         color: var(--text-dim); letter-spacing: 0; margin-top: 2px; }
+  .info-div { margin: 12px 0; border-top: 1px solid var(--border); }
+
+  /* ---------------------------------------------------------------- legenda */
+  .legend { display: flex; gap: 14px; margin-top: 10px; font-size: 12px; flex-wrap: wrap;
+            color: var(--text-dim); }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
-  .swatch { width: 12px; height: 12px; display: inline-block; border-radius: 2px; }
-  .dica { font-size: 12px; color: #999; margin-bottom: 6px; }
+  .swatch { width: 10px; height: 10px; display: inline-block; border-radius: 2px; }
+  .dica { font-size: 11.5px; color: var(--text-faint); margin-bottom: 10px; line-height: 1.5; }
+
+  /* -------------------------------------------- resumo + links de download
+     O resumo do bloco de racks é a primeira leitura da página: fica numa
+     faixa própria, com os downloads como pastilhas à direita do texto em vez
+     de links soltos com setas. */
+  #canvas-resumo { font-size: 12.5px; color: var(--text-dim); margin-bottom: 10px;
+                   line-height: 1.6; }
+  #canvas-resumo b { color: var(--text); font-weight: 600; }
+  .link-dl { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px;
+             padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 500;
+             text-decoration: none; color: #93c5fd; background: rgba(59,130,246,.12);
+             border: 1px solid rgba(59,130,246,.28); vertical-align: 1px; }
+  .link-dl::before { content: "↓"; font-size: 10px; opacity: .8; }
+  .link-dl:hover { background: rgba(59,130,246,.22); color: #bfdbfe; }
+
+  /* ------------------------------------------------------- cabe no cubo? */
+  .verdict { text-align: center; font-weight: 700; font-size: 24px; letter-spacing: .08em;
+             border-radius: var(--r); padding: 12px 0; }
+  ::-webkit-scrollbar { width: 9px; height: 9px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: #39404f; }
 </style>
 </head>
 <body>
@@ -133,87 +281,97 @@
 </section>
 
 <section id="arranjar" class="tab">
-  <div class="toolbar">
-    <label>Altura do armazém (m, 0 = sem limite):
-      <input id="altura-armazem" type="number" step="0.1" value="0" style="width:80px">
-    </label>
-    <label title="Escala o stock_max_un de cada SKU proporcionalmente a este nº de carros (o master data atual já corresponde a 10 carros). 0 = usa o master data tal como está, sem escalar.">
-      Nº carros autonomia (0 = master data):
-      <input id="carros-alvo" type="number" step="1" min="0" value="0" style="width:80px">
-    </label>
-    <label>Altura de picking (m, 0 = desativado):
-      <input id="altura-picking" type="number" step="0.1" value="0" style="width:80px">
-    </label>
-    <label title="TETO da largura do bloco de racks (racks + corredores, sem zonas). O layout escolhe sempre a forma mais compacta; só aperta a largura se ela exceder este valor — dar folga não muda nada. 0 = sem limite.">
-      Largura máx. racks (m):
-      <input id="largura-max" type="number" step="0.1" min="0" value="0" style="width:80px">
-    </label>
-    <label title="Profundidade máxima do bloco de racks. É um TETO DE AVISO: o nº de racks vem do stock, por isso se não couber avisa-se em vez de deixar stock de fora. 0 = sem limite.">
-      Profundidade máx. (m):
-      <input id="profundidade-max" type="number" step="0.1" min="0" value="0" style="width:80px">
-    </label>
-    <button class="action" id="btn-gerar-racks">1 · Gerar racks</button>
-    <button id="btn-rodar-zona">⟳ Rodar (zona 45° · racks 90°)</button>
-    <button id="btn-remover-bloco">🗑 Remover selecionado</button>
-    <button id="btn-reset-canvas">↺ Repor</button>
-    <span style="flex:1"></span>
-    <button id="btn-guardar-arranjo">⬇ Guardar arranjo</button>
-    <button id="btn-carregar-arranjo">⬆ Carregar arranjo</button>
-    <input type="file" id="fileInArranjo" accept=".json" style="display:none">
-    <button class="action" id="btn-renderizar">2 · Renderizar layout 3D</button>
+  <!-- Cabeçalho da página: parâmetros numa linha, ações noutra. As explicações
+       longas de cada parâmetro passaram para o `title` (tooltip) em vez de
+       ficarem sempre no ecrã -- continuam disponíveis, deixaram é de competir
+       com os dados. -->
+  <div class="page-head">
+    <div class="params">
+      <div class="field">
+        <label for="altura-armazem" title="Pé-direito útil. Ativa o empilhamento de módulos de rack. 0 = sem limite.">Altura armazém</label>
+        <div class="input-unit"><input id="altura-armazem" type="number" step="0.1" value="0"><span>m</span></div>
+      </div>
+      <div class="field">
+        <label for="carros-alvo" title="Escala o stock_max_un de cada SKU proporcionalmente a este nº de carros (o master data atual já corresponde a 10 carros). 0 = usa o master data tal como está, sem escalar.">Autonomia</label>
+        <div class="input-unit"><input id="carros-alvo" type="number" step="1" min="0" value="0"><span>carros</span></div>
+      </div>
+      <div class="field">
+        <label for="altura-picking" title="Altura máxima até onde o operador faz picking a pé. 0 = desativado.">Altura picking</label>
+        <div class="input-unit"><input id="altura-picking" type="number" step="0.1" value="0"><span>m</span></div>
+      </div>
+      <div class="field">
+        <label for="largura-max" title="TETO da largura do bloco de racks (racks + corredores, sem zonas). O layout escolhe sempre a forma mais compacta; só aperta a largura se ela exceder este valor — dar folga não muda nada. 0 = sem limite.">Largura máx.</label>
+        <div class="input-unit"><input id="largura-max" type="number" step="0.1" min="0" value="0"><span>m</span></div>
+      </div>
+      <div class="field">
+        <label for="profundidade-max" title="Profundidade máxima do bloco de racks. É um TETO DE AVISO: o nº de racks vem do stock, por isso se não couber avisa-se em vez de deixar stock de fora. 0 = sem limite.">Profundidade máx.</label>
+        <div class="input-unit"><input id="profundidade-max" type="number" step="0.1" min="0" value="0"><span>m</span></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="action" id="btn-gerar-racks">Gerar racks</button>
+      <span class="sep"></span>
+      <button id="btn-rodar-zona" title="Roda o bloco selecionado: zonas a 45°, racks a 90°">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2v3h-3"/></svg>Rodar</button>
+      <button class="btn-ghost" id="btn-remover-bloco" title="Remove o bloco selecionado do arranjo">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8"/></svg>Remover</button>
+      <button class="btn-ghost" id="btn-reset-canvas" title="Repõe o arranjo tal como foi gerado">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2v3h3"/></svg>Repor</button>
+      <span class="grow"></span>
+      <button id="btn-guardar-arranjo" title="Guarda o arranjo atual num ficheiro .json">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 7L8 10.5 11.5 7M2.5 12.5h11"/></svg>Guardar</button>
+      <button id="btn-carregar-arranjo" title="Carrega um arranjo guardado (.json)">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10.5v-8M4.5 6L8 2.5 11.5 6M2.5 12.5h11"/></svg>Carregar</button>
+      <input type="file" id="fileInArranjo" accept=".json" style="display:none">
+      <button class="action" id="btn-renderizar">Renderizar 3D</button>
+    </div>
   </div>
-  <div class="dica">1) «Gerar racks» calcula o bloco de racks e carrega os blocos no canvas (sem 3D).
-    2) Arrasta os blocos — os corredores são o espaço que deixares entre eles — e roda zonas se necessário.
-    3) «Renderizar layout 3D» mostra os racks, as zonas e a área total. Escala: 1 m = 20 px, grelha de 0.25 m.</div>
-  <div id="canvas-resumo" style="font-size:13px; margin-bottom:8px;"></div>
-  <div style="display:flex; gap:12px;">
-    <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid #555; border-radius:8px; overflow:auto; position:relative; height:calc(100vh - 210px);">
+  <div id="canvas-resumo"></div>
+  <div style="display:flex; gap:10px;">
+    <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid var(--border); border-radius:var(--r-lg); overflow:auto; position:relative; height:calc(100vh - 232px);">
       <svg id="canvas" style="background:#fff; cursor:default;"></svg>
     </div>
-    <div style="width:260px; display:flex; flex-direction:column; gap:12px;">
-      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
-        <h3 style="margin:0 0 8px 0; font-size:13px;">Cabe no cubo?</h3>
-        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:8px;">
-          <input id="hangar-comp" type="number" step="0.01" min="0" value="19.836" style="width:62px">
-          <span>×</span>
-          <input id="hangar-larg" type="number" step="0.01" min="0" value="14.836" style="width:62px">
-          <span>m</span>
+    <div style="width:272px; display:flex; flex-direction:column; gap:10px;">
+      <div class="card">
+        <h3>Cabe no cubo?</h3>
+        <div style="display:flex; gap:6px; align-items:center; margin-bottom:10px;">
+          <input id="hangar-comp" type="number" step="0.01" min="0" value="19.836">
+          <span style="color:var(--text-faint)">×</span>
+          <input id="hangar-larg" type="number" step="0.01" min="0" value="14.836">
+          <span style="color:var(--text-faint); font-size:11px;">m</span>
         </div>
-        <div id="hangar-verdict" style="text-align:center; font-weight:bold; font-size:26px; letter-spacing:1px; border-radius:6px; padding:10px 0; background:#333; color:#999;">—</div>
-        <div id="hangar-detalhe" style="font-size:11px; color:#aaa; margin-top:8px; line-height:1.55;"></div>
+        <div id="hangar-verdict" class="verdict" style="background:#333; color:#999;">—</div>
+        <div id="hangar-detalhe" style="font-size:11px; color:var(--text-dim); margin-top:10px; line-height:1.6;"></div>
       </div>
-      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
-        <h3 style="margin:0 0 8px 0; font-size:13px;" title="Restrições físicas reais (pilares, condutas, zonas interditas, ...) que tiram espaço do chão ao teto. Não entram no cálculo de racks/área -- são só uma referência visual e de aviso: se um rack ou zona ficar por cima, avisamos.">Obstáculos</h3>
-        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:6px;">
-          <input id="obstaculo-nome" type="text" placeholder="nome (opcional)" style="width:96px">
+      <div class="card">
+        <h3 title="Restrições físicas reais (pilares, condutas, zonas interditas, ...) que tiram espaço do chão ao teto. Não entram no cálculo de racks/área -- são só uma referência visual e de aviso: se um rack ou zona ficar por cima, avisamos.">Obstáculos</h3>
+        <input id="obstaculo-nome" type="text" placeholder="nome (opcional)" style="margin-bottom:6px;">
+        <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
+          <input id="obstaculo-comp" type="number" step="0.1" min="0.1" value="1">
+          <span style="color:var(--text-faint)">×</span>
+          <input id="obstaculo-larg" type="number" step="0.1" min="0.1" value="1">
+          <span style="color:var(--text-faint); font-size:11px;">m</span>
         </div>
-        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:8px;">
-          <input id="obstaculo-comp" type="number" step="0.1" min="0.1" value="1" style="width:62px">
-          <span>×</span>
-          <input id="obstaculo-larg" type="number" step="0.1" min="0.1" value="1" style="width:62px">
-          <span>m</span>
-        </div>
-        <button id="btn-add-obstaculo" style="width:100%;">+ Adicionar obstáculo</button>
-        <div id="obstaculos-lista" style="font-size:11px; color:#aaa; margin-top:8px; line-height:1.8;"></div>
+        <button id="btn-add-obstaculo" style="width:100%; justify-content:center;">Adicionar obstáculo</button>
+        <div id="obstaculos-lista" class="lista"></div>
       </div>
-      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
-        <h3 style="margin:0 0 8px 0; font-size:13px;" title="Fila de racks VAZIOS (sem SKU/caixas) colocada à mão -- para desenhar uma planta de capacidade (ex.: 'fila de 9 Prateleira Leve') antes de decidir que componentes vão onde. Não passa pelo cálculo a partir do stock nem entra na área reportada.">Racks manuais (sandbox)</h3>
-        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:6px;">
-          <select id="rack-manual-tipo" style="flex:1;"></select>
+      <div class="card">
+        <h3 title="Fila de racks VAZIOS (sem SKU/caixas) colocada à mão -- para desenhar uma planta de capacidade (ex.: 'fila de 9 Prateleira Leve') antes de decidir que componentes vão onde. Não passa pelo cálculo a partir do stock nem entra na área reportada.">Racks manuais (sandbox)</h3>
+        <select id="rack-manual-tipo" style="margin-bottom:6px;"></select>
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; font-size:11.5px; color:var(--text-dim);">
+          <label style="flex:1">Posições/fila</label>
+          <input id="rack-manual-n" type="number" step="1" min="1" value="9" style="width:58px">
         </div>
-        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:6px;">
-          <label>Posições/fila <input id="rack-manual-n" type="number" step="1" min="1" value="9" style="width:50px"></label>
-        </div>
-        <div style="display:flex; gap:6px; align-items:center; font-size:12px; margin-bottom:8px;">
-          <label><input id="rack-manual-dupla" type="checkbox"> Fila dupla (costas-com-costas)</label>
-        </div>
-        <button id="btn-add-rack-manual" style="width:100%;">+ Adicionar fila</button>
-        <div id="racks-manuais-lista" style="font-size:11px; color:#aaa; margin-top:8px; line-height:1.8;"></div>
+        <label style="display:flex; gap:7px; align-items:center; margin-bottom:10px; font-size:11.5px; color:var(--text-dim); cursor:pointer;">
+          <input id="rack-manual-dupla" type="checkbox"> Fila dupla (costas-com-costas)
+        </label>
+        <button id="btn-add-rack-manual" style="width:100%; justify-content:center;">Adicionar fila</button>
+        <div id="racks-manuais-lista" class="lista"></div>
       </div>
-      <div style="background:#181818; border:1px solid #3a3a3a; border-radius:8px; padding:10px;">
-        <h3 style="margin:0 0 8px 0; font-size:13px;">Informações</h3>
+      <div class="card">
+        <h3>Informações</h3>
         <div id="canvas-info" style="font-size:12px;">
-          <p style="color:#999;">Gera os racks para começar.</p>
+          <p style="color:var(--text-faint); margin:0;">Gera os racks para começar.</p>
         </div>
       </div>
     </div>
@@ -221,9 +379,13 @@
 </section>
 
 <section id="armazem" class="tab">
-  <div class="toolbar">
-    <label style="font-size:13px;">Adicionar elemento:
-      <select id="prop-tipo" style="padding:4px; font-size:13px;">
+  <!-- Mesma arrumação da página de layout: uma linha de ações, uma de opções
+       de vista. As dicas de uso passaram para tooltips. -->
+  <div class="page-head">
+   <div class="actions">
+    <div class="field" style="min-width:230px">
+      <label for="prop-tipo">Adicionar elemento</label>
+      <select id="prop-tipo">
         <optgroup label="Linha de montagem">
           <option value="veiculo">BEN sobre carrier (2,51×1,72)</option>
           <option value="carro">BEN solto (2,51×1,72)</option>
@@ -240,39 +402,40 @@
           <option value="pessoa">Pessoa</option>
         </optgroup>
       </select>
-    </label>
-    <button class="action" id="btn-add-prop">+ Adicionar</button>
-    <button id="btn-copiar-prop" title="Duplica o objeto selecionado ao lado, com a mesma orientação (Ctrl+D)">⧉ Copiar selecionado</button>
-    <button id="btn-rodar-prop">⟳ Rodar selecionado</button>
-    <button id="btn-del-prop">✕ Remover selecionado</button>
-    <button id="btn-limpar-props" title="Apaga TODOS os objetos colocados e esquece-os (não afeta racks nem zonas)">🗑 Limpar objetos</button>
-    <span id="props-count" class="dica" style="margin:0"></span>
-    <span class="dica" style="margin:0">Adiciona os que quiseres (repetíveis) e arrasta-os com o rato; clica para selecionar.
-      <b>Ctrl+D</b> duplica o selecionado ao lado — repete para fazer uma fila.</span>
-    <span style="flex:1"></span>
-    <label style="font-size:13px;" title="Preview do espaço livre dentro do bloco de racks (Passo 4): mais posições da mesma tipologia da fiada, ainda vazias. Verde translúcido, não conta para a área nem para o dimensionamento.">
-      <input type="checkbox" id="chk-racks-fantasma"> Racks fantasma
-    </label>
-    <label style="font-size:13px;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
-      <input type="checkbox" id="ops-ativo" checked> Operadores
-    </label>
-    <label style="font-size:13px;" title="Operadores a pé — só fazem picking em Prateleira Leve">
-      A pé <input id="ops-n" type="number" min="0" max="20" step="1" value="4" style="width:52px">
-    </label>
-    <label style="font-size:13px;" title="Operadores com porta-paletes — acedem a porta-paletes e outras tipologias pesadas">
-      Porta-paletes <input id="ops-n-porta" type="number" min="0" max="10" step="1" value="2" style="width:52px">
-    </label>
-    <label style="font-size:13px;">Velocidade
-      <input id="ops-vel" type="range" min="0" max="3" step="0.05" value="1" style="width:120px;vertical-align:middle">
-      <span id="ops-vel-val" style="color:#9aa;display:inline-block;width:34px">1.0×</span>
-    </label>
-    <span style="border-left:1px solid #444;margin:0 4px;height:20px"></span>
-    <button id="btn-voo" title="Voo livre: WASD move, Q/E desce/sobe, rato olha, Shift turbo, Ctrl lento. Esc larga o rato.">🕹 Voo livre</button>
-    <button class="action" id="btn-gravar" title="Grava o que estás a ver para .webm (descarrega ao parar)">⏺ Gravar</button>
-    <span id="voo-estado" class="dica" style="margin:0"></span>
+    </div>
+    <div style="display:flex; gap:8px; align-items:flex-end; padding-bottom:1px;">
+      <button class="action" id="btn-add-prop">Adicionar</button>
+      <button id="btn-copiar-prop" title="Duplica o objeto selecionado ao lado, com a mesma orientação (Ctrl+D)">Copiar</button>
+      <button id="btn-rodar-prop" title="Roda o objeto selecionado">Rodar</button>
+      <button class="btn-ghost" id="btn-del-prop" title="Remove o objeto selecionado">Remover</button>
+      <button class="btn-ghost" id="btn-limpar-props" title="Apaga TODOS os objetos colocados e esquece-os (não afeta racks nem zonas)">Limpar</button>
+      <span id="props-count" class="dica" style="margin:0 0 7px 2px"></span>
+    </div>
+    <span class="grow"></span>
+    <div style="display:flex; gap:14px; align-items:flex-end; padding-bottom:6px; font-size:12px; color:var(--text-dim);">
+      <label style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Preview do espaço livre dentro do bloco de racks (Passo 4): mais posições da mesma tipologia da fiada, ainda vazias. Verde translúcido, não conta para a área nem para o dimensionamento.">
+        <input type="checkbox" id="chk-racks-fantasma"> Racks fantasma
+      </label>
+      <label style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
+        <input type="checkbox" id="ops-ativo" checked> Operadores
+      </label>
+      <label style="display:flex; gap:6px; align-items:center;" title="Operadores a pé — só fazem picking em Prateleira Leve">
+        A pé <input id="ops-n" type="number" min="0" max="20" step="1" value="4" style="width:48px">
+      </label>
+      <label style="display:flex; gap:6px; align-items:center;" title="Operadores com porta-paletes — acedem a porta-paletes e outras tipologias pesadas">
+        Porta-paletes <input id="ops-n-porta" type="number" min="0" max="10" step="1" value="2" style="width:48px">
+      </label>
+      <label style="display:flex; gap:7px; align-items:center;">Velocidade
+        <input id="ops-vel" type="range" min="0" max="3" step="0.05" value="1" style="width:96px; padding:0;">
+        <span id="ops-vel-val" style="color:var(--text); display:inline-block; width:32px; font-variant-numeric:tabular-nums;">1.0×</span>
+      </label>
+      <span class="sep" style="height:22px"></span>
+      <button id="btn-voo" title="Voo livre: WASD move, Q/E desce/sobe, rato olha, Shift turbo, Ctrl lento. Esc larga o rato.">Voo livre</button>
+      <button class="action" id="btn-gravar" title="Grava o que estás a ver para .webm (descarrega ao parar)">Gravar</button>
+      <span id="voo-estado" class="dica" style="margin:0 0 6px 0"></span>
+    </div>
+   </div>
   </div>
-  <div class="dica">Resultado do «Renderizar layout 3D» (separador Arranjar Layout).
-    Clica numa caixa para ver o SKU e a quantidade; clica na estrutura do rack para ver a lista completa.</div>
   <div class="viewer-wrap">
     <div id="viewer"></div>
     <div id="painel-rack"><p style="color:#999">Clica numa caixa ou rack para ver detalhe aqui.</p></div>
@@ -793,12 +956,12 @@ function alternarVoo() {
   const btn = document.getElementById("btn-voo");
   if (_voo.estaAtivo()) {
     _voo.sair(false);       // fica onde parou: é onde o utilizador quer ficar
-    btn.textContent = "🕹 Voo livre";
+    btn.textContent = "Voo livre";
     btn.classList.remove("action");
     if (!_gravador) _estadoVoo("");
   } else {
     _voo.entrar();
-    btn.textContent = "🕹 Sair do voo";
+    btn.textContent = "Sair do voo";
     btn.classList.add("action");
     _estadoVoo("<b>W/S/A/D</b> mover · <b>Q/E</b> descer/subir · <b>Shift</b> turbo · " +
                "<b>Ctrl</b> lento · rato: olhar (clica no 3D) · <b>Esc</b> larga o rato");
@@ -811,7 +974,7 @@ function alternarGravacao() {
     _gravador.parar();
     _gravador = null;
     if (_timerEstado) { clearInterval(_timerEstado); _timerEstado = null; }
-    btn.textContent = "⏺ Gravar";
+    btn.textContent = "Gravar";
     _estadoVoo("Vídeo descarregado.");
     return;
   }
@@ -820,7 +983,7 @@ function alternarGravacao() {
     alert("Este browser não suporta gravação do canvas (MediaRecorder).");
     return;
   }
-  btn.textContent = "⏹ Parar gravação";
+  btn.textContent = "Parar gravação";
   // contador de tempo: sem isto não se sabe quanto já se gravou
   _timerEstado = setInterval(() => {
     if (_gravador) _estadoVoo(`⏺ a gravar… ${_gravador.duracao_s().toFixed(0)} s`);
@@ -2147,13 +2310,14 @@ function inicializarCanvas() {
     let html = "";
     const env = envolvente();
     if (env) {
-      html += `<b>Envolvente do arranjo</b><br>${env.w.toFixed(2)} × ${env.h.toFixed(2)} m = <b>${env.area.toFixed(2)} m²</b><br>`;
+      html += `<div class="info-sec">Envolvente do arranjo</div>`
+            + `<div class="info-destaque">${env.area.toFixed(2)} m²<small>${env.w.toFixed(2)} × ${env.h.toFixed(2)} m</small></div>`;
     }
     // Ocupação logo a seguir à área: são as duas leituras de topo do painel
     // (quanto chão ocupo / quanto do que construí está cheio). Recalcula-se a
     // cada desenharBlocks(), por isso segue as filas sandbox em tempo real.
     html += blocoOcupacao();
-    html += `<div style="margin-top:12px;padding-top:10px;border-top:1px solid #3a3a3a"></div>`;
+    html += `<div class="info-div"></div>`;
     const b = canvasBlocks.find(x => x.id === selBlockId);
     if (b) {
       html += `<b>${b.nome}</b><br>`;
@@ -2169,27 +2333,27 @@ function inicializarCanvas() {
       html += `Posição: (${b.x.toFixed(2)}, ${b.y.toFixed(2)}) m<br>`;
       html += `Rotação: ${b.rot || 0}°`;
     } else if (canvasBlocks.length) {
-      html += `<span style="color:#999">Clica num bloco para o selecionar.</span>`;
+      html += `<span style="color:var(--text-faint)">Clica num bloco para o selecionar.</span>`;
     } else {
-      html += `<span style="color:#999">Gera os racks para começar.</span>`;
+      html += `<span style="color:var(--text-faint)">Gera os racks para começar.</span>`;
     }
     if (lastGerarData && lastGerarData.requirements && lastGerarData.requirements.length) {
       const reqs = lastGerarData.requirements;
       const totalRacks = reqs.reduce((a, r) => a + r.num_racks, 0);
-      html += `<br><br><b>Nº de racks por tipologia</b><br>`;
+      html += `<div class="info-div"></div><div class="info-sec">Racks por tipologia</div><div class="ocup-linhas">`;
       for (const r of reqs) {
-        html += `${r.rack_nome}: ${r.num_racks} (${r.posicoes_chao} posições × ${r.blocos_empilhados} módulo${r.blocos_empilhados > 1 ? "s" : ""})<br>`;
+        html += `<span title="${r.posicoes_chao} posições × ${r.blocos_empilhados} módulo${r.blocos_empilhados > 1 ? "s" : ""}">${r.rack_nome}</span><b>${r.num_racks}</b>`;
       }
-      html += `<b>Total de racks: ${totalRacks}</b>`;
+      html += `<span>Total</span><b>${totalRacks}</b></div>`;
     }
     if (lastGerarData && lastGerarData.totais_por_carga) {
       const tot = lastGerarData.totais_por_carga;
       const soma = Object.values(tot).reduce((a, s) => a + s, 0);
-      html += `<br><br><b>Caixas (unidades de carga)</b><br>`;
+      html += `<div class="info-div"></div><div class="info-sec">Unidades de carga</div><div class="ocup-linhas">`;
       for (const tipo of ["XS", "S", "M", "L", "MEIA", "PALLET", "OVERSIZE"]) {
-        if (tot[tipo]) html += `${tipo}: ${tot[tipo]}<br>`;
+        if (tot[tipo]) html += `<span>${tipo}</span><b>${tot[tipo]}</b>`;
       }
-      html += `<b>Total: ${soma}</b>`;
+      html += `<span>Total</span><b>${soma}</b></div>`;
     }
     el.innerHTML = html;
     atualizarHangar(env);
@@ -2391,12 +2555,12 @@ function inicializarCanvas() {
                  `${rb.w} × ${rb.h} m = ${(rb.w * rb.h).toFixed(1)} m² ` +
                  `(ocupado: ${lastGerarData.area_racks_m2} m²${temChao ? ", racks + pilhas" : ""}; ` +
                  `corredores internos incluídos no bloco)` +
-                 ` · <a href="/api/download/pecas-caixas" download style="color:#7fb3f0">⬇ Excel peças → tipo de caixa</a>`;
+                 ` <a class="link-dl" href="/api/download/pecas-caixas" download>Excel · peças → tipo de caixa</a>`;
       // resultados.xlsx: só se o backend o conseguiu mesmo escrever (o caso
       // típico de falha é estar aberto no Excel) -- ver /api/gerar. Sem isto,
       // o link aparecia sempre e dava 404 ou servia uma versão antiga.
       if (lastGerarData.resultados_excel) {
-        html += ` · <a href="/api/download/resultados" download style="color:#7fb3f0">⬇ Excel resultados (dimensionamento)</a>`;
+        html += ` <a class="link-dl" href="/api/download/resultados" download>Excel · dimensionamento</a>`;
       }
       // Peças volumosas em pilha no chão (sem rack): área calculada das cotas +
       // stock, reportada à parte porque não tem posições de rack nem corredores.
@@ -2406,7 +2570,7 @@ function inicializarCanvas() {
         const linhas = det.map(d =>
           `${d.sku}: ${d.unidades} un → ${d.pilhas} pilha(s) de ${d.por_pilha} ` +
           `(limita ${d.limitado_por}, ${d.peso_pilha_kg} kg) = ${d.area_m2} m²`).join("<br>");
-        html += `<div style="font-size:12px;color:#9aa;margin-top:6px">` +
+        html += `<div style="font-size:11.5px;color:var(--text-dim);margin-top:8px;line-height:1.55">` +
                 `<b>Armazenagem ao chão (pilhas, sem rack): ${achao} m² com acesso</b> ` +
                 `— já incluída nas dimensões do bloco acima<br>${linhas}</div>`;
       }
@@ -2415,7 +2579,7 @@ function inicializarCanvas() {
       const lmax = parseFloat(document.getElementById("largura-max").value) || 0;
       if (lmax > 0) {
         const mordeu = rb.w < lmax - 1e-6;
-        html += `<div style="font-size:12px;color:#9aa;margin-top:4px">` +
+        html += `<div style="font-size:11.5px;color:var(--text-dim);margin-top:6px">` +
                 (mordeu
                   ? `Teto de largura ${lmax} m — o bloco ficou em ${rb.w} m e cresceu em profundidade.`
                   : `Teto de largura ${lmax} m — não foi preciso apertar (a forma mais compacta já cabe).`) +
@@ -2426,7 +2590,7 @@ function inicializarCanvas() {
       }
       document.getElementById("canvas-resumo").innerHTML = html;
     } finally {
-      btn.textContent = "1 · Gerar racks";
+      btn.textContent = "Gerar racks";
       btn.disabled = false;
     }
   });
@@ -2530,7 +2694,7 @@ function inicializarCanvas() {
         (data.avisos && data.avisos.length
           ? `<p class="avisos">⚠ ${data.avisos.join("<br>⚠ ")}</p>` : "");
     } finally {
-      btn.textContent = "2 · Renderizar layout 3D";
+      btn.textContent = "Renderizar 3D";
       btn.disabled = false;
     }
   });
