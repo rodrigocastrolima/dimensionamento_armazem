@@ -194,7 +194,7 @@
   .link-dl::before { content: "↓"; font-size: 10px; opacity: .8; }
   .link-dl:hover { background: rgba(59,130,246,.22); color: #bfdbfe; }
 
-  /* ------------------------------------------------------- cabe no cubo? */
+  /* ------------------------------------------------------ cabe no espaço? */
   .verdict { text-align: center; font-weight: 700; font-size: 24px; letter-spacing: .08em;
              border-radius: var(--r); padding: 12px 0; }
   ::-webkit-scrollbar { width: 9px; height: 9px; }
@@ -333,7 +333,7 @@
     </div>
     <div style="width:272px; display:flex; flex-direction:column; gap:10px;">
       <div class="card">
-        <h3>Cabe no cubo?</h3>
+        <h3>Cabe no espaço?</h3>
         <div style="display:flex; gap:6px; align-items:center; margin-bottom:10px;">
           <input id="hangar-comp" type="number" step="0.01" min="0" value="19.836">
           <span style="color:var(--text-faint)">×</span>
@@ -413,23 +413,33 @@
     </div>
     <span class="grow"></span>
     <div style="display:flex; gap:14px; align-items:flex-end; padding-bottom:6px; font-size:12px; color:var(--text-dim);">
-      <label style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Preview do espaço livre dentro do bloco de racks (Passo 4): mais posições da mesma tipologia da fiada, ainda vazias. Verde translúcido, não conta para a área nem para o dimensionamento.">
-        <input type="checkbox" id="chk-racks-fantasma"> Racks fantasma
-      </label>
-      <label style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
-        <input type="checkbox" id="ops-ativo" checked> Operadores
-      </label>
-      <label style="display:flex; gap:6px; align-items:center;" title="Operadores a pé — só fazem picking em Prateleira Leve">
-        A pé <input id="ops-n" type="number" min="0" max="20" step="1" value="4" style="width:48px">
-      </label>
-      <label style="display:flex; gap:6px; align-items:center;" title="Operadores com porta-paletes — acedem a porta-paletes e outras tipologias pesadas">
-        Porta-paletes <input id="ops-n-porta" type="number" min="0" max="10" step="1" value="2" style="width:48px">
-      </label>
-      <label style="display:flex; gap:7px; align-items:center;">Velocidade
-        <input id="ops-vel" type="range" min="0" max="3" step="0.05" value="1" style="width:96px; padding:0;">
-        <span id="ops-vel-val" style="color:var(--text); display:inline-block; width:32px; font-variant-numeric:tabular-nums;">1.0×</span>
-      </label>
-      <span class="sep" style="height:22px"></span>
+      <!-- Controlos de racks fantasma e de operadores: ESCONDIDOS nesta fase,
+           não removidos. Os elementos têm de continuar no DOM porque o JS lê
+           o .checked/.value deles e liga-lhes listeners (ver criarOperadores /
+           ligarControloRacksFantasma / desenharLayoutFantasma) -- apagá-los
+           mudava o comportamento, e o pedido foi tirar os botões mantendo a
+           funcionalidade. Com os valores por omissão que aqui estão: operadores
+           ligados (4 a pé + 2 porta-paletes, velocidade 1.0x) e racks fantasma
+           desligadas, exatamente o que se via antes de esconder os controlos.
+           Para os voltar a mostrar, basta remover o display:none desta div. -->
+      <div style="display:none; gap:14px; align-items:flex-end;">
+        <label style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Preview do espaço livre dentro do bloco de racks (Passo 4): mais posições da mesma tipologia da fiada, ainda vazias. Verde translúcido, não conta para a área nem para o dimensionamento.">
+          <input type="checkbox" id="chk-racks-fantasma"> Racks fantasma
+        </label>
+        <label style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
+          <input type="checkbox" id="ops-ativo" checked> Operadores
+        </label>
+        <label style="display:flex; gap:6px; align-items:center;" title="Operadores a pé — só fazem picking em Prateleira Leve">
+          A pé <input id="ops-n" type="number" min="0" max="20" step="1" value="4" style="width:48px">
+        </label>
+        <label style="display:flex; gap:6px; align-items:center;" title="Operadores com porta-paletes — acedem a porta-paletes e outras tipologias pesadas">
+          Porta-paletes <input id="ops-n-porta" type="number" min="0" max="10" step="1" value="2" style="width:48px">
+        </label>
+        <label style="display:flex; gap:7px; align-items:center;">Velocidade
+          <input id="ops-vel" type="range" min="0" max="3" step="0.05" value="1" style="width:96px; padding:0;">
+          <span id="ops-vel-val" style="color:var(--text); display:inline-block; width:32px; font-variant-numeric:tabular-nums;">1.0×</span>
+        </label>
+      </div>
       <button id="btn-voo" title="Voo livre: WASD move, Q/E desce/sobe, rato olha, Shift turbo, Ctrl lento. Esc larga o rato.">Voo livre</button>
       <button class="action" id="btn-gravar" title="Grava o que estás a ver para .webm (descarrega ao parar)">Gravar</button>
       <span id="voo-estado" class="dica" style="margin:0 0 6px 0"></span>
@@ -2122,7 +2132,7 @@ function inicializarCanvas() {
       grid += `<rect x="0" y="0" width="${cuboComp * PXM}" height="${cuboLarg * PXM}" ` +
         `fill="#f5c51810" stroke="#c99a0e" stroke-width="2.5" stroke-dasharray="10,6"/>` +
         `<text x="6" y="18" font-size="13" font-weight="bold" fill="#c99a0e">` +
-        `Cubo (${cuboComp.toFixed(1)}×${cuboLarg.toFixed(1)} m)</text>`;
+        `Espaço (${cuboComp.toFixed(1)}×${cuboLarg.toFixed(1)} m)</text>`;
     }
 
     svg.innerHTML = grid;
@@ -2414,7 +2424,7 @@ function inicializarCanvas() {
     if (!env) {
       vEl.textContent = "—";
       vEl.style.background = "#333"; vEl.style.color = "#999";
-      dEl.innerHTML = `Cubo: <b>${comp}×${larg} m</b> (${areaHangar.toFixed(1)} m²)<br>` +
+      dEl.innerHTML = `Espaço: <b>${comp}×${larg} m</b> (${areaHangar.toFixed(1)} m²)<br>` +
                       `<span style="color:#777">Gera e arranja os blocos para validar.</span>`;
       return;
     }
@@ -2434,7 +2444,7 @@ function inicializarCanvas() {
     };
     dEl.innerHTML =
       `Arranjo: <b>${env.w.toFixed(1)}×${env.h.toFixed(1)} m</b> = ${env.area.toFixed(1)} m²<br>` +
-      `Cubo: <b>${comp}×${larg} m</b> = ${areaHangar.toFixed(1)} m²<br>` +
+      `Espaço: <b>${comp}×${larg} m</b> = ${areaHangar.toFixed(1)} m²<br>` +
       linha("Lado maior", aLong, hLong, folgaLong) + `<br>` +
       linha("Lado menor", aShort, hShort, folgaShort);
   }
