@@ -327,6 +327,14 @@
     </div>
   </div>
   <div id="canvas-resumo"></div>
+  <!-- Legenda do bloco de racks: as três (e só três) leituras que o canvas
+       desenha. Estática de propósito -- as cores estão fixas em desenharBlocks
+       e não dependem dos dados. -->
+  <div class="legend" style="margin: 0 0 10px 0;">
+    <span><span class="swatch" style="background:#d8cef0; border:1px solid #7c3aed"></span>Posições de rack</span>
+    <span><span class="swatch" style="background:#e5e0ee; border:1px solid #c9bfe0"></span>Corredores</span>
+    <span title="Chão dentro do bloco que o layout não atribuiu a rack nem a corredor: sobra das fiadas incompletas e folga por baixo de uma fiada mais rasa que a sua banda."><span class="swatch" style="background:#fde2e2; border:1px solid #f0a8a8"></span>Por classificar</span>
+  </div>
   <div style="display:flex; gap:10px;">
     <div id="canvas-container" style="flex:1; background:#f0f0f0; border:1px solid var(--border); border-radius:var(--r-lg); overflow:auto; position:relative; height:calc(100vh - 232px);">
       <svg id="canvas" style="background:#fff; cursor:default;"></svg>
@@ -2160,8 +2168,12 @@ function inicializarCanvas() {
       const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       rect.setAttribute("x", x); rect.setAttribute("y", y);
       rect.setAttribute("width", w); rect.setAttribute("height", h);
+      // Fundo do bloco de racks com geometria (#fde2e2, vermelho claro): é ele
+      // que fica à vista onde não há posição nem corredor desenhado por cima,
+      // ou seja é a ÁREA POR CLASSIFICAR. Era branco e passava despercebida;
+      // a vermelho lê-se logo que ali há chão que o layout não atribuiu a nada.
       rect.setAttribute("fill", isObstaculo ? "#fca5a533" : (isRackManual ? "#fde68a4d" :
-        (isRacking && b.geom ? "#f7f5fb" : (isRacking ? "#d8cef0" : "#f5e7c4"))));
+        (isRacking && b.geom ? "#fde2e2" : (isRacking ? "#d8cef0" : "#f5e7c4"))));
       rect.setAttribute("stroke", isSel ? "#2563eb" : (isObstaculo ? "#b91c1c" :
         (isRackManual ? "#b45309" : (isRacking ? "#7c3aed" : "#d97706"))));
       rect.setAttribute("stroke-width", isSel ? "3" : (isObstaculo || isRackManual ? "2.5" : "1.5"));
