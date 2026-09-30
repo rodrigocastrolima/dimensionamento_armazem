@@ -719,15 +719,8 @@ function initViewer() {
   fill.position.set(-20, 16, -14);
   scene.add(fill);
 
-  // chão exterior (terreno à volta do edifício)
-  chao = new THREE.Mesh(
-    new THREE.PlaneGeometry(400, 400),
-    new THREE.MeshStandardMaterial({ color: 0x9fa5a0, roughness: 0.96 }),
-  );
-  chao.rotation.x = -Math.PI / 2;
-  chao.position.y = -0.02;
-  chao.receiveShadow = true;
-  scene.add(chao);
+  // Sem chão exterior: o edifício assenta directamente no fundo claro da cena
+  // (como na «Linha 3D»). Existiu aqui um terreno cinzento de 400 x 400 m.
 
   // contorno do Cubo (edifício real): criado uma vez, escondido até o 1º
   // render-layout devolver a sua posição (ver atualizarCuboMarcador). Nunca
