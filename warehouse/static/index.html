@@ -2330,6 +2330,30 @@ function inicializarCanvas() {
     atualizarInfo();
   }
 
+  // Emparelha cada zona NOVA (do Excel) com a zona ANTIGA do canvas que lhe
+  // corresponde, 1 a 1, para herdar a posição. 1.º nome igual (sem prefixo
+  // numérico, sem maiúsculas); 2.º um nome começa pelo outro; 3.º mesma primeira
+  // palavra. Devolve Map(zona nova -> zona antiga).
+  function emparelharZonas(novas, antigas) {
+    const chave = (n) => String(n || "").toLowerCase().replace(/^\s*\d+\s*[-–.]\s*/, "").trim();
+    const primeira = (n) => chave(n).split(/\s+/)[0];
+    const livres = antigas.slice();
+    const pares = new Map();
+    const regras = [
+      (a, b) => chave(a) === chave(b),
+      (a, b) => chave(a).startsWith(chave(b)) || chave(b).startsWith(chave(a)),
+      (a, b) => primeira(a) === primeira(b),
+    ];
+    for (const regra of regras) {
+      for (const n of novas) {
+        if (pares.has(n)) continue;
+        const i = livres.findIndex(a => regra(n.nome, a.nome));
+        if (i >= 0) pares.set(n, livres.splice(i, 1)[0]);
+      }
+    }
+    return pares;
+  }
+
   // Rótulo flutuante do bloco sob o rato: sempre horizontal (mesmo em blocos
   // rodados), por cima de tudo e com fundo, para se ler sobre qualquer cor.
   function esconderRotuloBloco() {
@@ -2679,21 +2703,16 @@ function inicializarCanvas() {
       // vindos de um ficheiro «Carregar») mantêm posição e rotação: «Gerar racks»
       // só atualiza tamanhos e conteúdo (vêm sempre do Excel/stock). As zonas novas
       // (sem correspondência) ficam na grelha por omissão; «Repor» limpa tudo.
-      // A correspondência ignora maiúsculas e o prefixo numérico («1 - Receção»
-      // == «Receção»), para sobreviver a renomeações simples no Excel.
-      const chaveZona = (n) => String(n || "").toLowerCase().replace(/^\s*\d+\s*[-–.]\s*/, "").trim();
-      const zonasAntes = new Map();
-      for (const b of canvasBlocks.filter(b => b.type === "zone")) {
-        const k = chaveZona(b.nome);
-        if (!zonasAntes.has(k)) zonasAntes.set(k, []);
-        zonasAntes.get(k).push(b);
-      }
+      // A correspondência (ver emparelharZonas) ignora maiúsculas e o prefixo
+      // numérico («1 - Receção» == «Receção») e tolera renomeações simples.
       const racksAntes = canvasBlocks.find(b => b.type === "racking");
-      const blocosNovos = (lastGerarData.blocks_for_canvas || []).map(b => {
-        const o = { rot: 0, ...b };
+      const novas = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b }));
+      const pares = emparelharZonas(novas.filter(b => b.type === "zone"),
+                                    canvasBlocks.filter(b => b.type === "zone"));
+      const blocosNovos = novas.map(o => {
         if (o.type === "zone") {
-          const p = (zonasAntes.get(chaveZona(o.nome)) || []).shift();   // 1 a 1, p/ nomes repetidos
-          if (p) { o.x = p.x; o.y = p.y; o.rot = p.rot || 0; }
+          const p = pares.get(o);
+          if (p) { o.x = p.x; o.y = p.y; o.rot = p.rot || 0; }   // tamanho fica o do Excel
         } else if (o.type === "racking" && racksAntes) {
           o.x = racksAntes.x; o.y = racksAntes.y; o.rot = racksAntes.rot || 0;
         }
@@ -2884,6 +2903,10 @@ function inicializarCanvas() {
         if (d.blocks) canvasBlocks = d.blocks;
         selBlockId = null;
         desenharBlocks();
+        // Sincroniza logo com o Excel: «Gerar racks» mantém as posições do
+        // ficheiro mas atualiza tamanhos e zonas novas (um arranjo antigo não
+        // traz o tamanho atual das zonas). Se falhar, fica o ficheiro tal e qual.
+        if (d.blocks && d.blocks.length) document.getElementById("btn-gerar-racks").click();
       } catch (err) {
         alert("Ficheiro inválido.");
       }
