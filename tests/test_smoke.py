@@ -180,6 +180,29 @@ def test_pecas_no_eixo_nunca_pior_que_rigido():
     assert pecas_no_eixo(1.0, 0.3, aninhavel=True, fator_empilhamento=0.5) == 5   # aninhado, mais favorável
 
 
+def test_meias_paletes_ficam_numa_grelha_alinhada_de_6_por_nivel():
+    """Porta-paletes 2.7 x 1.2: 6 meias-paletes (0.8 x 0.6) por nível, TODAS com
+    a mesma orientação (3 x 2). O packer de rotação livre dava 5 por nível
+    misturando 0.6 x 0.8 e 0.8 x 0.6, com frentes desalinhadas."""
+    from warehouse.racking import _ItemParaColocar, _abrir_bloco, _tentar_colocar_em_posicao
+    r = RackType("PP", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=1)
+    pos = PosicaoChao(rack_nome="PP", indice=0)
+    pos.blocos.append(_abrir_bloco(r, 0, altura_picking_m=0.0))
+    for i in range(6):
+        item = _ItemParaColocar(f"M{i}", "", LoadType.MEIA, 0.8, 0.6, 1.644, 1, False)
+        assert _tentar_colocar_em_posicao(pos, r, item, 0.0, max_blocos=1,
+                                          preferir_picking=False, permitir_fallback=False), i
+    cx = pos.blocos[0].niveis[0].caixas
+    assert len(cx) == 6
+    assert {(round(c.comp_m, 3), round(c.larg_m, 3)) for c in cx} == {(0.8, 0.6)}
+    assert {round(c.x_m, 3) for c in cx} == {0.0, 0.8, 1.6}      # 3 colunas
+    assert {round(c.y_m, 3) for c in cx} == {0.0, 0.6}           # 2 filas
+    # a 7.ª não cabe
+    item = _ItemParaColocar("M6", "", LoadType.MEIA, 0.8, 0.6, 1.644, 1, False)
+    assert not _tentar_colocar_em_posicao(pos, r, item, 0.0, max_blocos=1,
+                                          preferir_picking=False, permitir_fallback=False)
+
+
 def test_caixa_rodada_fica_gravada_na_orientacao_colocada():
     """Regressão do 3D: uma caixa que só cabe RODADA (a cota maior não cabe na
     profundidade da rack) tem de ficar gravada já na footprint colocada

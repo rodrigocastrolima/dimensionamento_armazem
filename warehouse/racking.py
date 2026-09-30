@@ -10,6 +10,7 @@ quando compatível com a tipologia de rack, e nº de módulos empilhados decidid
 posição a posição (não há um "blocos_empilhados" global por tipologia).
 """
 from __future__ import annotations
+import itertools
 import math
 from dataclasses import dataclass
 
@@ -623,11 +624,24 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
     if item.alt_m > altura_nivel(rack, nivel.nivel_idx) + 1e-9:
         return None
 
+    dims = [(c.comp_m, c.larg_m) for c in nivel.caixas] + [(item.comp_m, item.larg_m)]
+    ids: list = list(range(len(nivel.caixas))) + ["novo"]
+
+    # 1.º tenta uma arrumação ORDENADA: todas as caixas com a mesma footprint
+    # ficam com a MESMA orientação (grelha alinhada). Só se isso não couber se
+    # recorre ao packer livre abaixo. O packer com rotação livre fecha o lote
+    # com o que encontrar e mistura orientações no mesmo nível (ex.: 3 meias-
+    # paletes de 0,6 x 0,8 e 2 rodadas a 0,8 x 0,6, com 0,4 m de profundidade
+    # vazia à frente das primeiras): frentes desalinhadas e 5 meias por nível
+    # quando a grelha 3 x 2 leva 6.
+    colocados = _empacotar_alinhado(rack, dims, ids)
+    if colocados is not None:
+        return colocados
+
     packer = newPacker(mode=PackingMode.Offline, rotation=True)
     packer.add_bin(rack.larg_m, rack.prof_m)
-    for i, c in enumerate(nivel.caixas):
-        packer.add_rect(c.comp_m, c.larg_m, rid=i)
-    packer.add_rect(item.comp_m, item.larg_m, rid="novo")
+    for rid, (w, h) in zip(ids, dims):
+        packer.add_rect(w, h, rid=rid)
     packer.pack()
 
     colocados = {}
@@ -639,6 +653,40 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
         return None
 
     return colocados
+
+
+_MAX_FORMAS_ALINHADO = 4   # 2^4 = 16 combinações de orientação, no máximo
+
+
+def _empacotar_alinhado(rack: RackType, dims: list[tuple[float, float]], ids: list):
+    """Arrumação sem rotação livre: cada footprint distinta (lado curto x lado
+    longo) recebe UMA orientação fixa, igual para todas as caixas dessa
+    footprint. Testa as combinações de orientação por ordem (lado longo ao
+    longo da profundidade primeiro, como a palete no rack) e devolve a 1.ª
+    onde o lote inteiro cabe; None se nenhuma couber ou houver formas demais."""
+    if sum(w * h for w, h in dims) > rack.larg_m * rack.prof_m + 1e-9:
+        return None
+    formas = sorted({tuple(sorted((round(w, 4), round(h, 4)))) for w, h in dims})
+    if len(formas) > _MAX_FORMAS_ALINHADO:
+        return None
+
+    for escolha in itertools.product((0, 1), repeat=len(formas)):
+        ori = dict(zip(formas, escolha))
+        packer = newPacker(mode=PackingMode.Offline, rotation=False)
+        packer.add_bin(rack.larg_m, rack.prof_m)
+        for rid, (w, h) in zip(ids, dims):
+            curto, longo = sorted((w, h))
+            forma = tuple(sorted((round(w, 4), round(h, 4))))
+            # 0: lado longo na profundidade (y); 1: lado longo no vão (x)
+            packer.add_rect(*((curto, longo) if ori[forma] == 0 else (longo, curto)), rid=rid)
+        packer.pack()
+        colocados = {}
+        for abin in packer:
+            for rect in abin:
+                colocados[rect.rid] = rect
+        if len(colocados) == len(dims):
+            return colocados
+    return None
 
 
 def _abrir_bloco(rack: RackType, bloco_idx: int, altura_picking_m: float,

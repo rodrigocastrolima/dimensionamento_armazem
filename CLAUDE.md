@@ -125,6 +125,12 @@ O que mudou no armazém:
 - `RackType.alturas_niveis_m` (coluna opcional «Alturas_Niveis_m» em «Racks»):
   alturas de nível heterogéneas; vazio = uniforme como sempre.
 - `load_zones` lê por NOME de coluna; cotas em texto com vírgula são aceites.
+- **Desvio deliberado face à linha — arrumação alinhada no nível**
+  (`racking._empacotar_alinhado`): antes do packer de rotação livre, tenta-se
+  uma grelha em que cada footprint distinta tem UMA orientação. O packer livre
+  misturava 0.6x0.8 e 0.8x0.6 no mesmo nível (5 meias-paletes, frentes
+  desalinhadas); a grelha dá 6 (3 x 2). Se não couber, cai no packer livre,
+  por isso nunca perde capacidade. Efeito: área bruta 319,3 -> 308,0 m².
 - **Mantido só no armazém** (a linha não tem): `pallet_ultimo_recurso` (SIA) —
   agora, quando ligado, a PALLET só é testada (já com tolerância) se nenhuma
   caixa mais pequena couber, e só depois vem OVERSIZE; multi-cliente

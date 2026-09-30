@@ -64,7 +64,8 @@ def get_articles():
             "altura_override": a.altura_override, "eixo_aninhagem": a.eixo_aninhagem,
             "empilhamento": a.empilhamento.value,
             "fragilidade": a.fragilidade, "geometria": a.geometria,
-            "classe": a.classe,
+            "classe": a.classe, "estacao": a.estacao,
+            "caixa_forcada": a.caixa_forcada, "pecas_caixa_forcada": a.pecas_caixa_forcada,
         }
         for a in articles
     ]

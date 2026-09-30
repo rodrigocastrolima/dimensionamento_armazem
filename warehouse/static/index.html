@@ -225,8 +225,8 @@
     <table id="tabela-artigos">
       <thead>
         <tr>
-          <th>SKU</th><th>Descrição</th><th>Comp (m)</th><th>Larg (m)</th><th>Alt (m)</th>
-          <th>Peso (kg)</th><th>Stock máx</th><th>Peças/carro</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th>
+          <th>SKU</th><th>Descrição</th><th class="num">Comp (m)</th><th class="num">Larg (m)</th><th class="num">Alt (m)</th>
+          <th class="num">Peso (kg)</th><th class="num">Stock máx</th><th class="num">Peças/carro</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th><th title="CAIXA_FORCADA / PECAS_CAIXA_FORCADA do master data: exceção manual ao best-fit">Caixa forçada</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -503,9 +503,10 @@ function linhaArtigo(a) {
   return `
     <tr data-sku="${a.sku}">
       <td>${a.sku}</td><td>${a.descricao}</td>
-      <td>${a.comp_m.toFixed(3)}</td><td>${a.larg_m.toFixed(3)}</td><td>${a.alt_m.toFixed(3)}</td>
-      <td>${a.peso_kg.toFixed(2)}</td><td>${a.stock_max_un}</td><td>${a.pecas_por_carro}</td>
+      <td class="num">${a.comp_m.toFixed(3)}</td><td class="num">${a.larg_m.toFixed(3)}</td><td class="num">${a.alt_m.toFixed(3)}</td>
+      <td class="num">${a.peso_kg.toFixed(2)}</td><td class="num">${a.stock_max_un}</td><td class="num">${a.pecas_por_carro}</td>
       <td>${a.empilhamento}</td><td>${a.geometria}</td><td>${a.classe}</td>
+      <td>${!a.caixa_forcada ? '—' : a.pecas_caixa_forcada ? `${a.caixa_forcada} × ${a.pecas_caixa_forcada}` : a.caixa_forcada}</td>
     </tr>`;
 }
 
