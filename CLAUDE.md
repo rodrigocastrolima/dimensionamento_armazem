@@ -131,6 +131,14 @@ O que mudou no armazém:
   misturava 0.6x0.8 e 0.8x0.6 no mesmo nível (5 meias-paletes, frentes
   desalinhadas); a grelha dá 6 (3 x 2). Se não couber, cai no packer livre,
   por isso nunca perde capacidade. Efeito: área bruta 319,3 -> 308,0 m².
+- **«Armazém 3D» gera sozinho** ao abrir o separador (como a «Linha 3D»): corre
+  «Gerar racks» se ainda não há racks e renderiza com o arranjo atual; só volta
+  a renderizar se o arranjo ou os parâmetros mudaram (`gerar3DAutomatico`).
+  Tabela de Artigos igual à do `linha.html` (Estação, Aninhável = EIXO_ANINHAGEM,
+  Caixa forçada).
+- **Leitura do master data com o Excel aberto**: se o ficheiro estiver bloqueado
+  (PermissionError), `io_excel._abrir_workbook` lê uma cópia temporária (o que
+  está gravado em disco, sem alterações por guardar).
 - **Mantido só no armazém** (a linha não tem): `pallet_ultimo_recurso` (SIA) —
   agora, quando ligado, a PALLET só é testada (já com tolerância) se nenhuma
   caixa mais pequena couber, e só depois vem OVERSIZE; multi-cliente

@@ -1,6 +1,8 @@
 """Leitura do master data e escrita dos resultados (openpyxl). Unidades: metros."""
 from __future__ import annotations
 import math
+import shutil
+import tempfile
 from pathlib import Path
 
 import openpyxl
@@ -22,6 +24,21 @@ _EMPILHAMENTO_MAP = {
     "NÃO": Empilhamento.NAO_EMPILHAVEL,
     "NAO": Empilhamento.NAO_EMPILHAVEL,
 }
+
+
+
+def _abrir_workbook(path: Path, **kw):
+    """openpyxl.load_workbook que não falha quando o Excel tem o master data
+    aberto: nesse caso o ficheiro fica bloqueado para abertura direta
+    (PermissionError), mas pode copiar-se. Lê-se então uma cópia temporária --
+    o que está gravado em disco, sem as alterações por guardar no Excel."""
+    try:
+        return openpyxl.load_workbook(path, **kw)
+    except PermissionError:
+        with tempfile.TemporaryDirectory() as tmp:
+            copia = Path(tmp) / Path(path).name
+            shutil.copy2(path, copia)
+            return openpyxl.load_workbook(copia, **kw)
 
 
 def _metros(valor, folha: str, linha_excel: int, coluna: str) -> float:
@@ -122,7 +139,7 @@ def load_articles(path: Path) -> list[Article]:
     bruto); o valor definitivo é decidido pelo Passo 0 do pipeline
     (boxing.aplicar_stock_autonomia), não por esta função -- ver
     Config.autonomia_minima_carros."""
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _abrir_workbook(path, data_only=True)
     ws = _ws(wb, "Peças")
     rows = list(ws.iter_rows(values_only=True))
 
@@ -256,7 +273,7 @@ def load_articles(path: Path) -> list[Article]:
 
 def load_catalog(path: Path) -> list[BoxType]:
     """Folha «Caixas» -> list[BoxType] (S/M/L + PALLET)."""
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _abrir_workbook(path, data_only=True)
     ws = _ws(wb, "Caixas")
     rows = list(ws.iter_rows(values_only=True))
     catalog = []
@@ -279,7 +296,7 @@ def load_catalog(path: Path) -> list[BoxType]:
 
 def load_rack_types(path: Path) -> list[RackType]:
     """Folha «Racks» -> list[RackType]."""
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _abrir_workbook(path, data_only=True)
     ws = _ws(wb, "Racks")
     rows = list(ws.iter_rows(values_only=True))
     header = [str(c).strip() if c else "" for c in rows[0]]
@@ -357,7 +374,7 @@ def load_zones(path: Path) -> list[Zona]:
     justificação (ex.: '3', '0.95') -- 'Justificacao' já não é a 5ª coluna.
     'Altura_m' fica por ler por agora (zonas não têm altura no 3D, ver
     CLAUDE.md); só se evita o cruzamento de colunas."""
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _abrir_workbook(path, data_only=True)
     if "Zonas" not in wb.sheetnames:
         return []
     ws = wb["Zonas"]
@@ -443,7 +460,7 @@ def load_caixas_especiais(path: Path) -> list[CaixaEspecial]:
     O SKU não leva strip -- tem de bater com load_articles, que também não
     o faz (há SKUs reais com espaço no fim, ex. 'BEN10.FHB001_____DOOR
     STRUCTURE ASSY ')."""
-    wb = openpyxl.load_workbook(path, data_only=True)
+    wb = _abrir_workbook(path, data_only=True)
     if CAIXAS_ESPECIAIS_FOLHA not in wb.sheetnames:
         return []
     rows = list(wb[CAIXAS_ESPECIAIS_FOLHA].iter_rows(values_only=True))
@@ -544,7 +561,7 @@ def write_pecas_com_caixa(master_path: Path, out_path: Path,
     """Copia a folha «Peças» do master data tal e qual (todas as colunas,
     valores originais) e acrescenta a coluna 'Tipo_Caixa': a unidade de carga
     escolhida no Passo 1 (boxing) para cada SKU."""
-    wb_in = openpyxl.load_workbook(master_path, data_only=True)
+    wb_in = _abrir_workbook(master_path, data_only=True)
     ws_in = _ws(wb_in, "Peças")
     por_sku = {a.sku: a.load_type.value for a in assignments}
 

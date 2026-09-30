@@ -218,15 +218,15 @@
 
 <section id="artigos" class="tab active">
   <div class="toolbar">
-    <input id="filtro-artigos" placeholder="filtrar por SKU ou descrição..." style="max-width:300px">
+    <input id="filtro-artigos" placeholder="filtrar por SKU, descrição ou estação..." style="max-width:300px">
   </div>
-  <div class="dica">Só leitura — edita diretamente o Excel (dados/master_data_classificado_v1.xlsx) e recarrega a página.</div>
+  <div class="dica">Só leitura — edita diretamente o Excel (master data) e recarrega a página.</div>
   <div class="table-wrap">
     <table id="tabela-artigos">
       <thead>
         <tr>
-          <th>SKU</th><th>Descrição</th><th class="num">Comp (m)</th><th class="num">Larg (m)</th><th class="num">Alt (m)</th>
-          <th class="num">Peso (kg)</th><th class="num">Stock máx</th><th class="num">Peças/carro</th><th>Empilhamento</th><th>Geometria</th><th>Classe</th><th title="CAIXA_FORCADA / PECAS_CAIXA_FORCADA do master data: exceção manual ao best-fit">Caixa forçada</th>
+          <th>SKU</th><th>Descrição</th><th>Estação</th><th class="num">Comp (m)</th><th class="num">Larg (m)</th><th class="num">Alt (m)</th>
+          <th class="num">Peso (kg)</th><th class="num">Stock máx</th><th class="num">Peças/carro</th><th>Empilhamento</th><th title="EIXO_ANINHAGEM do master data: cota (X/Y/Z) onde a peça aninha na anterior">Aninhável</th><th title="CAIXA_FORCADA / PECAS_CAIXA_FORCADA do master data: exceção manual ao best-fit">Caixa forçada</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -488,7 +488,48 @@ document.querySelectorAll("nav button").forEach(btn => {
     btn.classList.add("active");
     document.getElementById(btn.dataset.tab).classList.add("active");
     if (btn.dataset.tab === "armazem" && window.redimensionarViewer) window.redimensionarViewer();
+    if (btn.dataset.tab === "armazem") gerar3DAutomatico();
   });
+});
+
+// O «Armazém 3D» gera sozinho ao abrir o separador (como a «Linha 3D»): se ainda
+// não há racks gerados, corre o «Gerar racks»; depois renderiza com o arranjo
+// atual. Só volta a renderizar se o arranjo ou os parâmetros mudaram desde o
+// último render, para não repor a câmara de cada vez que se volta ao separador.
+// Os botões «Gerar racks» / «Renderizar 3D» continuam a funcionar como antes.
+let _assinaturaRender = null;
+let _auto3dEmCurso = false;
+
+function _assinaturaArranjo() {
+  const v = (id) => document.getElementById(id)?.value ?? "";
+  return JSON.stringify([canvasBlocks, v("altura-armazem"), v("altura-picking"),
+    v("largura-max"), v("profundidade-max"), v("carros-alvo"), v("hangar-comp"), v("hangar-larg")]);
+}
+
+async function _esperarBotao(id) {
+  const b = document.getElementById(id);
+  await new Promise(r => setTimeout(r, 0));     // deixa o handler do clique arrancar
+  while (b.disabled) await new Promise(r => setTimeout(r, 60));
+}
+
+async function gerar3DAutomatico() {
+  if (_auto3dEmCurso) return;
+  _auto3dEmCurso = true;
+  try {
+    if (!canvasBlocks.length) {
+      document.getElementById("btn-gerar-racks").click();
+      await _esperarBotao("btn-gerar-racks");
+      if (!canvasBlocks.length) return;          // «Gerar racks» falhou (ver a consola/servidor)
+    }
+    if (_assinaturaRender === _assinaturaArranjo()) return;   // 3D já está atualizado
+    document.getElementById("btn-renderizar").click();
+    await _esperarBotao("btn-renderizar");
+  } finally {
+    _auto3dEmCurso = false;
+  }
+}
+document.getElementById("btn-renderizar").addEventListener("click", () => {
+  _assinaturaRender = _assinaturaArranjo();
 });
 
 // ----------------------------------------------------------------- artigos
@@ -502,10 +543,10 @@ async function carregarArtigos() {
 function linhaArtigo(a) {
   return `
     <tr data-sku="${a.sku}">
-      <td>${a.sku}</td><td>${a.descricao}</td>
+      <td>${a.sku}</td><td>${a.descricao}</td><td>${a.estacao || '—'}</td>
       <td class="num">${a.comp_m.toFixed(3)}</td><td class="num">${a.larg_m.toFixed(3)}</td><td class="num">${a.alt_m.toFixed(3)}</td>
       <td class="num">${a.peso_kg.toFixed(2)}</td><td class="num">${a.stock_max_un}</td><td class="num">${a.pecas_por_carro}</td>
-      <td>${a.empilhamento}</td><td>${a.geometria}</td><td>${a.classe}</td>
+      <td>${a.empilhamento}</td><td>${a.eixo_aninhagem ? a.eixo_aninhagem.toUpperCase() : '—'}</td>
       <td>${!a.caixa_forcada ? '—' : a.pecas_caixa_forcada ? `${a.caixa_forcada} × ${a.pecas_caixa_forcada}` : a.caixa_forcada}</td>
     </tr>`;
 }
@@ -518,7 +559,8 @@ function desenharArtigos(lista) {
 document.getElementById("filtro-artigos").addEventListener("input", (e) => {
   const q = e.target.value.toLowerCase();
   desenharArtigos(todosArtigos.filter(a =>
-    a.sku.toLowerCase().includes(q) || a.descricao.toLowerCase().includes(q)));
+    a.sku.toLowerCase().includes(q) || a.descricao.toLowerCase().includes(q)
+    || (a.estacao || '').toLowerCase().includes(q)));
 });
 
 // ----------------------------------------------------------------- caixas
