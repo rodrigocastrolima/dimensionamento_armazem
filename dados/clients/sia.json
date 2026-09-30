@@ -36,7 +36,8 @@
     "WAS00061": 500
   },
 
-  "oversize_racks": ["wide", "bulk"],
+  "_comment_oversize_racks": "A SIA nao tem rack wide-span na folha Racks: OVERSIZE vai para o par emparelhado de porta-paletes (oversize_par_racks). Vazio = regra desligada, sem aviso.",
+  "oversize_racks": [],
   "oversize_par_racks": ["porta-paletes"],
   "max_modulos_por_tipologia": {},
   "empilhamento_por_nivel": ["porta-paletes"],
