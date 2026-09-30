@@ -18,58 +18,128 @@ from .config import Config
 # Caixas normais, por ordem crescente de tamanho (usada para desempate)
 _CAIXAS = [LoadType.XS, LoadType.S, LoadType.M, LoadType.L]
 
+# Tipos de carga que recebem a tolerância lateral de Config.
+# pallet_tolerancia_lateral_m no encaixe do plano (ver _pecas_no_envelope).
+_TIPOS_COM_TOLERANCIA_PALETE = {LoadType.PALLET, LoadType.MEIA}
+
 
 def pieces_in_stack(altura_disponivel: float, altura_artigo: float,
-                    empilhamento: Empilhamento, fator_empilhamento: float) -> int:
-    """Quantas peças cabem empilhadas na vertical, conforme a classe de empilhamento.
+                    empilhamento: Empilhamento) -> int:
+    """Quantas peças cabem empilhadas RIGIDAMENTE na vertical (sem aninhar).
 
-    NAO_EMPILHAVEL: 1 peça de altura, nunca mais.
-    EMPILHAVEL: empilha inteiro, sem encaixar — n = floor(altura_disponivel / altura_artigo).
-    ANINHAVEL: 1ª peça ocupa a altura inteira, cada peça extra acrescenta apenas
-        fator_empilhamento x altura_artigo (encaixa/aninha na anterior):
-        altura_total(n) = altura_artigo x (1 + (n-1) x fator_empilhamento)
-    """
+    NAO_EMPILHAVEL: 1 peça de altura, nunca mais -- não se pode pôr nada em
+    cima. EMPILHAVEL: empilha inteiro, sem encaixar -- n = floor(altura_
+    disponivel / altura_artigo).
+
+    Só se usa quando o eixo vertical NÃO é o eixo de aninhagem do artigo
+    (`Article.eixo_aninhagem`, ver `pecas_no_eixo`) -- se for, usa-se a
+    fórmula de aninhagem em vez desta, mesmo que o artigo esteja marcado
+    NAO_EMPILHAVEL: aninhar é uma propriedade geométrica FIXA da peça (a
+    peça encaixa na anterior nessa cota específica), independente da
+    classificação de empilhamento rígido, que só descreve o que acontece
+    quando NÃO se está a usar essa cota (ver CLAUDE.md "separar aninhável
+    de empilhável")."""
     if altura_artigo <= 0 or altura_artigo > altura_disponivel:
         return 0
-
     if empilhamento == Empilhamento.NAO_EMPILHAVEL:
         return 1
-
-    if empilhamento == Empilhamento.ANINHAVEL and fator_empilhamento > 0:
-        n = math.floor((altura_disponivel / altura_artigo - 1) / fator_empilhamento) + 1
-        return max(n, 1)
-
-    # EMPILHAVEL (ou ANINHAVEL sem fator definido): altura cheia somada
-    n = math.floor(altura_disponivel / altura_artigo)
-    return max(n, 1)
+    return max(math.floor(altura_disponivel / altura_artigo), 1)
 
 
-# Orientações (coluna Orientação_permitida) que TRAVAM o eixo vertical do
-# artigo: a peça não pode ser deitada, logo a altura é sempre a cota Z medida.
-# Qualquer outro valor (incl. "Livre", o default) permite reorientar a peça e
-# escolher a cota vertical que mais rende.
-_ORIENT_TRAVADA = {"não deitar", "nao deitar", "base fixa", "base-fixa"}
+def pecas_no_eixo(disponivel: float, dimensao: float, aninhavel: bool,
+                  fator_empilhamento: float) -> int:
+    """Quantas peças cabem lado a lado num eixo QUALQUER -- vertical ou do
+    plano, a mesma fórmula serve para os dois (`_pecas_no_envelope` decide
+    qual usar em cada eixo).
+
+    `aninhavel` diz se ESTE eixo específico é o eixo de aninhagem do artigo
+    (`Article.eixo_aninhagem`): uma propriedade geométrica FIXA da peça (que
+    cota física encaixa na anterior), não da orientação escolhida pelo
+    packer -- a mesma peça pode ter esse eixo na vertical numa orientação e
+    no plano noutra (ex.: peça "tombada"), mas nunca em mais do que 1 eixo
+    ao mesmo tempo.
+
+    aninhavel=False: floor(disponivel/dimensao), encaixe rígido simples.
+    aninhavel=True: 1ª peça ocupa a dimensão inteira, cada peça extra
+        acrescenta só fator_empilhamento x dimensão (encaixa na anterior):
+        total(n) = dimensão x (1 + (n-1) x fator_empilhamento).
+        Devolve sempre o MAIOR dos dois (`max`) -- o `max` protege contra um
+        fator mal configurado (>= 1) que tornaria a fórmula de aninhagem pior
+        do que o simples floor().
+    """
+    if dimensao <= 0 or dimensao > disponivel:
+        return 0
+    n_rigido = math.floor(disponivel / dimensao)
+    if not aninhavel or fator_empilhamento <= 0:
+        return n_rigido
+    n_aninhado = math.floor((disponivel / dimensao - 1) / fator_empilhamento) + 1
+    return max(n_rigido, n_aninhado)
 
 
-def pode_deitar(orientacao: str) -> bool:
-    """True se a peça pode ser reorientada (qualquer das 3 cotas como altura)."""
-    return (orientacao or "").strip().lower() not in _ORIENT_TRAVADA
+# Mapeamento partilhado 'x'/'y'/'z' -> índice em `dims = (comp_m, larg_m,
+# alt_m)` (mesma ordem de `_NOMES_EIXO`), usado por DUAS colunas independentes
+# do master data:
+#   ALTURA_OVERRIDE (Article.altura_override): força QUAL cota fica vertical
+#     (Z) nas unidades de carga. Vazio = livre, testam-se as 3. Substitui a
+#     antiga Orientação_permitida (Livre/Base fixa/Não deitar, binário).
+#   EIXO_ANINHAGEM (Article.eixo_aninhagem): diz QUAL cota tem a geometria de
+#     encaixe (aninha na peça anterior nessa direção especificamente). Vazio
+#     = não aninha. Independente do ALTURA_OVERRIDE -- essa cota pode calhar
+#     vertical ou no plano, consoante a orientação escolhida (ver
+#     `_pecas_no_envelope`).
+_EIXO_POR_LETRA = {"x": 0, "y": 1, "z": 2}
 
 
-def _pecas_no_envelope(article: Article, box: BoxType, vert: float,
-                       plano: tuple[float, float], fator_empilhamento: float,
-                       fill_factor: float) -> int:
-    """Peças no envelope 3D com `vert` como cota vertical e `plano` as duas cotas
-    horizontais: empilhamento na vertical (pieces_in_stack) x envelope 2D no
-    plano (2 orientações, floor por eixo). fill_factor desconta o floor()
-    geométrico (folgas de manuseio/forma, encaixe imperfeito) — mín. 1 peça."""
-    Dc, Dl, Da = box.int_comp_m, box.int_larg_m, box.int_alt_m
-    n_altura = pieces_in_stack(Da, vert, article.empilhamento, fator_empilhamento)
+def eixo_forcado(valor: str) -> int | None:
+    """Índice do eixo (0=Comprimento, 1=Largura, 2=Altura) que `valor`
+    ('x'/'y'/'z') designa, ou None se vazio/não reconhecido. Usada tanto para
+    ALTURA_OVERRIDE (`eixos_possiveis`) como para EIXO_ANINHAGEM."""
+    return _EIXO_POR_LETRA.get((valor or "").strip().lower())
+
+
+def eixos_possiveis(altura_override: str) -> range | tuple[int, ...]:
+    """Eixos (índices em `dims`/`_NOMES_EIXO`) a testar como vertical: as 3
+    escolhas se ALTURA_OVERRIDE estiver vazio/não reconhecido, ou só o eixo
+    forçado ('x'/'y'/'z') caso contrário."""
+    eixo = eixo_forcado(altura_override)
+    return range(3) if eixo is None else (eixo,)
+
+
+def _pecas_no_envelope(article: Article, box: BoxType, iv: int,
+                       dims: tuple[float, float, float], fator_empilhamento: float,
+                       fill_factor: float, tolerancia_lateral_m: float = 0.0) -> int:
+    """Peças no envelope 3D com `dims[iv]` como cota vertical e as outras duas
+    no plano.
+
+    Por eixo (vertical OU do plano, o mesmo teste para os 3): se for o eixo
+    de aninhagem do artigo (`Article.eixo_aninhagem`), usa `pecas_no_eixo`
+    com aninhavel=True; senão, rígido -- `pieces_in_stack` (NAO_EMPILHAVEL/
+    EMPILHAVEL) no vertical, `pecas_no_eixo` com aninhavel=False no plano.
+    O eixo de aninhagem é uma propriedade FIXA da peça, pode calhar no
+    vertical nesta orientação (iv) e no plano noutra -- nunca mais do que 1
+    eixo ao mesmo tempo (ver CLAUDE.md "separar aninhável de empilhável").
+
+    fill_factor desconta o floor() geométrico do plano (folgas de manuseio/
+    forma, encaixe imperfeito) — mín. 1 peça. tolerancia_lateral_m (só
+    PALLET/MEIA, ver Config.pallet_tolerancia_lateral_m): soma-se aos DOIS
+    lados de CADA cota do plano -- nunca à altura."""
+    Dc = box.int_comp_m + 2 * tolerancia_lateral_m
+    Dl = box.int_larg_m + 2 * tolerancia_lateral_m
+    Da = box.int_alt_m
+    eixo_a = eixo_forcado(article.eixo_aninhagem)
+    ja, jb = (j for j in range(3) if j != iv)
+    vert, a, b = dims[iv], dims[ja], dims[jb]
+
+    n_altura = (pecas_no_eixo(Da, vert, True, fator_empilhamento) if iv == eixo_a
+               else pieces_in_stack(Da, vert, article.empilhamento))
     if n_altura == 0:
         return 0
-    a, b = plano
-    op1 = math.floor(Dc / a) * math.floor(Dl / b) if a <= Dc and b <= Dl else 0
-    op2 = math.floor(Dc / b) * math.floor(Dl / a) if b <= Dc and a <= Dl else 0
+
+    an_a, an_b = ja == eixo_a, jb == eixo_a
+    op1 = (pecas_no_eixo(Dc, a, an_a, fator_empilhamento) *
+           pecas_no_eixo(Dl, b, an_b, fator_empilhamento)) if a <= Dc and b <= Dl else 0
+    op2 = (pecas_no_eixo(Dc, b, an_b, fator_empilhamento) *
+           pecas_no_eixo(Dl, a, an_a, fator_empilhamento)) if b <= Dc and a <= Dl else 0
     por_plano_teorico = max(op1, op2)
     if por_plano_teorico == 0:
         return 0
@@ -79,30 +149,26 @@ def _pecas_no_envelope(article: Article, box: BoxType, vert: float,
 
 def pieces_per_box(article: Article, box: BoxType,
                    fator_empilhamento: float = 0.3,
-                   fill_factor: float = 1.0) -> int:
+                   fill_factor: float = 1.0,
+                   tolerancia_palete_m: float = 0.0) -> int:
     """Quantas unidades do artigo cabem numa unidade de carga (envelope 3D).
 
-    Orientação do artigo (coluna Orientação_permitida): se permite deitar (tudo
-    menos «Base fixa»/«Não deitar»), testam-se as 3 escolhas de cota vertical e
-    fica a que mais peças rende — não se força o Z medido como altura. Caso
-    contrário a altura é sempre o Z medido (peça de pé). Em cada escolha:
-    empilhamento vertical (pieces_in_stack) x envelope 2D no plano (2 orientações).
-    fill_factor desconta o encaixe geométrico perfeito (folgas de manuseio/forma,
-    encaixe-de-gume ao deitar peças finas), aplicado a TODAS as classes.
+    Orientação do artigo (coluna ALTURA_OVERRIDE): 'x'/'y'/'z' força essa cota
+    como vertical; vazio testa as 3 escolhas e fica com a que mais peças rende
+    (ver `eixos_possiveis`). Em cada escolha: empilhamento/aninhagem por eixo
+    (ver `_pecas_no_envelope`) x envelope 2D no plano (2 orientações).
+    fill_factor desconta o encaixe geométrico perfeito (folgas de manuseio/
+    forma, encaixe-de-gume ao deitar peças finas), aplicado a TODAS as classes.
+    tolerancia_palete_m: só entra em PALLET/MEIA (ver
+    Config.pallet_tolerancia_lateral_m), ignorada nas outras caixas.
     Corta pelo peso máximo da caixa.
     """
+    tol = tolerancia_palete_m if box.nome in _TIPOS_COM_TOLERANCIA_PALETE else 0.0
     dims = (article.comp_m, article.larg_m, article.alt_m)
-    if pode_deitar(article.orientacao):
-        por_geometria = max(
-            _pecas_no_envelope(article, box, dims[iv],
-                               tuple(dims[j] for j in range(3) if j != iv),
-                               fator_empilhamento, fill_factor)
-            for iv in range(3)
-        )
-    else:
-        por_geometria = _pecas_no_envelope(
-            article, box, article.alt_m, (article.comp_m, article.larg_m),
-            fator_empilhamento, fill_factor)
+    por_geometria = max(
+        _pecas_no_envelope(article, box, iv, dims, fator_empilhamento, fill_factor, tol)
+        for iv in eixos_possiveis(article.altura_override)
+    )
 
     if por_geometria == 0:
         return 0
@@ -115,8 +181,15 @@ def pieces_per_box(article: Article, box: BoxType,
     return min(por_geometria, por_peso)
 
 
+def capacidade_manual(article: Article, load_type: LoadType) -> bool:
+    """True se a capacidade de `load_type` para este artigo foi decidida à mão
+    no master data (CAIXA_FORCADA + PECAS_CAIXA_FORCADA) -- nesse caso é usada
+    tal e qual, sem as regras de capacidade prática (capacidade_reportada)."""
+    return article.pecas_caixa_forcada > 0 and article.caixa_forcada == load_type.value
+
+
 def capacidade_reportada(load_type: LoadType, pecas_por_unidade: int,
-                         sku: str, cfg: Config) -> int:
+                         sku: str, cfg: Config, manual: bool = False) -> int:
     """Peças por caixa a REPORTAR nos resultados (capacidade prática).
 
     `pecas_por_unidade` é o máximo geométrico à ocupação definida
@@ -126,7 +199,13 @@ def capacidade_reportada(load_type: LoadType, pecas_por_unidade: int,
     teto por tipo de caixa e arredondamento à centena inferior acima de 100
     peças (ver cfg.capacidade_*). Abaixo de 100 mantém o valor exato --
     arredondar daria 0, que não é uma capacidade.
+
+    manual=True (ver `capacidade_manual`): a quantidade já é uma decisão de
+    manuseio real, tomada no master data -- devolve-se sem teto nem
+    arredondamento.
     """
+    if manual:
+        return max(int(pecas_por_unidade), 1)
     override = cfg.capacidade_override_sku.get(sku)
     if override is not None:
         return max(int(override), 1)
@@ -170,7 +249,8 @@ def stock_para_autonomia(article: Article, catalogo: list[BoxType],
 
     alvo = dataclasses.replace(article, stock_max_un=stock_teorico)
     load_type, ppu_geometrico = choose_load(alvo, catalogo, cfg)
-    ppu_pratico = capacidade_reportada(load_type, ppu_geometrico, article.sku, cfg)
+    ppu_pratico = capacidade_reportada(load_type, ppu_geometrico, article.sku, cfg,
+                                       manual=capacidade_manual(article, load_type))
     num_unidades = math.ceil(stock_teorico / ppu_pratico) if ppu_pratico else 0
     stock_final = ppu_pratico * num_unidades if ppu_pratico else stock_teorico
 
@@ -201,18 +281,36 @@ def choose_load(article: Article, catalogo: list[BoxType],
                 cfg: Config) -> tuple[LoadType, int]:
     """Decide o tipo de carga e devolve (LoadType, peças_por_unidade).
 
-    Best-fit entre S/M/L/MEIA/PALLET: testa todas as candidatas onde caiba
-    pelo menos 1 peça e escolhe a que minimiza nº de unidades de carga para o
+    Best-fit entre S/M/L/MEIA/PALLET: testa todas as candidatas onde caiba pelo
+    menos 1 peça e escolhe a que minimiza nº de unidades de carga para o
     stock máximo (ceil(stock_max_un / peças_por_unidade)). Em empate,
     fica com a caixa fisicamente mais pequena (S < M < L < MEIA < PALLET).
-    Se não couber em nenhuma -> OVERSIZE ou PALLET (ver fallback abaixo).
+    PALLET/MEIA já incluem a tolerância lateral (Config.
+    pallet_tolerancia_lateral_m) neste MESMO teste -- não há um fallback à
+    parte: se não coube em nenhuma candidata (nem em PALLET/MEIA com
+    tolerância), é OVERSIZE, sem exceção.
 
     `cfg.pallet_ultimo_recurso` (decisão de negócio por cliente, ver
-    Config): quando True, a PALLET não compete no best-fit -- só entra pelo
-    fallback abaixo, ou seja, só é escolhida se NENHUMA caixa mais pequena
-    couber. Troca chão por movimentabilidade (caixas menores são mais fáceis
-    de mover à mão/porta-paletes do que uma palete cheia).
+    Config): quando True, a PALLET não compete no best-fit -- só é testada
+    (já com a tolerância lateral) se NENHUMA caixa mais pequena couber. Troca
+    chão por movimentabilidade (caixas menores são mais fáceis de mover à
+    mão/porta-paletes do que uma palete cheia).
+
+    Interceção ANTES do best-fit: SKUs em cfg.caixas_especiais têm um
+    equipamento de transporte dedicado (footprint e capacidade FIXOS, não
+    geometria) -- ver Config.caixas_especiais/models.CaixaEspecial. Nenhum
+    cálculo geométrico é feito para estes SKUs.
+
+    A seguir, CAIXA_FORCADA do master data (ver `_caixa_forcada`): o tipo de
+    carga vem da folha, não do best-fit.
     """
+    especial = cfg.caixas_especiais.get(article.sku)
+    if especial is not None:
+        return LoadType.OVERSIZE2, especial.quantidades[article.sku]
+
+    if article.caixa_forcada:
+        return _caixa_forcada(article, catalogo, cfg)
+
     catalogo_idx = {b.nome: b for b in catalogo}
     # ordem crescente de tamanho: em empate no nº de unidades ganha a menor
     candidatas = _CAIXAS + [LoadType.MEIA]
@@ -226,7 +324,8 @@ def choose_load(article: Article, catalogo: list[BoxType],
         box = catalogo_idx.get(load_type)
         if box is None:
             continue
-        ppu = pieces_per_box(article, box, cfg.fator_empilhamento, cfg.fill_factor_plano)
+        ppu = pieces_per_box(article, box, cfg.fator_empilhamento, cfg.fill_factor_plano,
+                             cfg.pallet_tolerancia_lateral_m)
         if ppu <= 0:
             continue
         num_unidades = math.ceil(article.stock_max_un / ppu)
@@ -237,71 +336,73 @@ def choose_load(article: Article, catalogo: list[BoxType],
     if melhor is not None:
         return melhor
 
-    # Chega aqui em dois casos: não coube em NENHUMA caixa pequena, ou coube
-    # mas a PALLET foi excluída de propósito da competição
-    # (cfg.pallet_ultimo_recurso). Em qualquer um dos dois, a palete ainda é
-    # tentada como último recurso antes de OVERSIZE -- nunca se perde stock
-    # só porque a política do cliente evita paletes quando há alternativa.
+    # Não coube em nenhuma unidade de carga, incluindo PALLET/MEIA já com a
+    # tolerância lateral -- OVERSIZE, sem "1/palete" inventado (ver docstring).
     #
-    # O fallback antigo devolvia (PALLET, 1) sem verificar nada, o que MENTIA
-    # em dois sentidos:
-    #   - peças maiores que a footprint da palete (em qualquer orientação)
-    #     apareciam como "1 por palete", escondendo que são oversize e não
-    #     assentam -- subdimensionando a área e sem gerar aviso;
-    #   - peças que só não cabem por causa da restrição de orientação ficavam
-    #     silenciosamente a 1/palete, sem sinalizar a causa.
-    # Agora distingue-se: se a peça ASSENTA na footprint da palete (as duas
-    # menores cotas cabem em comp x larg), 1/palete é uma aproximação legítima;
-    # caso contrário é OVERSIZE e tem de ser reportado, não inventado.
-    pallet = catalogo_idx.get(LoadType.PALLET)
-    if pallet is not None and not _assenta_na_palete(
-            article, pallet, cfg.pallet_transbordo_max_pct):
-        return LoadType.OVERSIZE, 1
-    return LoadType.PALLET, 1
+    # Com pallet_ultimo_recurso a PALLET ficou de fora da competição: só aqui
+    # é tentada (mesmo cálculo, com a tolerância lateral), para nunca perder
+    # stock só porque a política do cliente evita paletes quando há alternativa.
+    if cfg.pallet_ultimo_recurso:
+        pallet = catalogo_idx.get(LoadType.PALLET)
+        if pallet is not None:
+            ppu = pieces_per_box(article, pallet, cfg.fator_empilhamento,
+                                 cfg.fill_factor_plano, cfg.pallet_tolerancia_lateral_m)
+            if ppu > 0:
+                return LoadType.PALLET, ppu
+    return LoadType.OVERSIZE, 1
 
 
-def _assenta_na_palete(article: Article, pallet: BoxType,
-                       transbordo_max_pct: float = 0.25) -> bool:
-    """True se a peça é comportável por uma palete: as duas MENORES cotas cabem
-    na footprint E a MAIOR não fica em voo além do tolerado.
+def _caixa_forcada(article: Article, catalogo: list[BoxType],
+                   cfg: Config) -> tuple[LoadType, int]:
+    """CAIXA_FORCADA (master data): exceção manual ao best-fit, para quando
+    há uma razão que o motor não conhece (ex.: FHD103/104 não podem ir em
+    palete e, na caixa L, só cabem inclinadas com a caixa aberta).
 
-    Ignora a restrição de orientação de propósito: a questão aqui é apenas se a
-    peça é fisicamente paletizável, não como se arruma.
+    Com PECAS_CAIXA_FORCADA, essa é a capacidade, tal e qual. Sem ela,
+    conta-se pela geometria normal (pieces_per_box) dentro da caixa forçada.
+    Erro claro, nunca best-fit em silêncio, se a caixa não existir no
+    catálogo (o racking não a saberia colocar) ou se, sem quantidade, a
+    geometria não lá meter nenhuma peça."""
+    load_type = LoadType(article.caixa_forcada)
+    box = next((b for b in catalogo if b.nome == load_type), None)
+    if box is None:
+        raise ValueError(f"SKU {article.sku}: CAIXA_FORCADA={load_type.value} não existe "
+                         f"na folha «Caixas»")
+    if article.pecas_caixa_forcada > 0:
+        return load_type, article.pecas_caixa_forcada
+    ppu = pieces_per_box(article, box, cfg.fator_empilhamento, cfg.fill_factor_plano,
+                         cfg.pallet_tolerancia_lateral_m)
+    if ppu <= 0:
+        raise ValueError(f"SKU {article.sku}: CAIXA_FORCADA={load_type.value}, mas pela "
+                         f"geometria não cabe nenhuma peça nessa caixa -- indicar "
+                         f"PECAS_CAIXA_FORCADA (capacidade decidida à mão)")
+    return load_type, ppu
 
-    O teste do transbordo é essencial e faltava. Sem ele, uma lateral de 2.47 m
-    saía como "1 por palete" com 1.27 m a pender de uma palete de 1.20 m -- mais
-    do que a palete mede. E uma palete assim não é armazenável em rack: o
-    rack_capacity conta-a como ocupando 1.20 m quando na prática colide com as
-    vizinhas. Peças acima do limiar são OVERSIZE e vão para armazenagem ao chão
-    (ver Config.pallet_transbordo_max_pct).
 
-    O transbordo mede-se sempre no PLANO, nunca na altura: das 3 orientações
-    possíveis (cada cota como vertical), basta uma pousar dentro da footprint
-    (com a tolerância) para a peça ser paletizável. Uma peça de 1.2 x 0.8 x 3.0 m
-    posta de pé não pende para fora, apesar de ter 3 m de cota máxima."""
-    c, l, a = article.comp_m, article.larg_m, article.alt_m
-    lado_maior = max(pallet.int_comp_m, pallet.int_larg_m)
-    lado_menor = min(pallet.int_comp_m, pallet.int_larg_m)
-    tol_maior = lado_maior * (1.0 + transbordo_max_pct)
+def carrinhos_fisicos(assignments: list[BoxAssignment], cfg: Config) -> dict[str, int]:
+    """Nº de carrinhos FÍSICOS de caixa especial (OVERSIZE2) a colocar, por SKU.
 
-    # As 3 escolhas de cota vertical; em cada uma, (vertical) é a altura e o par
-    # (base_menor, base_maior) fica no plano. A peça é paletizável se ALGUMA
-    # orientação satisfizer as três condições:
-    #   - a cota vertical cabe na ALTURA ÚTIL da palete -- sem isto, aceitava-se
-    #     pôr uma lateral de 2.47 m de pé numa palete de 1.50 m de altura útil,
-    #     que é o que fazia estas peças escaparem ao critério;
-    #   - a cota menor do plano apoia dentro do lado menor (senão pende dos DOIS
-    #     lados e não há apoio nenhum);
-    #   - a cota maior do plano fica dentro do lado maior + tolerância. A
-    #     tolerância aplica-se SÓ a esta: alargá-la a ambas seria inventar uma
-    #     palete maior, não tolerar que a peça penda de uma ponta.
-    for vertical, (p, q) in ((a, (c, l)), (l, (c, a)), (c, (l, a))):
-        if vertical > pallet.int_alt_m + 1e-9:
+    Uma caixa especial (Número/ID da folha) é UM equipamento partilhado por
+    vários SKUs, cada um com a sua quantidade POR carrinho. `choose_load`
+    devolve por SKU `ceil(stock / quantidade)`, ou seja "quantos carrinhos
+    precisava este SKU se andasse sozinho" -- somar isso pelos SKUs do mesmo
+    carrinho conta o mesmo equipamento várias vezes (o side body LH e o RH
+    vão juntos no MESMO carrinho). O nº real de carrinhos é o do SKU que pede
+    mais: `max`. Fica atribuído ao 1º SKU do carrinho; os restantes ficam a 0
+    (já estão dentro desses carrinhos). SKUs sem caixa especial não entram."""
+    grupos: dict[int, list[BoxAssignment]] = {}
+    for a in assignments:
+        if a.load_type != LoadType.OVERSIZE2:
             continue
-        base_maior, base_menor = max(p, q), min(p, q)
-        if base_menor <= lado_menor + 1e-9 and base_maior <= tol_maior + 1e-9:
-            return True
-    return False
+        especial = cfg.caixas_especiais.get(a.sku)
+        if especial is not None:
+            grupos.setdefault(id(especial), []).append(a)
+    fisicos: dict[str, int] = {}
+    for lista in grupos.values():
+        total = max(a.num_unidades for a in lista)
+        for i, a in enumerate(lista):
+            fisicos[a.sku] = total if i == 0 else 0
+    return fisicos
 
 
 def plan_box(article: Article, catalogo: list[BoxType],
@@ -339,18 +440,36 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
         stock_max_un=article.stock_max_un, num_unidades=assignment.num_unidades,
     )
 
+    if load_type == LoadType.OVERSIZE2:
+        especial = cfg.caixas_especiais.get(article.sku)
+        if especial is not None:
+            criterio = (
+                f"Caixa especial (folha «Caixas Especiais»{f', {especial.notas}' if especial.notas else ''}) "
+                f"-- não passa pelo best-fit do catálogo. Vai sempre para um equipamento de "
+                f"{especial.comp_m:.2f} x {especial.larg_m:.2f} x {especial.alt_m:.2f} m, "
+                f"capacidade fixa de {especial.quantidades[article.sku]} peça(s)/unidade "
+                f"(capacidade do EQUIPAMENTO, não calculada por geometria/packer)."
+            )
+        else:
+            criterio = "Caixa especial (folha «Caixas Especiais» sem registo para este SKU -- verificar dados)."
+        return BoxJustificacao(
+            **base, orientacao_usada="De pé (caixa especial)",
+            caixa_int_comp_m=None, caixa_int_larg_m=None, caixa_int_alt_m=None,
+            pecas_por_plano_teorico=None, pecas_por_plano=None,
+            pecas_por_altura=None, pecas_por_peso=None,
+            fator_limitante="N/A (carrinho dedicado OVERSIZE2)", criterio=criterio,
+        )
+
     if load_type == LoadType.OVERSIZE:
         pallet = catalogo_idx.get(LoadType.PALLET)
         if pallet is not None:
-            lado_maior = max(pallet.int_comp_m, pallet.int_larg_m)
-            lado_menor = min(pallet.int_comp_m, pallet.int_larg_m)
-            tol = lado_maior * (1.0 + cfg.pallet_transbordo_max_pct)
+            tol = cfg.pallet_tolerancia_lateral_m
             criterio = (
-                f"Não assenta em nenhuma unidade de carga do catálogo. Testada a footprint "
-                f"da palete ({pallet.int_comp_m:.2f} x {pallet.int_larg_m:.2f} x "
-                f"{pallet.int_alt_m:.2f}m): em nenhuma das 3 orientações a cota vertical cabe "
-                f"na altura útil e o plano cabe em {lado_menor:.2f} x {tol:.2f}m "
-                f"(lado menor x lado maior + transbordo {cfg.pallet_transbordo_max_pct:.0%}). "
+                f"Não assenta em nenhuma unidade de carga do catálogo, incluindo PALLET/MEIA "
+                f"com tolerância lateral de {tol:.2f}m por lado ({pallet.int_comp_m:.2f} x "
+                f"{pallet.int_larg_m:.2f}m -> {pallet.int_comp_m + 2*tol:.2f} x "
+                f"{pallet.int_larg_m + 2*tol:.2f}m efetivo no plano, na(s) orientação(ões) "
+                f"permitida(s) por ALTURA_OVERRIDE). "
                 f"Vai para armazenagem OVERSIZE dedicada (rack wide-span/emparelhado ou chão)."
             )
         else:
@@ -361,6 +480,28 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
             pecas_por_plano_teorico=None, pecas_por_plano=None,
             pecas_por_altura=None, pecas_por_peso=None,
             fator_limitante="N/A (armazenagem OVERSIZE)", criterio=criterio,
+        )
+
+    # Caixa forçada COM quantidade manual: não há geometria a reconstruir (o
+    # motor pode até dizer que não cabe nenhuma -- é por isso que é manual).
+    if capacidade_manual(article, load_type):
+        box = catalogo_idx.get(load_type)
+        return BoxJustificacao(
+            **base, orientacao_usada="Manual (CAIXA_FORCADA)",
+            caixa_int_comp_m=box.int_comp_m if box else None,
+            caixa_int_larg_m=box.int_larg_m if box else None,
+            caixa_int_alt_m=box.int_alt_m if box else None,
+            pecas_por_plano_teorico=None, pecas_por_plano=None,
+            pecas_por_altura=None, pecas_por_peso=None,
+            fator_limitante="N/A (capacidade manual no master data)",
+            criterio=(
+                f"Caixa forçada no master data (CAIXA_FORCADA={load_type.value}, "
+                f"PECAS_CAIXA_FORCADA={article.pecas_caixa_forcada}) -- não passa pelo "
+                f"best-fit nem pelo cálculo geométrico: capacidade decidida à mão, usada "
+                f"tal e qual (sem fator de enchimento nem arredondamentos). "
+                f"Nº de unidades = ceil({article.stock_max_un} / {assignment.pecas_por_unidade}) "
+                f"= {assignment.num_unidades}."
+            ),
         )
 
     # Caixa normal (XS/S/M/L/MEIA/PALLET): reconstrói a orientação vencedora
@@ -376,17 +517,23 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
         )
 
     dims = (article.comp_m, article.larg_m, article.alt_m)
-    eixos = range(3) if pode_deitar(article.orientacao) else (2,)  # travada: Z medido = altura
-    Dc, Dl, Da = box.int_comp_m, box.int_larg_m, box.int_alt_m
+    eixos = eixos_possiveis(article.altura_override)
+    tol = cfg.pallet_tolerancia_lateral_m if load_type in _TIPOS_COM_TOLERANCIA_PALETE else 0.0
+    Dc, Dl, Da = box.int_comp_m + 2 * tol, box.int_larg_m + 2 * tol, box.int_alt_m
+    eixo_a = eixo_forcado(article.eixo_aninhagem)
     melhor = None  # (total, iv, por_plano_teorico, por_plano, n_altura)
     for iv in eixos:
-        vert = dims[iv]
-        a, b = tuple(dims[j] for j in range(3) if j != iv)
-        n_altura = pieces_in_stack(Da, vert, article.empilhamento, cfg.fator_empilhamento)
+        ja, jb = (j for j in range(3) if j != iv)
+        vert, a, b = dims[iv], dims[ja], dims[jb]
+        n_altura = (pecas_no_eixo(Da, vert, True, cfg.fator_empilhamento) if iv == eixo_a
+                   else pieces_in_stack(Da, vert, article.empilhamento))
         if n_altura == 0:
             continue
-        op1 = math.floor(Dc / a) * math.floor(Dl / b) if a <= Dc and b <= Dl else 0
-        op2 = math.floor(Dc / b) * math.floor(Dl / a) if b <= Dc and a <= Dl else 0
+        an_a, an_b = ja == eixo_a, jb == eixo_a
+        op1 = (pecas_no_eixo(Dc, a, an_a, cfg.fator_empilhamento) *
+               pecas_no_eixo(Dl, b, an_b, cfg.fator_empilhamento)) if a <= Dc and b <= Dl else 0
+        op2 = (pecas_no_eixo(Dc, b, an_b, cfg.fator_empilhamento) *
+               pecas_no_eixo(Dl, a, an_a, cfg.fator_empilhamento)) if b <= Dc and a <= Dl else 0
         por_plano_teorico = max(op1, op2)
         if por_plano_teorico == 0:
             continue
@@ -407,6 +554,8 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
 
     por_geometria, iv, por_plano_teorico, por_plano, n_altura = melhor
     orientacao_usada = f"{_NOMES_EIXO[iv]} na vertical ({dims[iv]:.2f}m)"
+    if iv == eixo_a:
+        orientacao_usada += " -- eixo de aninhagem"
 
     por_peso = math.floor(box.peso_max_kg / article.peso_kg) if article.peso_kg > 0 else None
     if por_peso is not None and por_peso < por_geometria:
@@ -419,8 +568,12 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
         f"fator de enchimento = {por_plano} peças/plano; x {n_altura} peças em altura "
         f"({article.empilhamento.value}) = {por_geometria} peças/unidade teórico"
         + (f"; peso ({article.peso_kg:.1f}kg) corta para {por_peso}" if por_peso is not None and por_peso < por_geometria else "")
+        + (f"; plano com tolerância de {tol:.2f}m/lado ({Dc:.2f} x {Dl:.2f}m efetivo)" if tol > 0 else "")
         + f". Nº de unidades = ceil({article.stock_max_un} / {assignment.pecas_por_unidade}) = {assignment.num_unidades}."
     )
+    if article.caixa_forcada == load_type.value:
+        criterio = (f"Caixa forçada no master data (CAIXA_FORCADA={load_type.value}) -- sem "
+                    f"best-fit; capacidade pela geometria dessa caixa: " + criterio)
 
     return BoxJustificacao(
         **base, orientacao_usada=orientacao_usada,

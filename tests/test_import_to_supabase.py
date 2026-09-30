@@ -49,11 +49,11 @@ def _mini_workbook(path):
     ws = wb.active
     ws.title = "Peças"
     ws.append(["SKU", "Descrição", "Comprimento_m", "Largura_m", "Altura_m", "Peso_kg",
-               "Stock_máx_un", "Peças_por_carro", "Orientação_permitida", "Empilhável",
+               "Stock_máx_un", "Peças_por_carro", "ALTURA_OVERRIDE", "EIXO_ANINHAGEM", "Empilhável",
                "Fragilidade", "Geometria", "Classe"])
-    ws.append(["SIA001", "Farol", 0.4, 0.3, 0.2, 1.2, 50, 0.5, "Livre",
+    ws.append(["SIA001", "Farol", 0.4, 0.3, 0.2, 1.2, 50, 0.5, None, None,
                "EMPILHAVEL", "Normal", "Regular", "RIGIDO"])
-    ws.append(["SIA002", "Painel", 1.5, 1.0, 0.2, 12.0, 10, 1.0, "Livre",
+    ws.append(["SIA002", "Painel", 1.5, 1.0, 0.2, 12.0, 10, 1.0, None, None,
                "NAO_EMPILHAVEL", "Normal", "Regular", "RIGIDO"])
 
     wc = wb.create_sheet("Caixas")

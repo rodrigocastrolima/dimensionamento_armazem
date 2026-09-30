@@ -75,34 +75,109 @@ def test_sem_modulo_fantasma_picking():
     assert pos.num_blocos == 1
 
 
-def test_pode_deitar():
-    """Base fixa / Não deitar travam o eixo vertical; tudo o resto é livre."""
+def test_eixos_possiveis():
+    """ALTURA_OVERRIDE vazio/não reconhecido -> livre (testa as 3 cotas);
+    'x'/'y'/'z' força o eixo correspondente (0=Comprimento, 1=Largura,
+    2=Altura), case-insensitive e tolerante a espaços."""
     from warehouse import boxing
-    assert not boxing.pode_deitar("Base fixa")
-    assert not boxing.pode_deitar("Não deitar")
-    assert not boxing.pode_deitar("nao deitar")
-    assert boxing.pode_deitar("Livre")
-    assert boxing.pode_deitar("")        # default -> livre
-    assert boxing.pode_deitar(None)      # em falta -> livre
+    assert boxing.eixos_possiveis("") == range(3)
+    assert boxing.eixos_possiveis(None) == range(3)      # em falta -> livre
+    assert boxing.eixos_possiveis("Livre") == range(3)   # valor antigo/desconhecido -> livre
+    assert boxing.eixos_possiveis("x") == (0,)
+    assert boxing.eixos_possiveis("Y") == (1,)
+    assert boxing.eixos_possiveis(" z ") == (2,)
 
 
 def test_orientacao_livre_deita_peca():
     """Peça comprida (1.3 m) não assenta deitada na footprint da palete
-    (1.2 x 0.8), mas de pé cabe na altura (1.5 m). Com 'Base fixa' (Z medido =
-    0.3 m como altura) não cabe -> 0. Com 'Livre' o packer põe a cota de 1.3 m
-    na vertical e encaixa muitas peças no plano fino."""
+    (1.2 x 0.8), mas de pé cabe na altura (1.5 m). Com ALTURA_OVERRIDE='z'
+    (Z medido = 0.3 m como altura) não cabe -> 0. Vazio (livre) o packer põe
+    a cota de 1.3 m na vertical e encaixa muitas peças no plano fino."""
     from warehouse import boxing
     from warehouse.models import Article, BoxType, Empilhamento
     pallet = BoxType(nome=LoadType.PALLET, int_comp_m=1.2, int_larg_m=0.8, int_alt_m=1.5,
                      ext_comp_m=1.2, ext_larg_m=0.8, ext_alt_m=1.644, peso_max_kg=1000.0)
     base = dict(descricao="", comp_m=1.3, larg_m=0.05, alt_m=0.3, peso_kg=0.0,
                 stock_max_un=100, pecas_por_carro=1, empilhamento=Empilhamento.EMPILHAVEL)
-    travado = Article(sku="T", orientacao="Base fixa", **base)
-    livre = Article(sku="L", orientacao="Livre", **base)
+    travado = Article(sku="T", altura_override="z", **base)
+    livre = Article(sku="L", altura_override="", **base)
 
     assert boxing.pieces_per_box(travado, pallet) == 0        # 1.3 m não assenta
     assert boxing.pieces_per_box(livre, pallet) == 64         # de pé: 0.05x0.3 x64
     assert boxing.pieces_per_box(livre, pallet) > boxing.pieces_per_box(travado, pallet)
+
+
+def test_aninhamento_so_no_eixo_designado_seja_ele_qual_for():
+    """ANINHAVEL foi removido de Empilhamento -- aninhar é agora Article.
+    eixo_aninhagem ('x'/'y'/'z'), independente do empilhamento rígido (ver
+    CLAUDE.md "separar aninhável de empilhável"). Caixa 1x1x1 m, peça
+    0.3x0.3x0.3 m, fator 0.5, eixo_aninhagem='x' (Comprimento_m):
+      eixo de aninhagem: floor((1/0.3-1)/0.5)+1 = 5
+      os outros 2 (rígidos, mesmo que um deles seja o vertical): floor(1/0.3) = 3
+      total = 5x3x3 = 45, SEMPRE -- não importa qual dos 3 acaba vertical
+      (`ALTURA_OVERRIDE` vazio testa as 3 orientações), porque o eixo de
+      aninhagem é uma propriedade fixa da peça, não da orientação escolhida
+      (pedido explícito: "isto não vai significar que esse eixo tenha de ir
+      para cima... simplesmente limita que direção podemos aninhar").
+    Sem eixo de aninhagem nenhum (tudo rígido): 3x3x3 = 27.
+    Com o código antigo (ANINHAVEL aninhava nos 3 eixos ao mesmo tempo) dava
+    5x5x5 = 125 -- este teste falharia com esse comportamento."""
+    from warehouse import boxing
+    from warehouse.models import Article, BoxType, Empilhamento
+    caixa = BoxType(nome=LoadType.M, int_comp_m=1.0, int_larg_m=1.0, int_alt_m=1.0,
+                    ext_comp_m=1.0, ext_larg_m=1.0, ext_alt_m=1.0, peso_max_kg=1000.0)
+    base = dict(sku="x", descricao="", comp_m=0.3, larg_m=0.3, alt_m=0.3, peso_kg=0.0,
+                stock_max_un=1, pecas_por_carro=1, altura_override="",
+                empilhamento=Empilhamento.EMPILHAVEL)
+    aninha_x = Article(eixo_aninhagem="x", **base)
+    sem_aninhar = Article(eixo_aninhagem="", **base)
+
+    assert boxing.pieces_per_box(aninha_x, caixa, fator_empilhamento=0.5) == 45
+    assert boxing.pieces_per_box(sem_aninhar, caixa, fator_empilhamento=0.5) == 27
+    assert boxing.pieces_per_box(aninha_x, caixa, fator_empilhamento=0.5) > \
+           boxing.pieces_per_box(sem_aninhar, caixa, fator_empilhamento=0.5)
+
+
+def test_nao_empilhavel_ainda_aninha_se_tombada():
+    """O caso que justifica separar Empilhamento de eixo_aninhagem: uma peça
+    NAO_EMPILHAVEL com eixo_aninhagem='z' (a Altura_m é a cota que encaixa).
+    Caixa 1x1x1 m, peça 0.2x0.2x0.3 m, fator 0.5.
+
+    De pé (ALTURA_OVERRIDE='z', o eixo de aninhagem fica vertical): aninha
+    normalmente -- NAO_EMPILHAVEL não trava nada, porque só se aplica a eixos
+    QUE NÃO SÃO o de aninhagem. floor(1/0.2)^2 x [floor((1/0.3-1)/0.5)+1=5] =
+    25 x 5 = 125.
+
+    "Tombada" (ALTURA_OVERRIDE='x', outra cota fica vertical): agora sim o
+    NAO_EMPILHAVEL trava o eixo vertical a 1 camada -- mas a Altura_m, deitada
+    no plano, continua a ser o eixo de aninhagem e aninha aí: floor(1/0.2) x
+    [floor((1/0.3-1)/0.5)+1=5] x 1 camada = 5 x 5 x 1 = 25. Mais do que o
+    puro rígido sem aninhar nenhuma (floor(1/0.2) x floor(1/0.3) x 1 = 15),
+    porque a peça continua fisicamente a encaixar na Altura_m, esteja ela
+    onde estiver."""
+    from warehouse import boxing
+    from warehouse.models import Article, BoxType, Empilhamento
+    caixa = BoxType(nome=LoadType.M, int_comp_m=1.0, int_larg_m=1.0, int_alt_m=1.0,
+                    ext_comp_m=1.0, ext_larg_m=1.0, ext_alt_m=1.0, peso_max_kg=1000.0)
+    base = dict(sku="x", descricao="", comp_m=0.2, larg_m=0.2, alt_m=0.3, peso_kg=0.0,
+                stock_max_un=1, pecas_por_carro=1, empilhamento=Empilhamento.NAO_EMPILHAVEL,
+                eixo_aninhagem="z")
+    de_pe = Article(altura_override="z", **base)
+    tombada = Article(altura_override="x", **base)
+
+    assert boxing.pieces_per_box(de_pe, caixa, fator_empilhamento=0.5) == 125
+    assert boxing.pieces_per_box(tombada, caixa, fator_empilhamento=0.5) == 25
+
+
+def test_pecas_no_eixo_nunca_pior_que_rigido():
+    """pecas_no_eixo nunca dá MENOS peças do que o floor() rígido, mesmo com
+    um fator_empilhamento mal configurado (>= 1, que tornaria a fórmula de
+    aninhagem pior) -- o max() interno protege sempre o resultado."""
+    from warehouse.boxing import pecas_no_eixo
+    assert pecas_no_eixo(1.0, 0.3, aninhavel=True, fator_empilhamento=1.5) == \
+           pecas_no_eixo(1.0, 0.3, aninhavel=False, fator_empilhamento=1.5)
+    assert pecas_no_eixo(1.0, 0.3, aninhavel=False, fator_empilhamento=0.5) == 3  # rígido, ignora fator
+    assert pecas_no_eixo(1.0, 0.3, aninhavel=True, fator_empilhamento=0.5) == 5   # aninhado, mais favorável
 
 
 def test_caixa_rodada_fica_gravada_na_orientacao_colocada():
@@ -148,66 +223,64 @@ def test_oversize_nao_e_inventado_como_uma_palete():
     # 1.75 x 1.37: as duas menores cotas (0.17, 1.37) NAO cabem em 1.20 x 0.80
     grande = Article(sku="OVS", descricao="", comp_m=1.75, larg_m=1.37, alt_m=0.17,
                      peso_kg=200.0, stock_max_un=4, pecas_por_carro=1,
-                     orientacao="Base fixa", empilhamento=Empilhamento.NAO_EMPILHAVEL)
+                     altura_override="z", empilhamento=Empilhamento.NAO_EMPILHAVEL)
     lt, ppu = boxing.choose_load(grande, cat, cfg)
     assert lt == LoadType.OVERSIZE, f"esperado OVERSIZE, veio {lt}"
 
 
-def test_peca_que_assenta_mas_nao_cabe_de_pe_fica_em_palete():
-    """Contraponto: se a peça ASSENTA na footprint da palete mas a restrição de
-    orientação a impede de ser arrumada, 1/palete continua a ser uma
-    aproximação legítima — não deve virar OVERSIZE."""
+def test_altura_override_forcado_pode_ficar_oversize_mas_livre_cabe():
+    """A mesma peça (1.05 x 1.31 x 0.75) com ALTURA_OVERRIDE='z' (força
+    Altura_m=0.75 como vertical) NÃO cabe na palete (1.20 x 0.80) nem com a
+    tolerância lateral de 0.10 m/lado (efetivo 1.40 x 1.00: nenhuma das duas
+    cotas do plano, 1.05 e 1.31, apoia nas duas ao mesmo tempo) -> OVERSIZE,
+    sem exceção (a antiga _assenta_na_palete ignorava a restrição de
+    orientação e "encontrava" outra orientação por trás das costas do
+    utilizador -- removida de propósito, ver CLAUDE.md). Com ALTURA_OVERRIDE
+    vazio (livre), o packer testa as 3 cotas e encontra uma orientação (Largura_m
+    ou Comprimento_m na vertical, ambas cabem) -> PALLET, 1."""
     from warehouse import boxing
     from warehouse.models import Article, Empilhamento
     from warehouse.config import Config
     cfg = Config()
     cat = _catalogo_minimo()
-    # 1.05 x 1.31 x 0.75 -> menores cotas (0.75, 1.05) cabem em 1.20 x 0.80?
-    # 0.75 <= 0.80 e 1.05 <= 1.20 -> assenta
-    a = Article(sku="OK", descricao="", comp_m=1.05, larg_m=1.31, alt_m=0.75,
-                peso_kg=7.85, stock_max_un=50, pecas_por_carro=1,
-                orientacao="Base fixa", empilhamento=Empilhamento.NAO_EMPILHAVEL)
-    lt, ppu = boxing.choose_load(a, cat, cfg)
+    base = dict(sku="OK", descricao="", comp_m=1.05, larg_m=1.31, alt_m=0.75,
+                peso_kg=7.85, stock_max_un=1, pecas_por_carro=1,
+                empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    travado = Article(altura_override="z", **base)
+    livre = Article(altura_override="", **base)
+
+    lt, _ = boxing.choose_load(travado, cat, cfg)
+    assert lt == LoadType.OVERSIZE, f"esperado OVERSIZE, veio {lt}"
+
+    lt, ppu = boxing.choose_load(livre, cat, cfg)
     assert lt == LoadType.PALLET and ppu == 1
 
 
-def test_assenta_na_palete():
+def test_tolerancia_lateral_palete():
+    """Config.pallet_tolerancia_lateral_m (0.10 m/lado) só entra em PALLET/
+    MEIA, somada aos DOIS lados de CADA cota do plano. Peça 1.35 x 0.50 x 0.20
+    (ALTURA_OVERRIDE='z'): sem tolerância não cabe (1.35 > 1.20 do comp da
+    palete); com 0.10 m/lado (efetivo 1.40 x 1.00) cabe. Caixa S (sem
+    tolerância, nunca aplicada fora de PALLET/MEIA) continua a 0."""
     from warehouse import boxing
     from warehouse.models import Article, Empilhamento
     cat = {b.nome: b for b in _catalogo_minimo()}
-    P = cat[LoadType.PALLET]
-    def art(c, l, a):
-        return Article(sku="x", descricao="", comp_m=c, larg_m=l, alt_m=a,
-                       peso_kg=1.0, stock_max_un=1, pecas_por_carro=1,
-                       empilhamento=Empilhamento.EMPILHAVEL)
-    assert boxing._assenta_na_palete(art(0.5, 0.5, 0.5), P)
-    assert not boxing._assenta_na_palete(art(1.75, 1.37, 0.17), P)
-    assert not boxing._assenta_na_palete(art(1.26, 2.08, 0.51), P)
+    pallet = cat[LoadType.PALLET]
+    peca = Article(sku="x", descricao="", comp_m=1.35, larg_m=0.50, alt_m=0.20,
+                   peso_kg=0.0, stock_max_un=1, pecas_por_carro=1,
+                   altura_override="z", empilhamento=Empilhamento.EMPILHAVEL)
 
-    # 1.2 x 0.8 x 3.0: a única orientação que assenta no plano (1.2 x 0.8) exige
-    # 3.0 m de altura e a palete só tem 1.5 m de altura útil; as outras põem os
-    # 3.0 m no plano (transborda 150%). NÃO é paletizável -- a asserção antiga
-    # dizia o contrário porque o teste ignorava a altura útil.
-    assert not boxing._assenta_na_palete(art(1.2, 0.8, 3.0), P)
+    assert boxing.pieces_per_box(peca, pallet, tolerancia_palete_m=0.0) == 0
+    assert boxing.pieces_per_box(peca, pallet, tolerancia_palete_m=0.10) > 0
 
-    # O que decide na prática é a ALTURA ÚTIL da palete (1.50 m), não a
-    # tolerância: uma peça fina e comprida pode ser posta DE PÉ e aí não
-    # transborda nada. 1.45 x 1.0 x 0.2 assenta em 0.2 x 1.0 com 1.45 m de
-    # altura -- passa mesmo com tolerância zero.
-    assert boxing._assenta_na_palete(art(1.45, 1.0, 0.2), P, 0.0)
-    # 1.55 já não cabe de pé (> 1.50 m) e deitada põe 1.0 x 1.55 no plano:
-    # 1.0 > 0.8, não apoia. Fora em qualquer orientação.
-    assert not boxing._assenta_na_palete(art(1.55, 1.0, 0.2), P, 0.25)
+    s = cat[LoadType.S]  # int_comp_m=0.40 -- pequena demais em qualquer caso
+    assert boxing.pieces_per_box(peca, s, tolerancia_palete_m=0.10) == 0
 
-    # As peças reais que motivaram o critério: laterais e tejadilho fora,
-    # painel dentro (ver Config.pallet_transbordo_max_pct)
-    assert not boxing._assenta_na_palete(art(2.465, 1.197, 0.36), P, 0.25)   # SIDE BODY
-    assert not boxing._assenta_na_palete(art(1.535, 1.056, 0.129), P, 0.25)  # ROOF
-    assert boxing._assenta_na_palete(art(1.314, 1.055, 0.747), P, 0.25)      # REAR PANEL
-    # A tolerância NÃO alarga o lado menor (senão era inventar uma palete maior).
-    # 0.9 x 0.9 x 0.9: qualquer orientação põe 0.9 x 0.9 no plano e 0.9 > 0.8,
-    # logo não apoia -- apesar de 0.9 estar dentro dos 1.5 m de tolerância.
-    assert not boxing._assenta_na_palete(art(0.9, 0.9, 0.9), P, 0.25)
+    # De ponta a ponta via choose_load (usa Config.pallet_tolerancia_lateral_m
+    # por omissão, 0.10): a mesma peça sai como PALLET, não OVERSIZE.
+    from warehouse.config import Config
+    lt, ppu = boxing.choose_load(peca, list(cat.values()), Config())
+    assert lt == LoadType.PALLET and ppu > 0
 
 
 # ------------------------------------------- pallet_ultimo_recurso (Config)
@@ -242,11 +315,11 @@ def test_pallet_ultimo_recurso_ainda_cai_em_pallet_se_nada_mais_couber():
     from warehouse.models import Article, Empilhamento
     from warehouse.config import Config
     cat = _catalogo_minimo()
-    # 1.05 x 1.31 x 0.75 -- maior que a S em todas as orientações, mas assenta
-    # na palete (mesmo caso do test_peca_que_assenta_mas_nao_cabe_de_pe_fica_em_palete).
-    art = Article(sku="OK", descricao="", comp_m=1.05, larg_m=1.31, alt_m=0.75,
+    # 1.05 x 0.90 x 0.75 -- maior que a S em todas as orientações, mas assenta
+    # na palete (1.20 x 0.80 + tolerância lateral de 0.10 m por lado).
+    art = Article(sku="OK", descricao="", comp_m=1.05, larg_m=0.90, alt_m=0.75,
                   peso_kg=7.85, stock_max_un=50, pecas_por_carro=1,
-                  orientacao="Base fixa", empilhamento=Empilhamento.NAO_EMPILHAVEL)
+                  altura_override="z", empilhamento=Empilhamento.NAO_EMPILHAVEL)
     lt, ppu = boxing.choose_load(art, cat, Config(pallet_ultimo_recurso=True))
     assert lt == LoadType.PALLET and ppu == 1
 
@@ -289,8 +362,8 @@ def test_pilhas_chao_recebem_coordenadas_sem_sobrepor():
     from warehouse import layout as layout_mod
     r = RackType("A", larg_m=2.0, prof_m=1.0, alt_nivel_m=1.5, niveis=4, corredor_m=2.5)
     pos = _posicoes_para_layout("A", 12)
-    artigos = [("P", 2.26, 1.37, 1.38, 84.4, 4, "Base fixa"),      # não empilha (1.38 alto)
-               ("Q", 1.75, 1.37, 0.17, 100.0, 4, "Base fixa")]     # empilha 4
+    artigos = [("P", 2.26, 1.37, 1.38, 84.4, 4, "z"),      # não empilha (1.38 alto)
+               ("Q", 1.75, 1.37, 0.17, 100.0, 4, "z")]     # empilha 4
     wl = layout_mod.gerar_layout(pos, {"A": r}, None, 0.0, 0.0,
                                  artigos, 1.8, 1000.0)
     assert len(wl.pilhas_chao) == 4 + 1      # 4 pilhas de 1 + 1 pilha de 4
@@ -320,7 +393,7 @@ def test_pilhas_chao_tem_corredor_a_cada_2_fiadas():
     r = RackType("A", larg_m=2.0, prof_m=1.0, alt_nivel_m=1.5, niveis=4, corredor_m=2.5)
     pos = _posicoes_para_layout("A", 4)
     # 30 peças de 1.0 x 1.0 x 1.8 (não empilham) -> muitas fiadas
-    artigos = [("P", 1.0, 1.0, 1.8, 10.0, 30, "Base fixa")]
+    artigos = [("P", 1.0, 1.0, 1.8, 10.0, 30, "z")]
     wl = layout_mod.gerar_layout(pos, {"A": r}, None, 6.0, 0.0, artigos, 1.8, 1000.0)
     ys = sorted({p.y_m for p in wl.pilhas_chao})
     assert len(ys) >= 4, "precisa de várias fiadas para o teste ser útil"
@@ -355,7 +428,7 @@ def test_oversize_ao_chao_empilha_e_soma_acesso():
     manda. O acesso entra na área porque não há corredores medidos pelo layout."""
     # 4 peças de 1.75x1.37x0.17, 215.8 kg: por altura 1.8/0.17 = 10, por peso
     # 1000/215.8 = 4 -> o peso manda
-    artigos = [("A", 1.75, 1.37, 0.17, 215.8, 4, "Base fixa")]
+    artigos = [("A", 1.75, 1.37, 0.17, 215.8, 4, "z")]
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
     assert det[0]["por_pilha"] == 4 and det[0]["limitado_por"] == "peso"
     assert det[0]["pilhas"] == 1
@@ -370,38 +443,38 @@ def test_oversize_ao_chao_peca_alta_nao_empilha():
     pilha máx. de 1.8 m: só 1 por pilha, logo cada unidade ocupa o seu lugar
     no chão. Footprint = as outras duas cotas (comp x larg), não a "deitada"
     genérica -- a orientação está travada, o Z é sempre a vertical."""
-    artigos = [("B", 2.26, 1.37, 1.38, 84.4, 7, "Base fixa")]
+    artigos = [("B", 2.26, 1.37, 1.38, 84.4, 7, "z")]
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
     assert det[0]["por_pilha"] == 1 and det[0]["pilhas"] == 7
     assert abs(a - 7 * 2.26 * 1.37) < 0.05
 
 
 def test_oversize_ao_chao_orientacao_livre_fica_de_pe():
-    """SIDE BODY LH-like: 1.58 x 0.25 x 1.28, orientação Livre. Deitada
-    (footprint = as 2 maiores, 1.58x1.28 = 2.02 m2) desperdiça espaço -- a
-    peça é fina (0.25 m) e cabe perfeitamente de pé, com a MAIOR cota (1.58)
-    na vertical e a footprint reduzida a 0.25x1.28 = 0.32 m2. Como só há 1
-    unidade (não empilha em nenhuma orientação), a escolha de orientação é
+    """SIDE BODY LH-like: 1.58 x 0.25 x 1.28, ALTURA_OVERRIDE vazio (livre).
+    Deitada (footprint = as 2 maiores, 1.58x1.28 = 2.02 m2) desperdiça espaço
+    -- a peça é fina (0.25 m) e cabe perfeitamente de pé, com a MAIOR cota
+    (1.58) na vertical e a footprint reduzida a 0.25x1.28 = 0.32 m2. Como só há
+    1 unidade (não empilha em nenhuma orientação), a escolha de orientação é
     pura minimização de footprint -- tem de ficar de pé."""
-    artigos = [("SIDE", 1.58, 0.25, 1.28, 12.0, 1, "Livre")]
+    artigos = [("SIDE", 1.58, 0.25, 1.28, 12.0, 1, "")]
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
     assert abs(det[0]["footprint_peca_m2"] - 0.25 * 1.28) < 1e-6
     assert abs(a - 0.25 * 1.28) < 1e-6
 
 
 def test_oversize_ao_chao_orientacao_travada_fica_deitada_mesmo_pior():
-    """A mesma peça do teste anterior, mas com orientação travada (Base fixa):
-    mantém-se deitada (footprint = comp x larg) mesmo sendo pior -- a peça
-    não pode ser reorientada, ponto final."""
-    artigos = [("SIDE", 1.58, 0.25, 1.28, 12.0, 1, "Base fixa")]
+    """A mesma peça do teste anterior, mas com ALTURA_OVERRIDE='z' (força
+    Altura_m como vertical): mantém-se deitada (footprint = comp x larg) mesmo
+    sendo pior -- a peça não pode ser reorientada, ponto final."""
+    artigos = [("SIDE", 1.58, 0.25, 1.28, 12.0, 1, "z")]
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.0)
     assert abs(det[0]["footprint_peca_m2"] - 1.58 * 0.25) < 1e-6
     assert abs(a - 1.58 * 0.25) < 0.01   # `a` arredonda a 2 casas decimais
 
 
 def test_oversize_ao_chao_ignora_sem_stock_ou_sem_geometria():
-    artigos = [("Z", 1.0, 1.0, 0.5, 10.0, 0, "Livre"),      # sem stock
-               ("Y", 0.0, 1.0, 0.5, 10.0, 4, "Livre")]      # sem geometria
+    artigos = [("Z", 1.0, 1.0, 0.5, 10.0, 0, ""),      # sem stock
+               ("Y", 0.0, 1.0, 0.5, 10.0, 4, "")]      # sem geometria
     a, det = area.area_oversize_chao(artigos, 1.8, 1000.0, 0.45)
     assert a == 0.0 and det == []
 
@@ -704,6 +777,96 @@ def test_limite_modulos_case_insensitive():
     assert racking.blocos_empilhados(r, 10.0, {"Prateleira": 2}) == 2
 
 
+# ------------------------- alturas de nível heterogéneas (flow-rack de bordo de linha)
+# RackType.alturas_niveis_m: uma altura por nível (índice 0 = base) em vez de
+# alt_nivel_m uniforme para todos os níveis -- flow-rack/estante dinâmica onde o
+# nível que leva L/M precisa de 0.8 m mas os outros podem ser bem mais baixos.
+
+def _flow_rack() -> RackType:
+    """Flow-rack sintética: nível 0 alto (0.8 m, para L/M), níveis 1-2 baixos
+    (0.3 m, para S/XS). Soma 1.4 m -- dentro do teto ergonómico de 1.8 m."""
+    return RackType("Flow Rack", larg_m=1.22, prof_m=1.22, alt_nivel_m=0.8, niveis=3,
+                    aceita=[LoadType.L, LoadType.XS],
+                    alturas_niveis_m=(0.8, 0.3, 0.3))
+
+
+def _box_l():
+    from warehouse.models import BoxType
+    return BoxType(nome=LoadType.L, int_comp_m=0.88, int_larg_m=0.53, int_alt_m=0.67,
+                   ext_comp_m=0.90, ext_larg_m=0.55, ext_alt_m=0.68, peso_max_kg=30)
+
+
+def _box_xs():
+    from warehouse.models import BoxType
+    return BoxType(nome=LoadType.XS, int_comp_m=0.28, int_larg_m=0.13, int_alt_m=0.11,
+                   ext_comp_m=0.30, ext_larg_m=0.15, ext_alt_m=0.12, peso_max_kg=10)
+
+
+def test_altura_nivel_e_altura_ate_niveis_helpers():
+    r = _flow_rack()
+    assert racking.altura_nivel(r, 0) == 0.8
+    assert racking.altura_nivel(r, 1) == 0.3
+    assert racking.altura_nivel(r, 2) == 0.3
+    assert racking.altura_ate_niveis(r, 0) == 0.0
+    assert racking.altura_ate_niveis(r, 1) == 0.8
+    assert racking.altura_ate_niveis(r, 2) == 1.1
+    assert racking.altura_ate_niveis(r, 3) == 1.4
+
+
+def test_rack_capacity_respeita_alturas_por_nivel():
+    """Uma caixa L (0.68 m) só conta o nível alto (0 de 3); uma XS (0.12 m)
+    cabe nos 3 -- mesma footprint, capacidade bem diferente."""
+    r = _flow_rack()
+    cap_l = racking.rack_capacity(r, _box_l())
+    cap_xs = racking.rack_capacity(r, _box_xs())
+    # por_nivel(L) = floor(1.22/0.90)*floor(1.22/0.55) = 1*2 = 2; só 1 nível compatível
+    assert cap_l == 2
+    # por_nivel(XS) = floor(1.22/0.30)*floor(1.22/0.15) = 4*8 = 32; os 3 níveis compatíveis
+    assert cap_xs == 32 * 3
+
+
+def test_empacotar_nivel_recusa_caixa_alta_em_nivel_baixo():
+    """O ponto crítico: _empacotar_nivel tem de recusar uma caixa mais alta do
+    que o nível onde está a tentar entrar -- nível a nível, não um valor único
+    para o rack inteiro."""
+    r = _flow_rack()
+    bloco = racking._abrir_bloco(r, bloco_idx=0, altura_picking_m=0.0)
+    nivel_alto, nivel_baixo1, _ = bloco.niveis
+
+    item_l = racking._ItemParaColocar(
+        sku="L1", descricao="", load_type=LoadType.L, comp_m=0.90, larg_m=0.55, alt_m=0.68,
+        pecas_nesta_caixa=1, eh_primeira_do_sku=False)
+    item_xs = racking._ItemParaColocar(
+        sku="XS1", descricao="", load_type=LoadType.XS, comp_m=0.30, larg_m=0.15, alt_m=0.12,
+        pecas_nesta_caixa=1, eh_primeira_do_sku=False)
+
+    assert racking._empacotar_nivel(nivel_alto, r, item_l) is not None
+    assert racking._empacotar_nivel(nivel_baixo1, r, item_l) is None
+    assert racking._empacotar_nivel(nivel_baixo1, r, item_xs) is not None
+
+
+def test_blocos_empilhados_soma_alturas_heterogeneas():
+    """altura do módulo = SOMA das alturas por nível (1.4 m), não
+    alt_nivel_m(=max, 0.8) x niveis(3) = 2.4 m -- floor(4.0/1.4)=2 vs floor(4.0/2.4)=1."""
+    r = _flow_rack()
+    assert racking.blocos_empilhados(r, altura_armazem_m=4.0) == 2
+
+
+def test_racktype_sem_alturas_niveis_mantem_comportamento_antigo():
+    """Guarda de regressão: sem alturas_niveis_m, os helpers novos e
+    rack_capacity/blocos_empilhados reduzem exatamente ao cálculo de sempre."""
+    r = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.8, niveis=3,
+                aceita=[LoadType.L, LoadType.XS])
+    assert r.alturas_niveis_m == ()
+    for n in range(r.niveis):
+        assert racking.altura_nivel(r, n) == 0.8
+    assert racking.altura_ate_niveis(r, r.niveis) == 0.8 * 3
+    cap_l = racking.rack_capacity(r, _box_l())
+    # por_nivel(L) em 1.83x0.6 = floor(1.83/0.55)*floor(0.6/0.9)=3*0=0 ou floor(1.83/0.9)*floor(0.6/0.55)=2*1=2
+    assert cap_l == 2 * 3  # todos os 3 níveis compatíveis (0.68 <= 0.8)
+    assert racking.blocos_empilhados(r, altura_armazem_m=10.0) == 4  # 10/2.4 = 4, como sempre
+
+
 # ------------------------------------------------ OVERSIZE em rack wide-span
 # Peças que não assentam na palete ficam POUSADAS no nível de uma wide-span
 # (bulk rack), sem palete nem caixa.
@@ -869,11 +1032,383 @@ def test_token_conhecido_nao_avisa(tmp_path, capsys):
     assert "AVISO" not in out
 
 
+# ------------------------------------------------------- caixas especiais
+
+def test_caixa_especial_intercepta_choose_load():
+    """SKU com CaixaEspecial (Config.caixas_especiais) sai sempre OVERSIZE2
+    com a quantidade DESSE SKU, ignorando por completo a geometria -- mesmo
+    uma peça minúscula que caberia facilmente numa XS."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    from warehouse.models import Article, Empilhamento, CaixaEspecial, BoxType
+    especial = CaixaEspecial(quantidades={"X1": 4},
+                             comp_m=1.2, larg_m=1.6, alt_m=1.7, notas="Carrinho lateral")
+    cfg = Config(caixas_especiais={"X1": especial})
+    a = Article(sku="X1", descricao="", comp_m=0.05, larg_m=0.05, alt_m=0.05,
+               peso_kg=0.0, stock_max_un=10, pecas_por_carro=1,
+               empilhamento=Empilhamento.EMPILHAVEL)
+    s = BoxType(nome=LoadType.S, int_comp_m=0.4, int_larg_m=0.3, int_alt_m=0.24,
+               ext_comp_m=0.42, ext_larg_m=0.32, ext_alt_m=0.25, peso_max_kg=15)
+    lt, ppu = boxing.choose_load(a, [s], cfg)
+    assert lt == LoadType.OVERSIZE2 and ppu == 4
+
+
+def test_caixa_especial_cobre_varios_skus_com_quantidades_diferentes():
+    """Um só registo (mesmo equipamento) pode cobrir vários SKUs -- MAS cada
+    um com a SUA PRÓPRIA quantidade (pedido explícito: "posso querer 4 de
+    uma referência e 2 de outra"). caixas_especiais_por_sku expande para um
+    dict com uma chave por SKU, todas apontando para o MESMO objeto
+    CaixaEspecial (mesmas dimensões), mas cada SKU sai com a sua quantidade."""
+    from warehouse import io_excel, boxing
+    from warehouse.config import Config
+    from warehouse.models import Article, Empilhamento, CaixaEspecial
+    especial = CaixaEspecial(quantidades={"A1": 4, "A2": 2},
+                             comp_m=1.2, larg_m=1.6, alt_m=1.7)
+    por_sku = io_excel.caixas_especiais_por_sku([especial])
+    assert por_sku["A1"] is por_sku["A2"] is especial
+
+    cfg = Config(caixas_especiais=por_sku)
+    base = dict(descricao="", comp_m=0.3, larg_m=0.3, alt_m=0.3, peso_kg=0.0,
+               stock_max_un=1, pecas_por_carro=1, empilhamento=Empilhamento.EMPILHAVEL)
+    lt1, ppu1 = boxing.choose_load(Article(sku="A1", **base), [], cfg)
+    lt2, ppu2 = boxing.choose_load(Article(sku="A2", **base), [], cfg)
+    assert lt1 == LoadType.OVERSIZE2 and ppu1 == 4
+    assert lt2 == LoadType.OVERSIZE2 and ppu2 == 2
+
+
+def test_carrinho_cabe_na_rack_oversize_por_altura():
+    """carrinho_cabe_na_rack_oversize recebe a altura por parâmetro (não um
+    valor global) -- cada caixa especial pode ter uma altura diferente e
+    caber ou não caber, independentemente das outras."""
+    from warehouse.config import Config
+    ws = _ws()   # wide-span: alt_nivel_m=1.6
+    cfg = Config(carrinhos_em_rack=True)
+    assert racking.carrinho_cabe_na_rack_oversize([ws], cfg, 1.5) is ws
+    # por omissão (armazém) o carrinho fica no chão, nunca em rack
+    assert racking.carrinho_cabe_na_rack_oversize([ws], Config(), 1.5) is None
+    assert racking.carrinho_cabe_na_rack_oversize([ws], cfg, 1.7) is None
+
+
+def test_carrinhos_ao_chao_nao_empilham():
+    """Por omissão os carrinhos vão TODOS ao chão e nunca empilham, mesmo os
+    baixos (0.5 m caberiam 3 em 1.8 m de altura_max): 1 carrinho por pilha."""
+    from warehouse import area
+    from warehouse.config import Config
+    from warehouse.models import BoxAssignment, CaixaEspecial
+    baixo = CaixaEspecial(quantidades={"B": 2}, comp_m=1.0, larg_m=1.0, alt_m=0.5, id="1")
+    cfg = Config(caixas_especiais={"B": baixo})
+    ws = RackType("Wide", larg_m=2.7, prof_m=1.5, alt_nivel_m=1.6, niveis=4, aceita=[LoadType.OVERSIZE])
+    linhas = area.artigos_chao_oversize2([BoxAssignment("B", LoadType.OVERSIZE2, 2, 6)], cfg, [ws])
+    assert len(linhas) == 1           # vai ao chão, apesar de haver rack que o aceitaria em teoria
+    a, det = area.area_oversize_chao(linhas, cfg.oversize_chao_altura_max_m,
+                                     cfg.oversize_chao_peso_max_kg, 0.0)
+    assert det[0]["por_pilha"] == 1 and det[0]["pilhas"] == 6
+    assert abs(a - 6 * 1.0) < 1e-6
+
+
+def test_carrinho_partilhado_conta_o_maximo_e_nao_a_soma():
+    """Side body LH e RH vão juntos no MESMO carrinho (2 de cada por carrinho,
+    stock 10 de cada): são 5 carrinhos, não 5 + 5. Um SKU noutro carrinho conta à parte."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    from warehouse.models import BoxAssignment, CaixaEspecial
+    par = CaixaEspecial(quantidades={"LH": 2, "RH": 2}, comp_m=1.4, larg_m=1.6, alt_m=1.4, id="1")
+    so = CaixaEspecial(quantidades={"X": 4}, comp_m=1.0, larg_m=1.0, alt_m=0.5, id="2")
+    cfg = Config(caixas_especiais={"LH": par, "RH": par, "X": so})
+    asg = [BoxAssignment("LH", LoadType.OVERSIZE2, 2, 5), BoxAssignment("RH", LoadType.OVERSIZE2, 2, 5),
+           BoxAssignment("X", LoadType.OVERSIZE2, 4, 5), BoxAssignment("N", LoadType.S, 1, 9)]
+    assert boxing.carrinhos_fisicos(asg, cfg) == {"LH": 5, "RH": 0, "X": 5}
+    # o SKU que pede mais carrinhos manda
+    asg[1] = BoxAssignment("RH", LoadType.OVERSIZE2, 2, 8)
+    assert boxing.carrinhos_fisicos(asg, cfg)["LH"] == 8
+
+
+def test_artigos_chao_oversize2_decide_por_sku():
+    """Duas caixas especiais com alturas diferentes: uma cabe no nível de
+    chão da wide-span, a outra não -- só a que não cabe aparece na lista
+    para arrumar ao chão (a que cabe fica para allocate_to_racks)."""
+    from warehouse.config import Config
+    from warehouse.models import CaixaEspecial, BoxAssignment
+    ws = _ws()   # alt_nivel_m=1.6
+    baixa = CaixaEspecial(quantidades={"B1": 2}, comp_m=1.0, larg_m=1.0, alt_m=1.5)
+    alta = CaixaEspecial(quantidades={"B2": 2}, comp_m=1.0, larg_m=1.0, alt_m=1.8)
+    cfg = Config(caixas_especiais={"B1": baixa, "B2": alta}, carrinhos_em_rack=True)
+    assignments = [
+        BoxAssignment("B1", LoadType.OVERSIZE2, 2, 3),
+        BoxAssignment("B2", LoadType.OVERSIZE2, 2, 5),
+    ]
+    linhas = area.artigos_chao_oversize2(assignments, cfg, [ws])
+    skus_no_chao = {l[0] for l in linhas}
+    assert skus_no_chao == {"B2"}          # B1 cabe na rack -- não vai ao chão
+    linha_b2 = next(l for l in linhas if l[0] == "B2")
+    assert linha_b2[1:4] == (1.0, 1.0, 1.8) and linha_b2[5] == 5
+
+
+def _folha_caixas_especiais(tmp_path, linhas, cabecalho=None):
+    """Master data mínimo com a folha «Caixas Especiais» no formato do
+    utilizador (uma linha por SKU; coluna extra vazia no fim, como no real)."""
+    import openpyxl
+    path = tmp_path / "master_teste.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active.title = "Peças"
+    ws = wb.create_sheet("Caixas Especiais")
+    ws.append(cabecalho or ["SKU", "Quantidade", "Comprimento_m", "Largura_m", "Altura_m",
+                            "Notas", "Número/ID", "Estação", None])
+    for linha in linhas:
+        ws.append(linha)
+    ws.append([None] * 9)   # linhas vazias no fim da folha não contam
+    wb.save(path)
+    return path
+
+
+def test_load_caixas_especiais_agrupa_por_numero_id(tmp_path):
+    """Formato da folha real: uma linha por SKU, as linhas com o mesmo
+    Número/ID juntam-se num só carrinho, cada SKU com a sua Quantidade. As
+    cotas podem vir só na 1ª linha do carrinho. O SKU não leva strip (há
+    SKUs reais com espaço no fim que têm de bater com a folha «Peças»)."""
+    from warehouse import io_excel
+    path = _folha_caixas_especiais(tmp_path, [
+        ["A1", 2, 1.4, 1.6, 1.4, "Carrinho de sidebody", 1, "C3"],
+        ["A2 ", 2, None, None, None, None, 1, None],
+        ["B1", 4, 1, 1, 0.5, "Carrinho de vidros portas", 2.0, "C4"],
+    ])
+    c1, c2 = io_excel.load_caixas_especiais(path)
+    assert (c1.id, c1.estacao, c1.notas) == ("1", "C3", "Carrinho de sidebody")
+    assert c1.quantidades == {"A1": 2, "A2 ": 2}
+    assert (c1.comp_m, c1.larg_m, c1.alt_m) == (1.4, 1.6, 1.4)
+    assert (c2.id, c2.estacao, c2.quantidades) == ("2", "C4", {"B1": 4})
+    por_sku = io_excel.caixas_especiais_por_sku([c1, c2])
+    assert por_sku["A1"] is por_sku["A2 "] is c1
+
+
+def test_load_caixas_especiais_sem_numero_id_cada_sku_e_um_carrinho(tmp_path):
+    from warehouse import io_excel
+    path = _folha_caixas_especiais(tmp_path, [
+        ["A1", 2, 1.0, 1.0, 1.0, None, None, "C1"],
+        ["A2", 1, 1.0, 1.0, 1.0, None, None, "C1"],
+    ])
+    caixas = io_excel.load_caixas_especiais(path)
+    assert [(c.id, c.skus) for c in caixas] == [("A1", ("A1",)), ("A2", ("A2",))]
+
+
+def test_load_caixas_especiais_folha_incoerente_da_erro_com_a_linha(tmp_path):
+    """Folha presente mas mal preenchida -> ValueError com a linha do Excel,
+    nunca [] em silêncio (foi assim que a mudança de formato da folha passou
+    despercebida: o leitor antigo ignorava o que não reconhecia)."""
+    import pytest
+    from warehouse import io_excel
+    casos = {
+        "Largura_m": [["A1", 2, 1.4, 1.6, 1.4, None, 1, "C3"],
+                      ["A2", 2, 1.4, 1.2, 1.4, None, 1, "C3"]],       # 2 tamanhos
+        "Estação": [["A1", 2, 1.4, 1.6, 1.4, None, 1, "C3"],
+                    ["A2", 2, None, None, None, None, 1, "C4"]],       # 2 estações
+        "repetido": [["A1", 2, 1.0, 1.0, 1.0, None, 1, None],
+                     ["A1", 1, 1.0, 1.0, 1.0, None, 2, None]],
+        "Quantidade": [["A1", "duas", 1.0, 1.0, 1.0, None, 1, None]],
+        "em falta": [["A1", 2, None, 1.0, 1.0, None, 1, None]],        # 1ª linha sem cota
+    }
+    for i, (esperado, linhas) in enumerate(casos.items()):
+        sub = tmp_path / str(i)
+        sub.mkdir()
+        path = _folha_caixas_especiais(sub, linhas)
+        with pytest.raises(ValueError, match=esperado) as info:
+            io_excel.load_caixas_especiais(path)
+        assert "linha" in str(info.value)
+
+
+def test_load_caixas_especiais_formato_antigo_da_erro(tmp_path):
+    """Folha no formato antigo ('SKU:qtd | SKU:qtd' numa célula, sem coluna
+    Quantidade): erro claro em vez de devolver [] sem aviso."""
+    import pytest
+    from warehouse import io_excel
+    path = _folha_caixas_especiais(
+        tmp_path, [["A1:4", 1.4, 1.6, 1.4, "teste"]],
+        cabecalho=["SKU", "Comprimento_m", "Largura_m", "Altura_m", "Notas"])
+    with pytest.raises(ValueError, match="Quantidade"):
+        io_excel.load_caixas_especiais(path)
+
+
+def test_caixas_especiais_sheet_ausente(tmp_path):
+    """Sem a folha «Caixas Especiais» (master data antigo, ou nunca usado),
+    load_caixas_especiais devolve [] -- nenhum SKU tem caixa especial,
+    comportamento normal em tudo, sem erro."""
+    import openpyxl
+    from warehouse import io_excel
+    path = tmp_path / "sem_caixas.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active.title = "Peças"
+    wb.save(path)
+    assert io_excel.load_caixas_especiais(path) == []
+
+
+def test_load_rack_types_le_alturas_niveis_m(tmp_path):
+    """Coluna opcional «Alturas_Niveis_m» (comma-separated, índice 0 = base):
+    quando presente e não vazia, popula RackType.alturas_niveis_m e
+    alt_nivel_m passa a max() dessa lista; célula vazia ou coluna ausente
+    mantém o comportamento uniforme de sempre. Contagem errada levanta
+    ValueError em vez de gerar uma tipologia incoerente em silêncio."""
+    import openpyxl
+    from warehouse import io_excel
+
+    path = tmp_path / "racks_teste.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Racks"
+    ws.append(["Nome", "Larg_m", "Prof_m", "Alt_Nivel_m", "Niveis", "Aceita",
+              "Footprint_m2", "Corredor_m", "Alturas_Niveis_m"])
+    ws.append(["Flow Rack", 1.22, 1.22, 0.8, 3, "L, XS", None, 1.2, "0.8,0.3,0.3"])
+    ws.append(["Prateleira Leve", 1.83, 0.6, 0.8, 3, "S, M, L, XS", None, 1.2, None])
+    wb.save(path)
+
+    racks = io_excel.load_rack_types(path)
+    flow = next(r for r in racks if r.nome == "Flow Rack")
+    leve = next(r for r in racks if r.nome == "Prateleira Leve")
+
+    assert flow.alturas_niveis_m == (0.8, 0.3, 0.3)
+    assert flow.alt_nivel_m == 0.8   # max(alturas_niveis_m)
+    assert leve.alturas_niveis_m == ()
+    assert leve.alt_nivel_m == 0.8   # célula vazia -- coluna Alt_Nivel_m normal
+
+    ws.append(["Rack Inválida", 1.22, 1.22, 0.8, 3, "L", None, 1.2, "0.8,0.3"])
+    wb.save(path)
+    try:
+        io_excel.load_rack_types(path)
+        assert False, "devia ter levantado ValueError (3 níveis, só 2 alturas)"
+    except ValueError:
+        pass
+
+
+# ------------------------------------------------ caixa forçada (CAIXA_FORCADA)
+
+def _caixa_l():
+    from warehouse.models import BoxType
+    return BoxType(nome=LoadType.L, int_comp_m=0.88, int_larg_m=0.53, int_alt_m=0.67,
+                   ext_comp_m=0.90, ext_larg_m=0.55, ext_alt_m=0.68, peso_max_kg=30)
+
+
+def _door_trim(**kw):
+    """Geometria real do BEN10.FHD103/104 (door outer trim): 1.054 m não cabe
+    na L a direito -- o best-fit põe-na em PALLET."""
+    from warehouse.models import Article, Empilhamento
+    base = dict(sku="TRIM", descricao="", comp_m=1.0538, larg_m=0.0693, alt_m=0.1093,
+                peso_kg=0.0, stock_max_un=10, pecas_por_carro=1, altura_override="y",
+                empilhamento=Empilhamento.EMPILHAVEL)
+    base.update(kw)
+    return Article(**base)
+
+
+def test_caixa_forcada_com_quantidade_ignora_best_fit_e_geometria():
+    """CAIXA_FORCADA=L + PECAS_CAIXA_FORCADA=4: sai (L, 4) mesmo com a
+    geometria do motor a dizer 0 na L (as 4 são peças inclinadas numa caixa
+    aberta, que o motor não modela). O Passo 0 enche a última caixa com a
+    quantidade manual: 10 carros x 1 -> 3 caixas -> 12 peças."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    cfg = Config()
+    cat = _catalogo_minimo() + [_caixa_l()]
+
+    assert boxing.choose_load(_door_trim(), cat, cfg)[0] == LoadType.PALLET
+    forcado = _door_trim(caixa_forcada="L", pecas_caixa_forcada=4)
+    assert boxing.pieces_per_box(forcado, _caixa_l()) == 0
+    assert boxing.choose_load(forcado, cat, cfg) == (LoadType.L, 4)
+
+    r = boxing.stock_para_autonomia(forcado, cat, cfg)
+    assert (r.load_type, r.pecas_por_unidade_pratico, r.num_unidades, r.stock_ajustado_un) \
+        == (LoadType.L, 4, 3, 12)
+
+    asg = boxing.plan_box(forcado, cat, cfg)
+    j = boxing.justificar_escolha(forcado, cat, cfg, asg)
+    assert "CAIXA_FORCADA=L" in j.criterio and j.fator_limitante.startswith("N/A")
+
+
+def test_caixa_forcada_quantidade_manual_nao_e_arredondada():
+    """A capacidade manual já é uma decisão de manuseio: não leva o
+    arredondamento à centena que capacidade_reportada aplica à XS/S/M/MEIA
+    (250 ficaria 200)."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    cfg = Config()
+    assert boxing.capacidade_reportada(LoadType.S, 250, "X", cfg) == 200
+    assert boxing.capacidade_reportada(LoadType.S, 250, "X", cfg, manual=True) == 250
+    a = _door_trim(comp_m=0.05, larg_m=0.05, alt_m=0.05, altura_override="",
+                   pecas_por_carro=30, caixa_forcada="S", pecas_caixa_forcada=250)
+    r = boxing.stock_para_autonomia(a, _catalogo_minimo(), cfg)
+    assert (r.pecas_por_unidade_pratico, r.num_unidades, r.stock_ajustado_un) == (250, 2, 500)
+
+
+def test_caixa_forcada_sem_quantidade_conta_pela_geometria():
+    """Só CAIXA_FORCADA (sem quantidade): o tipo vem da folha, a contagem é a
+    geometria normal nessa caixa -- aqui PALLET em vez da S do best-fit."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    cfg = Config()
+    cat = _catalogo_minimo()
+    pequena = _door_trim(comp_m=0.05, larg_m=0.05, alt_m=0.05, altura_override="")
+    assert boxing.choose_load(pequena, cat, cfg)[0] == LoadType.S
+    forcada = _door_trim(comp_m=0.05, larg_m=0.05, alt_m=0.05, altura_override="",
+                         caixa_forcada="PALLET")
+    pallet = next(b for b in cat if b.nome == LoadType.PALLET)
+    esperado = boxing.pieces_per_box(forcada, pallet, cfg.fator_empilhamento,
+                                     cfg.fill_factor_plano, cfg.pallet_tolerancia_lateral_m)
+    assert boxing.choose_load(forcada, cat, cfg) == (LoadType.PALLET, esperado)
+
+
+def test_caixa_forcada_invalida_da_erro_em_vez_de_best_fit():
+    """Sem quantidade e sem caber pela geometria, ou com uma caixa que não
+    está no catálogo: erro claro, nunca best-fit em silêncio."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    cfg = Config()
+    cat = _catalogo_minimo() + [_caixa_l()]
+    for art, cat_teste in ((_door_trim(caixa_forcada="L"), cat),
+                           (_door_trim(caixa_forcada="L", pecas_caixa_forcada=4),
+                            _catalogo_minimo())):
+        try:
+            boxing.choose_load(art, cat_teste, cfg)
+            assert False, "devia ter levantado ValueError"
+        except ValueError as e:
+            assert "TRIM" in str(e)
+
+
+def test_load_articles_le_caixa_forcada(tmp_path):
+    """Colunas opcionais, lidas por nome: 'l' -> 'L'; vazio -> best-fit
+    normal; caixa inexistente ou quantidade sem caixa -> ValueError."""
+    import openpyxl
+    from warehouse import io_excel
+    path = tmp_path / "pecas.xlsx"
+    cab = ["SKU", "Descrição", "Comprimento_m", "Largura_m", "Altura_m", "Peso_kg",
+           "Stock_máx_un", "Peças_por_carro", "ALTURA_OVERRIDE", "EIXO_ANINHAGEM",
+           "Empilhável", "CAIXA_FORCADA", "PECAS_CAIXA_FORCADA"]
+
+    def escrever(*linhas):
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Peças"
+        ws.append(cab)
+        for linha in linhas:
+            ws.append(linha)
+        wb.save(path)
+
+    peca = ["A", "", 1.05, 0.07, 0.11, None, 0, 1, "y", None, "EMPILHAVEL"]
+    escrever(peca + ["l", 4], ["B"] + peca[1:] + [None, None])
+    a, b = io_excel.load_articles(path)
+    assert (a.caixa_forcada, a.pecas_caixa_forcada) == ("L", 4)
+    assert (b.caixa_forcada, b.pecas_caixa_forcada) == ("", 0)
+
+    for extra in (["CAIXOTE", 4], [None, 4], ["L", 2.5]):
+        escrever(peca + extra)
+        try:
+            io_excel.load_articles(path)
+            assert False, f"devia ter levantado ValueError para {extra}"
+        except ValueError as e:
+            assert "SKU A" in str(e)
+
+
 if __name__ == "__main__":
     test_footprint(); test_floor_area()
     test_zona_area(); test_resumo_area_total()
     test_picking_nivel_pelo_topo(); test_sem_modulo_fantasma_picking()
-    test_pode_deitar(); test_orientacao_livre_deita_peca()
+    test_eixos_possiveis(); test_orientacao_livre_deita_peca()
     test_caixa_rodada_fica_gravada_na_orientacao_colocada()
     test_largura_max_e_teto_reduz_e_cresce_em_profundidade()
     test_pilhas_chao_recebem_coordenadas_sem_sobrepor()

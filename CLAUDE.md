@@ -53,13 +53,9 @@ vêm com níveis e altura por nível definidos). Não reintroduzir.
 - PALLET é entrada do catálogo «Caixas» (não dataclass separado).
 - `alt_nivel_m` = altura por nível.
 - Convenção de unidades: metros / m³.
-- **Orientação do artigo** passou a ser usada no boxing (`pieces_per_box`):
-  «Livre» (default, ~96% dos SKUs) permite qualquer das 3 cotas como altura
-  (`boxing.pode_deitar`); «Base fixa»/«Não deitar» travam o Z medido de pé.
-  Reduz paletes (~−31% só por densidade). O fator de enchimento do plano
-  (`fill_factor_plano`, ex-`fill_factor_rigido`) aplica-se agora a TODAS as
-  classes (era só RIGIDO) — cobre o encaixe-de-gume irreal de peças finas
-  deitadas.
+- **Orientação / aninhagem do artigo**: ver "Decisão fechada: motor alinhado com
+  o dimensionamento_linha" abaixo (`ALTURA_OVERRIDE` + `EIXO_ANINHAGEM` substituem
+  a antiga `Orientação_permitida`; `fill_factor_plano` = 0.80, todas as classes).
 - **Zona** (área fora dos racks: receção, expedição, equipamento, staging, ...)
   é input direto (`Comp_m × Larg_m`, folha «Zonas», sem SKU/stock associado) —
   não replica as fórmulas de fluxo de receção de uma folha de referência
@@ -93,30 +89,56 @@ os 16 SKUs assim marcados já falhavam o filtro geométrico da cantilever
 resultado nos dados atuais, só o código morto que já não era exercitado.
 `Article.geometria` mantém-se (é só informativo agora, mostrado na UI).
 
-## Decisão fechada: transbordo máximo ao pousar em palete
-`Config.pallet_transbordo_max_pct` (0.25) limita quanto uma peça pode pender da
-palete no fallback do boxing. Acima disso é **OVERSIZE** → armazenagem ao chão.
+## Decisão fechada: motor alinhado com o dimensionamento_linha (2026-09-30)
+O motor de boxing + alocação + leitura do master data foi alinhado **exatamente**
+com o `dimensionamento_linha` (fork posterior deste projeto). Verificado: com o
+mesmo master data e config, as decisões de caixa (445/445 SKUs) e a alocação aos
+racks (posições, caixas, peças) são idênticas nos dois motores. O que NÃO veio
+da linha: bordo de linha, layout/3D da linha, comboio logístico, UI «Caixas &
+Racks» (e as rotas `/api/caixas-especiais`).
 
-Porquê: `_assenta_na_palete` testava só as duas MENORES cotas — respondia a
-"equilibra-se em cima?" e ignorava o transbordo. As laterais GFRP (2.47 m) saíam
-como 1/palete com **1.27 m em voo** de uma palete de 1.20 m, mais do que a palete
-mede. Não é estética: uma palete assim **não é armazenável em rack** — o
-`rack_capacity` conta-a como ocupando 1.20 m quando colide com as vizinhas.
+O que mudou no armazém:
+- **`ALTURA_OVERRIDE`** (x/y/z/vazio) substitui `Orientação_permitida`
+  (Livre/Base fixa/Não deitar): força essa cota como vertical; vazio = livre
+  (testam-se as 3). `Article.orientacao` -> `Article.altura_override`;
+  `boxing.pode_deitar` -> `boxing.eixos_possiveis`.
+- **Aninhagem separada de empilhável**: `Empilhamento.ANINHAVEL` deixou de
+  existir (só `NAO_EMPILHAVEL`/`EMPILHAVEL`). A coluna **`EIXO_ANINHAGEM`**
+  (x/y/z/vazio, `Article.eixo_aninhagem`) diz em que cota a peça aninha na
+  anterior, vertical OU no plano (`boxing.pecas_no_eixo`, fator 0.3).
+- **`fill_factor_plano` 0.70 -> 0.80**.
+- **Tolerância de palete**: `Config.pallet_tolerancia_lateral_m` (0.10 m por
+  lado em PALLET/MEIA, em ambas as cotas do plano) substitui
+  `pallet_transbordo_max_pct` e `_assenta_na_palete`. Não há fallback «1/palete»:
+  se não coube em nenhuma unidade (PALLET/MEIA já com tolerância) é **OVERSIZE**.
+- **`CAIXA_FORCADA` / `PECAS_CAIXA_FORCADA`** (opcionais, por SKU): exceção
+  manual ao best-fit; com quantidade, é usada tal e qual (sem fill factor nem
+  arredondar à centena).
+- **OVERSIZE2 / folha «Caixas Especiais»** (carrinhos): portado, mas **desligado**
+  no armazém (`Config.caixas_especiais_no_armazem = False`; só a linha o usa).
+  Testado (2026-09-30) com os 6 carrinhos da linha: não compensa — cada carrinho
+  ocupa mais chão do que os racks que liberta (área bruta 319 -> ~497 m²). Se
+  alguma vez for ligado: carrinhos partilhados contam o MÁXIMO entre os SKUs
+  (`boxing.carrinhos_fisicos`, não a soma), ficam ao chão sem empilhar
+  (`Config.carrinhos_em_rack = False`) e o layout trata-os como fiada do bloco,
+  o que exagera os corredores.
+- `RackType.alturas_niveis_m` (coluna opcional «Alturas_Niveis_m» em «Racks»):
+  alturas de nível heterogéneas; vazio = uniforme como sempre.
+- `load_zones` lê por NOME de coluna; cotas em texto com vírgula são aceites.
+- **Mantido só no armazém** (a linha não tem): `pallet_ultimo_recurso` (SIA) —
+  agora, quando ligado, a PALLET só é testada (já com tolerância) se nenhuma
+  caixa mais pequena couber, e só depois vem OVERSIZE; multi-cliente
+  (`Config.for_client`), Supabase (migração `0006`), ocupação, aviso de chaves
+  de substring sem correspondência.
 
-O critério real acabou por ser a **altura útil da palete**, não a tolerância: uma
-peça fina e comprida pode ser posta DE PÉ e aí não transborda nada (1.45 × 1.0 ×
-0.2 assenta em 0.2 × 1.0 com 1.45 m de altura, passa mesmo com tolerância zero).
-Por isso `_assenta_na_palete` testa as 3 orientações e exige que a cota vertical
-caiba em `int_alt_m` — sem isso, aceitava-se pôr uma lateral de 2.47 m de pé.
-
-A tolerância aplica-se SÓ à cota maior do plano; alargá-la a ambas seria inventar
-uma palete maior em vez de tolerar que a peça penda de uma ponta.
-
-Efeito nos dados atuais: 3 SKU passam a OVERSIZE (2 laterais + tejadilho),
-−5 posições de porta-paletes. **A área bruta SOBE** (719 → 741 m²) porque as
-peças em palete ocupavam 1 palete cada mas eram contadas como 1.20 × 0.80; ao
-chão empilham 4 (laterais) e 13 (tejadilho), mas o footprint real é maior e agora
-é medido honestamente. O ganho é de correção, não de área.
+**Master data**: `dados/master_data_classificado_v3.xlsx` migrado — «Orientação_
+permitida» renomeada para `ALTURA_OVERRIDE`; colunas `EIXO_ANINHAGEM`,
+`CAIXA_FORCADA`, `PECAS_CAIXA_FORCADA` acrescentadas; `ALTURA_OVERRIDE`,
+`Empilhável`, `EIXO_ANINHAGEM`, `CAIXA_FORCADA` e `PECAS_CAIXA_FORCADA` copiados
+por SKU do master data da linha. Backup: `dados/master_data_classificado_v3.
+xlsx.pre-motor-linha.bak`. Dimensões e `Peças_por_carro` do armazém NÃO foram
+tocadas (há 6 SKUs com cotas e 2 com `Peças_por_carro` diferentes entre os dois
+ficheiros — rever à mão qual é o correto).
 
 ## Decisão fechada: OVERSIZE ao CHÃO (block stacking)
 Quando **não há** tipologia wide-span na folha «Racks», os OVERSIZE são arrumados

@@ -94,22 +94,29 @@ class Config:
     # não aqui.
     pallet_ultimo_recurso: bool = False
 
-    # Empilhamento de artigos (dentro de caixa/palete), eixo da altura.
-    # Classificação em 3 vias vinda da coluna 'Empilhável' (ver Empilhamento):
-    #   NAO_EMPILHAVEL -> 1 peça de altura.
+    # Fator usado pela fórmula de aninhagem (boxing.pecas_no_eixo), aplicada a
+    # QUALQUER eixo -- vertical ou do plano -- que seja o `Article.
+    # eixo_aninhagem` da peça (coluna 'EIXO_ANINHAGEM', ver CLAUDE.md "separar
+    # aninhável de empilhável"): cada peça extra acrescenta só
+    # fator_empilhamento x dimensão, em vez da dimensão inteira. Independente
+    # da coluna 'Empilhável' (Empilhamento), que só decide o eixo vertical
+    # QUANDO não é o de aninhagem:
+    #   NAO_EMPILHAVEL -> 1 peça de altura nesse eixo.
     #   EMPILHAVEL     -> altura cheia somada (sem nesting), só limitado pela
     #                     altura disponível e pelo peso máximo da caixa.
-    #   ANINHAVEL      -> cada peça extra do stack acrescenta apenas
-    #                     fator_empilhamento x altura_artigo (encaixa/aninha).
+    # Nos outros eixos (não vertical, não aninhagem) é sempre encaixe rígido.
     fator_empilhamento: float = 0.3
 
     # Fator de enchimento real no plano horizontal (comp x larg), substituindo o
     # floor() teórico de encaixe perfeito. Folgas de manuseio/forma irregular e
     # encaixe imperfeito reduzem o nº de peças por nível face ao máximo
-    # geométrico. Aplicado a TODAS as classes (RIGIDO e FLEXIVEL/CONTENTOR) —
-    # cobre também o encaixe-de-gume irreal de peças finas postas ao alto pela
-    # rotação de orientação (ver boxing.pieces_per_box).
-    fill_factor_plano: float = 0.7
+    # geométrico. Aplicado a TODAS as classes e tipos de carga (XS/S/M/L/MEIA/
+    # PALLET, RIGIDO e FLEXIVEL/CONTENTOR) — cobre também o encaixe-de-gume
+    # irreal de peças finas postas ao alto pela rotação de orientação (ver
+    # boxing.pieces_per_box). 0.80 (pedido explícito, 2026-09): 0.70 era
+    # conservador demais para peças regulares/rígidas, sem validação contra
+    # dados reais.
+    fill_factor_plano: float = 0.80
 
     # --- Capacidade PRÁTICA reportada por caixa (só afeta o nº de peças que se
     # reporta dentro de cada caixa; NÃO afeta o dimensionamento: o nº de caixas,
@@ -169,23 +176,19 @@ class Config:
     # do Excel já são o total).
     altura_armazem_m: float = 0.0
 
-    # Transbordo máximo tolerado ao pousar uma peça EM CIMA da palete, como
-    # fração do lado maior da palete. Aplica-se só no fallback do boxing (peça
-    # que não cabe em nenhuma unidade de carga mas assenta na footprint).
+    # Tolerância lateral ao encaixar peças em PALLET/MEIA: soma-se aos DOIS lados
+    # de cada cota do plano (Comprimento e Largura), tanto no cálculo principal
+    # de peças-por-unidade (boxing._pecas_no_envelope) como na decisão OVERSIZE
+    # vs PALLET/MEIA -- é a MESMA regra para as duas perguntas, não duas
+    # separadas (ver Decisão fechada "ALTURA_OVERRIDE e tolerância de palete").
     #
-    # Porquê: `_assenta_na_palete` testava só as duas MENORES cotas -- respondia
-    # a "equilibra-se em cima?" e ignorava quanto a maior cota fica em voo. As
-    # laterais GFRP (2.47 m) saíam como 1/palete com **1.27 m a pender para
-    # fora**, mais do que a própria palete mede. Isso não é só estética: uma
-    # palete assim NÃO é armazenável em rack -- o rack_capacity conta-a como
-    # ocupando 1.20 m, quando na prática colide com as vizinhas ou invade o
-    # corredor. Era subdimensionamento silencioso.
-    #
-    # 0.25 = tolera até 1.50 m numa palete de 1.20 m. Apanha as laterais (2.47 m)
-    # e o tejadilho (1.54 m) -> vão para o chão; deixa em palete o firewall
-    # (+1.7 cm) e os painéis (+11 cm), que são transbordos irrelevantes.
-    # Valor alto (ex.: 10.0) desliga o critério (comportamento anterior).
-    pallet_transbordo_max_pct: float = 0.25
+    # Substitui o antigo `pallet_transbordo_max_pct` (fração do lado maior,
+    # assimétrico, só usado num fallback à parte `_assenta_na_palete`, agora
+    # removido) -- pedido explícito (2026-09) por ser mais simples e simétrico:
+    # se a peça cabe na footprint da palete/meia-palete + 0.10 m por lado (em
+    # QUALQUER orientação permitida pelo ALTURA_OVERRIDE), entra normalmente
+    # (conta como PALLET/MEIA, pode empilhar/aninhar); senão é OVERSIZE.
+    pallet_tolerancia_lateral_m: float = 0.10
 
     # --- OVERSIZE ao CHÃO (block stacking) ------------------------------------
     # Peças volumosas que não assentam na palete podem ser arrumadas EM PILHA NO
@@ -236,6 +239,54 @@ class Config:
     # Folga de manuseio descontada à altura do nível, ao empilhar peças pousadas
     # (é preciso espaço para as mãos/equipamento entre a peça de cima e a viga).
     oversize_folga_altura_m: float = 0.05
+
+    # --- OVERSIZE2: "caixas especiais" (equipamento de transporte dedicado) --
+    # Alguns SKUs (ex.: laterais/tejadilho, compridos e finos) não passam pelo
+    # best-fit normal nem pelo block-stacking OVERSIZE genérico -- têm um
+    # equipamento de transporte próprio (tipicamente um carrinho), footprint
+    # e capacidade FIXOS (não calculados por geometria/packer, é a capacidade
+    # do equipamento). boxing.choose_load intercepta estes SKUs ANTES do
+    # best-fit (nenhum cálculo geométrico é feito) e devolve sempre
+    # (OVERSIZE2, <quantidade da caixa especial>).
+    #
+    # Substituiu (2026-09, pedido explícito -- "não fazer hardcode no
+    # config") uma versão anterior com os SKUs/dimensões escritos à mão aqui
+    # (oversize2_skus/oversize2_comp_m/larg_m/alt_m/capacidade_un). Agora é
+    # dado do master data (folha «Caixas Especiais», ver io_excel.
+    # load_caixas_especiais), editável também na UI web («Caixas & Racks») --
+    # decisão de negócio, não deve exigir alterar código. Um registo
+    # (`models.CaixaEspecial`) pode cobrir vários SKUs (mesmo equipamento
+    # partilhado); este dict resolve por SKU individual (chaves repetidas
+    # apontam para o MESMO objeto quando partilham registo).
+    #
+    # NÃO muda as dimensões do artigo (Comprimento_m/Largura_m/Altura_m no
+    # master data continuam as da PEÇA, só informativas/de referência) -- só
+    # o tipo de carga e a capacidade da unidade de transporte.
+    #
+    # Vazio por omissão: quem corre o pipeline (main.py/web.py/bordo_linha.py)
+    # carrega isto do master data e substitui via dataclasses.replace ANTES
+    # de chamar boxing/racking/area/linha -- Config em si não tem dados
+    # hardcoded aqui, só o tipo/default.
+    caixas_especiais: dict = field(default_factory=dict)
+
+    # A folha «Caixas Especiais» passou (2026-09-28) a descrever os carrinhos
+    # da LINHA: 1 por Número/ID, Quantidade = stock desse SKU na linha. False
+    # = o armazém central (main.run, /api/gerar, /api/render-layout) ignora-a
+    # e dimensiona esses SKUs pelo best-fit normal; o bordo de linha e o
+    # layout da linha usam-na sempre. True = o armazém volta a usá-la como
+    # override do Passo 1 (OVERSIZE2, ceil(stock de 10 carros / quantidade)
+    # carrinhos por SKU) -- medido com os 6 carrinhos da folha nessa data:
+    # área de racks 86.6 -> 258.3 m², área bruta 590.7 -> 932.7 m².
+    caixas_especiais_no_armazem: bool = False
+
+    # Onde ficam os carrinhos (OVERSIZE2) quando o armazém os usa. False (default)
+    # = no CHÃO, como o equipamento móvel que são: fiada própria do bloco
+    # (area.artigos_chao_oversize2), sem ocupar módulos de rack. True = o
+    # comportamento do dimensionamento_linha: dentro do nível de chão da rack
+    # OVERSIZE (wide-span/emparelhada) quando o carrinho cabe. Em rack, cada
+    # carrinho gasta um módulo inteiro (ex.: 6,5 m² para um carrinho de 2,2 m²)
+    # e obriga a abrir racks emparelhados só para eles.
+    carrinhos_em_rack: bool = False
 
     # --- OVERSIZE em par de racks emparelhadas (costas-com-costas) -----------
     # Alternativa à wide-span quando não há tipologia dedicada na folha «Racks»:

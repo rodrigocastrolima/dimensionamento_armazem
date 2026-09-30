@@ -58,7 +58,8 @@ def test_load_articles_maps_row_to_dataclass(monkeypatch):
         "sku": "SIA001", "descricao": "Farol dianteiro",
         "comp_m": 0.4, "larg_m": 0.3, "alt_m": 0.2, "peso_kg": 1.2,
         "stock_max_un_bruto": 50, "pecas_por_carro": 0.5,
-        "orientacao": "Livre", "empilhamento": "EMPILHAVEL",
+        "altura_override": "", "eixo_aninhagem": "", "caixa_forcada": "",
+        "pecas_caixa_forcada": 0, "empilhamento": "EMPILHAVEL",
         "fragilidade": "Normal", "geometria": "Regular", "classe": "RIGIDO",
     }]
     _patch_connect(monkeypatch, rows)
@@ -75,7 +76,8 @@ def test_load_articles_sem_geometria_usa_fallback_e_avisa(monkeypatch, capsys):
     rows = [{
         "sku": "SIA002", "descricao": "", "comp_m": 0, "larg_m": 0, "alt_m": 0,
         "peso_kg": 0, "stock_max_un_bruto": 1, "pecas_por_carro": 1.0,
-        "orientacao": "Livre", "empilhamento": "EMPILHAVEL",
+        "altura_override": "", "eixo_aninhagem": "", "caixa_forcada": "",
+        "pecas_caixa_forcada": 0, "empilhamento": "EMPILHAVEL",
         "fragilidade": "Normal", "geometria": "Regular", "classe": "RIGIDO",
     }]
     _patch_connect(monkeypatch, rows)

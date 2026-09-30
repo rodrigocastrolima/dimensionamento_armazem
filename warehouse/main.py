@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 import argparse
+import dataclasses
 import os
 from pathlib import Path
 
@@ -20,6 +21,9 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
     escalado, sem reescrever o Excel nem voltar a decidir a autonomia mínima).
     None (default) = comportamento normal: lê do master_data e o Passo 0
     (boxing.aplicar_stock_autonomia) decide o stock_max_un de cada artigo."""
+    if cfg.caixas_especiais_no_armazem:   # carrinhos da linha -- ver Config
+        caixas_especiais = io_excel.load_caixas_especiais(cfg.master_data)
+        cfg = dataclasses.replace(cfg, caixas_especiais=io_excel.caixas_especiais_por_sku(caixas_especiais))
     catalogo = data_access.load_catalog(cfg)          # S/M/L + PALLET
     autonomia_resultados = None
     if articles is None:
@@ -57,13 +61,24 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
     # o rack tem prioridade). Antes do layout, para as pilhas entrarem como
     # fiada do bloco.
     artigos_chao: list[tuple] = []
-    area_chao_m2 = 0.0
     if cfg.oversize_ao_chao and not racking._melhor_oversize_ativo(rack_types, cfg):
         artigos_chao = [
-            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.orientacao)
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.altura_override)
             for a in assignments if a.load_type == LoadType.OVERSIZE
             for art in [article_idx.get(a.sku)] if art
         ]
+
+    # OVERSIZE2 (caixa especial, ver models.CaixaEspecial/Config.
+    # caixas_especiais): ao solo, mas DENTRO do footprint da mesma rack usada
+    # para OVERSIZE (wide-span/emparelhada), quando ela existe e a caixa
+    # especial cabe no seu nível de chão -- já colocada por racking.
+    # allocate_to_racks (ver carrinho_cabe_na_rack_oversize/
+    # _tentar_colocar_carrinho). artigos_chao_oversize2 decide por SKU (cada
+    # registo pode ter altura diferente) -- só devolve os que NÃO cabem.
+    artigos_chao += area.artigos_chao_oversize2(assignments, cfg, rack_types)
+
+    area_chao_m2 = 0.0
+    if artigos_chao:
         area_chao_m2, _ = area.area_oversize_chao(
             artigos_chao, cfg.oversize_chao_altura_max_m,
             cfg.oversize_chao_peso_max_kg, cfg.oversize_chao_acesso_pct)

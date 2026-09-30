@@ -18,13 +18,24 @@ class LoadType(str, Enum):
                            # (nem na footprint da palete): precisa de solução
                            # dedicada. Nunca é inventado como "1 por palete" --
                            # é reportado nos avisos para decisão humana.
+    OVERSIZE2 = "OVERSIZE2"  # carrinho dedicado (SKUs em Config.oversize2_skus):
+                           # peças transportadas DE PÉ num carrinho de footprint
+                           # FIXO (Config.oversize2_comp_m x oversize2_larg_m),
+                           # capacidade FIXA (Config.oversize2_capacidade_un) --
+                           # não calculada por geometria/packer como as outras.
+                           # Vai sempre ao chão (nunca a rack), ver boxing.
+                           # choose_load/main.py e linha.elementos_carrinho.
 
 
 class Empilhamento(str, Enum):
-    """Classificação de empilhamento vertical de um artigo (coluna 'Empilhável')."""
+    """Classificação de empilhamento RÍGIDO vertical de um artigo (coluna
+    'Empilhável'). Só decide o que acontece no eixo que ficar vertical QUANDO
+    esse eixo não é o eixo de aninhagem do artigo (ver Article.
+    eixo_aninhagem, coluna 'EIXO_ANINHAGEM') -- aninhar é uma propriedade
+    geométrica separada, independente desta classificação (ver CLAUDE.md
+    "separar aninhável de empilhável")."""
     NAO_EMPILHAVEL = "NAO_EMPILHAVEL"   # não empilha: 1 peça de altura
     EMPILHAVEL = "EMPILHAVEL"           # empilha inteiro, sem encaixar (sem nesting)
-    ANINHAVEL = "ANINHAVEL"             # encaixa/aninha nas peças anteriores do stack
 
 
 # --------------------------- INPUT ---------------------------
@@ -43,8 +54,21 @@ class Article:
     # `int` e o int() da leitura truncava: os 138 SKUs a 0.5 viravam 0 e deixavam
     # de pedir zona de picking em silêncio (ver io_excel.load_articles).
     pecas_por_carro: float         # quantidade para um carro (picking unit)
-    orientacao: str = "Livre"      # restrição de rotação no packing
+    # Coluna 'ALTURA_OVERRIDE' do master data. 'x'/'y'/'z' força essa cota
+    # (Comprimento/Largura/Altura) como o eixo vertical (Z) nas unidades de
+    # carga; vazio (default) = livre, testam-se as 3 e fica-se com a que mais
+    # peças rende (ver boxing.eixos_possiveis). Substitui a antiga
+    # 'Orientação_permitida' (Livre/Base fixa/Não deitar).
+    altura_override: str = ""
     empilhamento: Empilhamento = Empilhamento.EMPILHAVEL
+    # Coluna 'EIXO_ANINHAGEM' do master data. 'x'/'y'/'z' diz qual cota
+    # (Comprimento/Largura/Altura) tem a geometria que encaixa/aninha na peça
+    # anterior (ver boxing.pecas_no_eixo); vazio (default) = não aninha.
+    # Independente de `empilhamento` e de `altura_override`: essa cota pode
+    # calhar vertical ou no plano consoante a orientação escolhida (ex.: peça
+    # "tombada") -- só limita EM QUE DIREÇÃO a peça aninha, não obriga essa
+    # direção a ser a vertical.
+    eixo_aninhagem: str = ""
     fragilidade: str = "Normal"
     geometria: str = "Regular"
     classe: str = "RIGIDO"          # RIGIDO / FLEXIVEL_CONTENTOR
@@ -54,6 +78,22 @@ class Article:
     # resultados (sheet Autonomia) para comparar contra o stock efetivamente
     # usado.
     stock_atual_un: int = 0
+    # Estação(ões) de montagem onde a peça é consumida (coluna 'Estação' do
+    # master data, opcional). Bruto tal como vem da folha -- pode ter mais do
+    # que uma, separadas por vírgula (ex.: "C1, P1"); ver
+    # bordo_linha.resolver_estacao para a resolução a uma única estação.
+    # "" = sem estação atribuída no master data.
+    estacao: str = ""
+    # Colunas 'CAIXA_FORCADA'/'PECAS_CAIXA_FORCADA' do master data (opcionais):
+    # exceção MANUAL ao best-fit (boxing.choose_load). CAIXA_FORCADA = nome de
+    # uma caixa do catálogo (XS/S/M/L/MEIA/PALLET), já em maiúsculas. Com
+    # PECAS_CAIXA_FORCADA > 0 a capacidade é essa, tal e qual -- decisão tomada
+    # fora do motor (ex.: peças inclinadas numa caixa aberta, que a geometria
+    # do motor não modela), sem fill_factor nem arredondamentos. Sem
+    # quantidade (0), conta-se pela geometria normal dentro da caixa forçada.
+    # "" = best-fit normal.
+    caixa_forcada: str = ""
+    pecas_caixa_forcada: int = 0
 
     @property
     def volume_m3(self) -> float:
@@ -80,6 +120,43 @@ class BoxType:
 
 
 @dataclass
+class CaixaEspecial:
+    """'Caixa especial' definida pelo utilizador (folha «Caixas Especiais»
+    do master data, editável também pela UI web em «Caixas & Racks») --
+    substitui os antigos Config.oversize2_skus/oversize2_comp_m/larg_m/
+    alt_m/capacidade_un: dá override ao Passo 1 (boxing.choose_load) para
+    os SKUs listados, ignorando por completo a caixa/quantidade que o
+    best-fit normal escolheria (`LoadType.OVERSIZE2`). As dimensões são as
+    do EQUIPAMENTO de transporte (ex.: um carrinho dedicado), não da peça --
+    Comprimento_m/Largura_m/Altura_m do artigo no master data continuam a
+    ser as da peça, só informativas.
+
+    Um registo pode cobrir VÁRIOS SKUs (mesmo equipamento partilhado por
+    mais do que uma peça) -- MAS cada SKU tem a sua PRÓPRIA quantidade
+    (pedido explícito: "posso querer 4 de uma referência e 2 de outra" no
+    mesmo equipamento) -- `quantidades` é sempre um dict {sku: quantidade},
+    mesmo com 1 SKU só. As dimensões (comp/larg/alt) são do equipamento em
+    si, por isso SÃO partilhadas por todos os SKUs do registo.
+
+    `id` (coluna 'Número/ID') identifica o CARRINHO FÍSICO -- cada id é 1
+    carrinho na linha (linha.elementos_carrinho) e a `quantidade` de cada
+    SKU é o stock desse SKU na linha, sem Passo 0 (bordo_linha.
+    calcular_bordo_linha). `estacao` (coluna 'Estação') é onde o carrinho
+    fica; vazio = usa a estação do SKU no master data."""
+    quantidades: dict[str, int]   # {sku: peças no carrinho}
+    comp_m: float
+    larg_m: float
+    alt_m: float
+    notas: str = ""
+    id: str = ""
+    estacao: str = ""
+
+    @property
+    def skus(self) -> tuple[str, ...]:
+        return tuple(self.quantidades.keys())
+
+
+@dataclass
 class RackType:
     """Tipologia de rack fornecida pelo utilizador."""
     nome: str
@@ -96,6 +173,19 @@ class RackType:
     # layout.py para não as emparelhar de novo (senão dobrava a profundidade
     # outra vez) -- cada posição desta tipologia ocupa uma fiada única.
     profundidade_inclui_par: bool = False
+    # Alturas de nível HETEROGÉNEAS (bordo de linha, estante dinâmica/flow-rack):
+    # vazio (default) = comportamento de sempre, alt_nivel_m uniforme para
+    # todos os `niveis`. Quando definido: uma altura por nível, índice 0 =
+    # BASE (nível mais baixo), len() tem de bater com `niveis`. Nesse caso
+    # alt_nivel_m passa a ser só um valor de REFERÊNCIA (max(alturas_niveis_m),
+    # ver io_excel.load_rack_types) -- o motor de capacidade usa sempre
+    # racking.altura_nivel/altura_ate_niveis, nunca alt_nivel_m diretamente.
+    # Só suportado no caminho de bordo de linha (racking.rack_capacity,
+    # _empacotar_nivel, _abrir_bloco, blocos_empilhados, allocate_to_racks) --
+    # deliberadamente NÃO no wide-span/OVERSIZE nem no empilhamento de
+    # módulos inteiros do armazém (niveis_efetivos), que continuam a assumir
+    # alt_nivel_m uniforme.
+    alturas_niveis_m: tuple[float, ...] = ()
 
 
 # --------------------------- OUTPUT ---------------------------

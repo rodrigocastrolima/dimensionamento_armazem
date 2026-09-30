@@ -66,12 +66,14 @@ def import_client(client_slug: str, display_name: str, master_data: Path) -> Non
                 # Passo 0 -- ver db_supabase.load_articles/models.Article.
                 cur.execute(
                     "insert into articles (client_slug, sku, descricao, comp_m, larg_m, "
-                    "alt_m, peso_kg, stock_max_un_bruto, pecas_por_carro, orientacao, "
-                    "empilhamento, fragilidade, geometria, classe) "
-                    "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    "alt_m, peso_kg, stock_max_un_bruto, pecas_por_carro, altura_override, "
+                    "eixo_aninhagem, empilhamento, fragilidade, geometria, classe, "
+                    "caixa_forcada, pecas_caixa_forcada) "
+                    "values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (client_slug, a.sku, a.descricao, a.comp_m, a.larg_m, a.alt_m,
-                     a.peso_kg, a.stock_atual_un, a.pecas_por_carro, a.orientacao,
-                     a.empilhamento.value, a.fragilidade, a.geometria, a.classe),
+                     a.peso_kg, a.stock_atual_un, a.pecas_por_carro, a.altura_override,
+                     a.eixo_aninhagem, a.empilhamento.value, a.fragilidade,
+                     a.geometria, a.classe, a.caixa_forcada, a.pecas_caixa_forcada),
                 )
 
             cur.execute("delete from box_catalog where client_slug = %s", (client_slug,))

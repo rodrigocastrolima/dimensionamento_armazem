@@ -44,8 +44,9 @@ def load_articles(client_slug: str) -> list[Article]:
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(
             "select sku, descricao, comp_m, larg_m, alt_m, peso_kg, "
-            "       stock_max_un_bruto, pecas_por_carro, orientacao, "
-            "       empilhamento, fragilidade, geometria, classe "
+            "       stock_max_un_bruto, pecas_por_carro, altura_override, "
+            "       eixo_aninhagem, empilhamento, fragilidade, geometria, classe, "
+            "       caixa_forcada, pecas_caixa_forcada "
             "from articles where client_slug = %s order by sku",
             (client_slug,),
         )
@@ -65,11 +66,14 @@ def load_articles(client_slug: str) -> list[Article]:
                 stock_max_un=stock_bruto,
                 stock_atual_un=stock_bruto,
                 pecas_por_carro=float(row["pecas_por_carro"]),
-                orientacao=row["orientacao"] or "Livre",
+                altura_override=row["altura_override"] or "",
+                eixo_aninhagem=row["eixo_aninhagem"] or "",
                 empilhamento=Empilhamento(row["empilhamento"] or "EMPILHAVEL"),
                 fragilidade=row["fragilidade"] or "Normal",
                 geometria=row["geometria"] or "Regular",
                 classe=row["classe"] or "RIGIDO",
+                caixa_forcada=row["caixa_forcada"] or "",
+                pecas_caixa_forcada=int(row["pecas_caixa_forcada"] or 0),
             ))
     if skus_sem_geometria:
         print(f"AVISO: {len(skus_sem_geometria)} SKU(s) sem geometria (0x0x0) em "

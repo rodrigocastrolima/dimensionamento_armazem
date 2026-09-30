@@ -61,7 +61,8 @@ def get_articles():
             "peso_kg": a.peso_kg, "stock_max_un": a.stock_max_un,
             "stock_atual_un": a.stock_atual_un,
             "pecas_por_carro": a.pecas_por_carro,
-            "orientacao": a.orientacao, "empilhamento": a.empilhamento.value,
+            "altura_override": a.altura_override, "eixo_aninhagem": a.eixo_aninhagem,
+            "empilhamento": a.empilhamento.value,
             "fragilidade": a.fragilidade, "geometria": a.geometria,
             "classe": a.classe,
         }
@@ -247,6 +248,16 @@ class ArrangeRequest(BaseModel):
     carros_alvo: float = 0.0
 
 
+def _caixas_especiais_do_armazem() -> dict:
+    """Carrinhos da folha «Caixas Especiais» -> {sku: CaixaEspecial}. O armazém
+    só os usa com Config.caixas_especiais_no_armazem (são os carrinhos da
+    linha); desligado (default) devolve {} e esses SKUs seguem o best-fit."""
+    if not cfg.caixas_especiais_no_armazem:
+        return {}
+    return io_excel.caixas_especiais_por_sku(
+        io_excel.load_caixas_especiais(cfg.master_data))
+
+
 @app.post("/api/gerar")
 def gerar(body: GerarRequest):
     # dataclasses.replace(cfg, ...) -- NÃO Config(...) -- porque `cfg` é o
@@ -266,7 +277,8 @@ def gerar(body: GerarRequest):
         altura_picking_m=body.altura_picking_m,
         margem_estrutural_pct=body.margem_estrutural_pct,
         largura_max_m=body.largura_max_m,
-        profundidade_max_m=body.profundidade_max_m)
+        profundidade_max_m=body.profundidade_max_m,
+        caixas_especiais=_caixas_especiais_do_armazem())
 
     articles = data_access.load_articles(cfg)
     catalogo = data_access.load_catalog(cfg)
@@ -323,10 +335,15 @@ def gerar(body: GerarRequest):
     if local_cfg.oversize_ao_chao and not racking._melhor_oversize_ativo(
             rack_types, local_cfg):
         artigos_chao = [
-            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.orientacao)
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.altura_override)
             for a in assignments if a.load_type == LoadType.OVERSIZE
             for art in [article_idx.get(a.sku)] if art
         ]
+    # OVERSIZE2 (caixa especial): ao solo, dentro do footprint da rack
+    # OVERSIZE quando cabe (ver main.run) -- artigos_chao_oversize2 decide
+    # por SKU, só devolve os que não cabem.
+    artigos_chao += area.artigos_chao_oversize2(assignments, local_cfg, rack_types)
+    if artigos_chao:
         area_chao_m2, detalhe_chao = area.area_oversize_chao(
             artigos_chao, local_cfg.oversize_chao_altura_max_m,
             local_cfg.oversize_chao_peso_max_kg, local_cfg.oversize_chao_acesso_pct)
@@ -599,7 +616,8 @@ def render_layout(body: ArrangeRequest):
         cfg, altura_armazem_m=body.altura_armazem_m,
         altura_picking_m=body.altura_picking_m,
         largura_max_m=body.largura_max_m,
-        profundidade_max_m=body.profundidade_max_m)
+        profundidade_max_m=body.profundidade_max_m,
+        caixas_especiais=_caixas_especiais_do_armazem())
 
     articles = data_access.load_articles(cfg)
     catalogo = data_access.load_catalog(cfg)
@@ -628,10 +646,13 @@ def render_layout(body: ArrangeRequest):
     if local_cfg.oversize_ao_chao and not racking._melhor_oversize_ativo(
             rack_types, local_cfg):
         artigos_chao = [
-            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.orientacao)
+            (a.sku, art.comp_m, art.larg_m, art.alt_m, art.peso_kg, a.num_unidades, art.altura_override)
             for a in assignments if a.load_type == LoadType.OVERSIZE
             for art in [article_idx.get(a.sku)] if art
         ]
+    # OVERSIZE2 (caixa especial): ver /api/gerar.
+    artigos_chao += area.artigos_chao_oversize2(assignments, local_cfg, rack_types)
+    if artigos_chao:
         area_chao_m2, _ = area.area_oversize_chao(
             artigos_chao, local_cfg.oversize_chao_altura_max_m,
             local_cfg.oversize_chao_peso_max_kg, local_cfg.oversize_chao_acesso_pct)

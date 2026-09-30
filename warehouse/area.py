@@ -2,8 +2,10 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
 
-from .boxing import pode_deitar
-from .models import RackType, PosicaoChao, WarehouseDimensioning, WarehouseLayout, Zona
+from .boxing import eixos_possiveis, carrinhos_fisicos
+from .models import (RackType, PosicaoChao, WarehouseDimensioning, WarehouseLayout,
+                     Zona, LoadType, BoxAssignment)
+from .config import Config
 
 
 def rack_footprint_m2(rack: RackType) -> float:
@@ -13,19 +15,18 @@ def rack_footprint_m2(rack: RackType) -> float:
     return rack.larg_m * rack.prof_m
 
 
-def melhor_pilha_chao(comp_m: float, larg_m: float, alt_m: float, orientacao: str,
+def melhor_pilha_chao(comp_m: float, larg_m: float, alt_m: float, altura_override: str,
                       unidades: int, altura_max_m: float, peso_max_kg: float,
                       peso_kg: float
                       ) -> tuple[float, float, float, int, int, str] | None:
     """Escolhe a orientação de UM SKU numa pilha ao chão (block stacking).
 
-    Se a orientação permitir deitar (`boxing.pode_deitar`), testam-se as 3
-    escolhas de cota vertical -- não se força a menor cota como altura só
-    porque "painéis não se põem ao alto" é o caso comum: SKUs com
-    `Orientação_permitida = "Livre"` já dizem que É seguro reorientá-los, e
-    forçar sempre a maior footprint (2 cotas maiores no chão) desperdiçava
-    área nesses casos. Orientação travada (Base fixa/Não deitar) mantém o Z
-    medido como altura, como em `boxing.pieces_per_box`.
+    Se ALTURA_OVERRIDE estiver vazio (livre), testam-se as 3 escolhas de cota
+    vertical (`boxing.eixos_possiveis`) -- não se força a menor cota como
+    altura só porque "painéis não se põem ao alto" é o caso comum: a maioria
+    dos SKUs fica livre e forçar sempre a maior footprint (2 cotas maiores no
+    chão) desperdiçava área nesses casos. 'x'/'y'/'z' força essa cota como
+    altura, como em `boxing.pieces_per_box`.
 
     Escolhe-se a orientação que minimiza a ÁREA REAL para as `unidades` deste
     SKU (pilhas = ceil(unidades / por_pilha); área = pilhas x footprint) --
@@ -37,7 +38,7 @@ def melhor_pilha_chao(comp_m: float, larg_m: float, alt_m: float, orientacao: st
     limitado_por), ou None se a peça não tiver dimensões válidas.
     """
     dims = (comp_m, larg_m, alt_m)
-    eixos = range(3) if pode_deitar(orientacao) else (2,)  # travada: Z medido = altura
+    eixos = eixos_possiveis(altura_override)
 
     melhor = None
     melhor_area = None
@@ -72,12 +73,12 @@ def area_oversize_chao(artigos_stock: list[tuple], altura_max_m: float,
     """Área de chão para peças volumosas arrumadas EM PILHA, sem rack
     ("block stacking"). Alternativa à wide-span quando são poucas referências.
 
-    artigos_stock: [(sku, comp_m, larg_m, alt_m, peso_kg, unidades, orientacao), ...]
+    artigos_stock: [(sku, comp_m, larg_m, alt_m, peso_kg, unidades, altura_override), ...]
 
     A orientação da peça (ver `melhor_pilha_chao`) decide qual cota fica
     vertical -- deitada por omissão, mas de pé quando isso render mais peças
-    por m² e a orientação não estiver travada. Empilham-se peças DO MESMO
-    SKU; dois limites por pilha, vale o menor:
+    por m² e ALTURA_OVERRIDE não estiver a forçar outra cota. Empilham-se
+    peças DO MESMO SKU; dois limites por pilha, vale o menor:
       - altura_max_m: alcance do operador / estabilidade da pilha;
       - peso_max_kg: carga que a peça do fundo aguenta.
 
@@ -87,10 +88,10 @@ def area_oversize_chao(artigos_stock: list[tuple], altura_max_m: float,
     """
     detalhe = []
     area_pilhas = 0.0
-    for sku, comp_m, larg_m, alt_m, peso_kg, unidades, orientacao in artigos_stock:
+    for sku, comp_m, larg_m, alt_m, peso_kg, unidades, altura_override in artigos_stock:
         if unidades <= 0 or min(comp_m, larg_m, alt_m) <= 0:
             continue
-        escolha = melhor_pilha_chao(comp_m, larg_m, alt_m, orientacao, unidades,
+        escolha = melhor_pilha_chao(comp_m, larg_m, alt_m, altura_override, unidades,
                                     altura_max_m, peso_max_kg, peso_kg)
         if escolha is None:
             continue
@@ -107,6 +108,49 @@ def area_oversize_chao(artigos_stock: list[tuple], altura_max_m: float,
             "area_m2": round(area, 2),
         })
     return round(area_pilhas * (1.0 + max(acesso_pct, 0.0)), 2), detalhe
+
+
+def artigos_chao_oversize2(assignments: list[BoxAssignment], cfg: Config,
+                           rack_types: list[RackType]) -> list[tuple]:
+    """Linhas (mesmo formato de `area_oversize_chao`/`layout._layout_pilhas_chao`)
+    para os SKUs OVERSIZE2 (caixa especial, ver models.CaixaEspecial/
+    Config.caixas_especiais) que NÃO cabem no nível de chão de uma rack
+    OVERSIZE (wide-span/emparelhada) -- só esses vão a uma fiada própria ao
+    chão; os que cabem ficam para `racking.allocate_to_racks` colocar dentro
+    do footprint dessa rack (nunca os dois ao mesmo tempo). Decide-se por
+    SKU (via a sua própria `CaixaEspecial`), não globalmente -- registos
+    diferentes podem ter alturas diferentes e por isso caber ou não caber
+    cada um à sua maneira.
+
+    Ao contrário do OVERSIZE genérico, aqui NÃO se usam as cotas do artigo:
+    a caixa especial tem footprint e capacidade FIXOS. `a.num_unidades` já é
+    o nº de UNIDADES DE TRANSPORTE (boxing.choose_load fixa pecas_por_unidade
+    = especial.quantidades[sku], própria de cada SKU, só para estes SKUs).
+    ALTURA_OVERRIDE = "z" força a
+    altura do próprio equipamento como vertical (nunca deitado): reaproveita
+    o mesmo motor de block-stacking (melhor_pilha_chao) só que aplicado ao
+    EQUIPAMENTO em vez da peça -- com altura_peça == altura_max (quando
+    chamado com esse mesmo teto), por(altura) nunca passa de 1, ou seja um
+    carrinho nunca fica empilhado em cima doutro (é um equipamento móvel,
+    não uma pilha)."""
+    from .racking import carrinho_cabe_na_rack_oversize
+
+    fisicos = carrinhos_fisicos(assignments, cfg)   # 1 carrinho = 1 equipamento, não 1 por SKU
+    linhas = []
+    for a in assignments:
+        if a.load_type != LoadType.OVERSIZE2:
+            continue
+        especial = cfg.caixas_especiais.get(a.sku)
+        if especial is None:
+            continue
+        if carrinho_cabe_na_rack_oversize(rack_types, cfg, especial.alt_m) is not None:
+            continue   # cabe na rack OVERSIZE -- allocate_to_racks trata, não vai ao chão
+        linhas.append((a.sku, especial.comp_m, especial.larg_m, especial.alt_m,
+                       # peso = teto de carga por pilha: força 1 carrinho por pilha
+                       # (um carrinho é móvel, nunca fica empilhado noutro; sem isto
+                       # melhor_pilha_chao empilhava os baixos até altura_max_m)
+                       cfg.oversize_chao_peso_max_kg, fisicos.get(a.sku, 0), "z"))
+    return linhas
 
 
 def floor_area(posicoes: list[PosicaoChao],

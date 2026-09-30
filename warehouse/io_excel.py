@@ -6,23 +6,81 @@ from pathlib import Path
 import openpyxl
 
 from .models import (Article, BoxType, RackType, LoadType, Empilhamento,
-                     BoxAssignment, RackRequirement, WarehouseDimensioning, Zona)
+                     BoxAssignment, RackRequirement, WarehouseDimensioning, Zona,
+                     CaixaEspecial)
 
 
 _EMPILHAMENTO_MAP = {
     "NAO_EMPILHAVEL": Empilhamento.NAO_EMPILHAVEL,
     "EMPILHAVEL": Empilhamento.EMPILHAVEL,
-    "ANINHAVEL": Empilhamento.ANINHAVEL,
-    # compatibilidade com o formato antigo (Sim/Não), caso apareça
+    # compatibilidade com o formato antigo (Sim/Não/Aninhável), caso apareça:
+    # ANINHAVEL deixou de ser um valor de Empilhamento (ver Article.
+    # eixo_aninhagem/EIXO_ANINHAGEM, CLAUDE.md "separar aninhável de
+    # empilhável") -- cai no default (EMPILHAVEL) abaixo, que é o mais
+    # correto para uma peça que ainda tenha esse texto por migrar.
     "SIM": Empilhamento.EMPILHAVEL,
     "NÃO": Empilhamento.NAO_EMPILHAVEL,
     "NAO": Empilhamento.NAO_EMPILHAVEL,
 }
 
 
+def _metros(valor, folha: str, linha_excel: int, coluna: str) -> float:
+    """Célula de cota -> float. Aceita número, ou texto com vírgula decimal
+    ('1,4', o que o Excel em pt-PT guarda quando a célula tem formato Texto).
+    Texto que não seja número levanta ValueError com folha/linha/coluna, em
+    vez do 'could not convert string to float' sem localização."""
+    if isinstance(valor, str):
+        try:
+            return float(valor.strip().replace(",", "."))
+        except ValueError:
+            pass
+    else:
+        try:
+            return float(valor)
+        except (TypeError, ValueError):
+            pass
+    raise ValueError(
+        f"Folha «{folha}», linha {linha_excel}, coluna {coluna}: "
+        f"'{valor}' não é um número")
+
+
 def _parse_empilhamento(valor) -> Empilhamento:
     chave = str(valor).strip().upper() if valor else ""
     return _EMPILHAMENTO_MAP.get(chave, Empilhamento.EMPILHAVEL)
+
+
+# Tipos de carga que CAIXA_FORCADA pode designar: só as entradas do catálogo
+# «Caixas». OVERSIZE não é uma caixa e OVERSIZE2 vem da folha «Caixas Especiais».
+_CAIXAS_FORCAVEIS = (LoadType.XS, LoadType.S, LoadType.M, LoadType.L,
+                     LoadType.MEIA, LoadType.PALLET)
+
+
+def _parse_caixa_forcada(sku: str, caixa_val, pecas_val) -> tuple[str, int]:
+    """CAIXA_FORCADA / PECAS_CAIXA_FORCADA -> ("L", 4), ("L", 0) ou ("", 0).
+
+    Valor inválido dá ValueError com o SKU, nunca é ignorado: uma exceção
+    manual mal escrita que caísse em silêncio no best-fit normal era
+    exatamente o erro que a coluna existe para evitar."""
+    caixa = str(caixa_val).strip().upper() if caixa_val is not None else ""
+    validas = [t.value for t in _CAIXAS_FORCAVEIS]
+    if caixa and caixa not in validas:
+        raise ValueError(f"SKU {sku}: CAIXA_FORCADA='{caixa_val}' não é uma caixa do "
+                         f"catálogo (usar {', '.join(validas)} ou deixar vazio)")
+
+    pecas_txt = str(pecas_val).strip() if pecas_val is not None else ""
+    if not pecas_txt:
+        return caixa, 0
+    try:
+        pecas = float(pecas_txt)
+    except ValueError:
+        pecas = 0.0
+    if pecas < 1 or pecas != int(pecas):
+        raise ValueError(f"SKU {sku}: PECAS_CAIXA_FORCADA='{pecas_val}' tem de ser um "
+                         f"inteiro >= 1 (ou vazio)")
+    if not caixa:
+        raise ValueError(f"SKU {sku}: PECAS_CAIXA_FORCADA={int(pecas)} sem CAIXA_FORCADA "
+                         f"-- indicar em que caixa vão essas peças")
+    return caixa, int(pecas)
 
 
 def _ws(wb: openpyxl.Workbook, nome: str):
@@ -93,11 +151,20 @@ def load_articles(path: Path) -> list[Article]:
     # 'Stock_máx_10un_a_utilizar' que ainda existam na folha ficam por ler.
     i_stock = col("Stock_máx_un")
     i_pecas_carro = col("Peças_por_carro")
-    i_orient = col("Orientação_permitida")
+    i_orient = col("ALTURA_OVERRIDE")
+    i_eixo_aninh = col("EIXO_ANINHAGEM")
     i_empilh = col("Empilhável")
-    i_frag = col("Fragilidade")
-    i_geom = col("Geometria")
-    i_classe = col("Classe")
+    # Fragilidade/Geometria/Classe são só informativas (mostradas na UI, sem
+    # uso no cálculo -- ver boxing/racking/area/layout, nenhum as lê) --
+    # colunas opcionais, para poderem ser removidas da folha sem partir a
+    # leitura.
+    i_frag = col("Fragilidade", required=False)
+    i_geom = col("Geometria", required=False)
+    i_classe = col("Classe", required=False)
+    i_estacao = col("Estação", required=False)
+    # Exceção manual ao best-fit (ver Article.caixa_forcada) -- opcionais.
+    i_caixa_forc = col("CAIXA_FORCADA", required=False)
+    i_pecas_forc = col("PECAS_CAIXA_FORCADA", required=False)
 
     articles = []
     skus_sem_geometria = []
@@ -136,13 +203,22 @@ def load_articles(path: Path) -> list[Article]:
         # ceil(0 / n) = 0. Também perdia a fração em 1.5, 17.85, etc.
         pecas_por_carro = float(pecas_por_carro_val)
 
-        orient = str(r[i_orient]) if r[i_orient] else "Livre"
+        altura_override = str(r[i_orient]).strip() if r[i_orient] else ""
+        eixo_aninhagem = str(r[i_eixo_aninh]).strip() if r[i_eixo_aninh] else ""
         empilh = r[i_empilh]
         empilhamento = _parse_empilhamento(empilh)
-        frag = str(r[i_frag]) if r[i_frag] else "Normal"
-        geom = str(r[i_geom]) if r[i_geom] else "Regular"
+        frag = str(r[i_frag]) if i_frag is not None and r[i_frag] else "Normal"
+        geom = str(r[i_geom]) if i_geom is not None and r[i_geom] else "Regular"
 
-        classe = str(r[i_classe]).strip() if r[i_classe] else "RIGIDO"
+        classe = str(r[i_classe]).strip() if i_classe is not None and r[i_classe] else "RIGIDO"
+
+        estacao_val = r[i_estacao] if i_estacao is not None else None
+        estacao = str(estacao_val).strip() if estacao_val else ""
+
+        caixa_forcada, pecas_caixa_forcada = _parse_caixa_forcada(
+            sku,
+            r[i_caixa_forc] if i_caixa_forc is not None else None,
+            r[i_pecas_forc] if i_pecas_forc is not None else None)
 
         articles.append(Article(
             sku=sku,
@@ -159,11 +235,15 @@ def load_articles(path: Path) -> list[Article]:
             stock_max_un=stock,
             stock_atual_un=stock,
             pecas_por_carro=pecas_por_carro,
-            orientacao=orient,
+            altura_override=altura_override,
+            eixo_aninhagem=eixo_aninhagem,
             empilhamento=empilhamento,
             fragilidade=frag,
             geometria=geom,
             classe=classe,
+            estacao=estacao,
+            caixa_forcada=caixa_forcada,
+            pecas_caixa_forcada=pecas_caixa_forcada,
         ))
 
     if skus_sem_geometria:
@@ -204,6 +284,11 @@ def load_rack_types(path: Path) -> list[RackType]:
     rows = list(ws.iter_rows(values_only=True))
     header = [str(c).strip() if c else "" for c in rows[0]]
     corredor_col = header.index("Corredor_m") if "Corredor_m" in header else None
+    # «Alturas_Niveis_m» (opcional): uma altura por nível, separadas por
+    # vírgula (ex. "0.8,0.25,0.25,0.25,0.25"), índice 0 = nível mais baixo --
+    # ver RackType.alturas_niveis_m. Sem esta coluna (ou célula vazia numa
+    # linha), essa tipologia mantém o comportamento uniforme de sempre.
+    alturas_col = header.index("Alturas_Niveis_m") if "Alturas_Niveis_m" in header else None
     racks = []
     # Tokens da coluna "Aceita" que não batem com nenhum LoadType (ex.: "LONGO",
     # removido do enum -- ver CLAUDE.md "cantilever/LONGO removida") eram
@@ -224,15 +309,27 @@ def load_rack_types(path: Path) -> list[RackType]:
             except ValueError:
                 tokens_desconhecidos.setdefault(str(nome), []).append(t)
         corredor = float(r[corredor_col]) if corredor_col is not None and r[corredor_col] else 0.0
+
+        alturas_niveis: tuple[float, ...] = ()
+        alturas_cel = r[alturas_col] if alturas_col is not None else None
+        if alturas_cel not in (None, ""):
+            alturas_niveis = tuple(float(x) for x in str(alturas_cel).split(",") if x.strip())
+            if len(alturas_niveis) != int(niveis):
+                raise ValueError(
+                    f"Racks: '{nome}' tem Niveis={int(niveis)} mas "
+                    f"Alturas_Niveis_m só dá {len(alturas_niveis)} valor(es) "
+                    f"({alturas_cel!r}) -- têm de bater certo.")
+
         racks.append(RackType(
             nome=str(nome),
             larg_m=float(larg),
             prof_m=float(prof),
-            alt_nivel_m=float(alt_nivel),
+            alt_nivel_m=max(alturas_niveis) if alturas_niveis else float(alt_nivel),
             niveis=int(niveis),
             aceita=aceita,
             footprint_m2=float(footprint) if footprint else 0.0,
             corredor_m=corredor,
+            alturas_niveis_m=alturas_niveis,
         ))
 
     if tokens_desconhecidos:
@@ -250,7 +347,16 @@ def load_rack_types(path: Path) -> list[RackType]:
 
 
 def load_zones(path: Path) -> list[Zona]:
-    """Folha «Zonas» -> list[Zona]. Sheet opcional: devolve [] se não existir."""
+    """Folha «Zonas» -> list[Zona]. Sheet opcional: devolve [] se não existir.
+
+    Colunas lidas pelo NOME do cabeçalho (linha 1), não por posição -- como
+    load_articles/load_rack_types. Antes lia por posição (nome, categoria,
+    comp, larg, *resto, com resto[0] = justificação): quando a folha ganhou
+    uma coluna 'Altura_m' a seguir a Larg_m (2026-09-28, equipamento real por
+    zona), essa altura passou a ser lida em silêncio como se fosse a
+    justificação (ex.: '3', '0.95') -- 'Justificacao' já não é a 5ª coluna.
+    'Altura_m' fica por ler por agora (zonas não têm altura no 3D, ver
+    CLAUDE.md); só se evita o cruzamento de colunas."""
     wb = openpyxl.load_workbook(path, data_only=True)
     if "Zonas" not in wb.sheetnames:
         return []
@@ -258,20 +364,179 @@ def load_zones(path: Path) -> list[Zona]:
     rows = list(ws.iter_rows(values_only=True))
     if not rows:
         return []
+
+    header = [str(c).strip() if c else "" for c in rows[0]]
+    idx = {name: i for i, name in enumerate(header)}
+
+    def col(name, required=True):
+        if name not in idx:
+            if required:
+                raise ValueError(f"Coluna '{name}' não encontrada na folha «Zonas»")
+            return None
+        return idx[name]
+
+    i_nome = col("Nome")
+    i_categoria = col("Categoria", required=False)
+    i_comp = col("Comp_m")
+    i_larg = col("Larg_m")
+    i_just = col("Justificacao", required=False)
+    if i_just is None:
+        i_just = col("Justificação", required=False)
+
     zonas = []
-    for r in rows[1:]:
-        if r[0] is None:
+    for n_linha, r in enumerate(rows[1:], start=2):
+        if not r or r[i_nome] is None:
             continue
-        nome, categoria, comp, larg, *resto = r
-        justificacao = str(resto[0]) if resto and resto[0] else ""
+        categoria = r[i_categoria] if i_categoria is not None else None
+        justificacao = str(r[i_just]) if i_just is not None and r[i_just] else ""
         zonas.append(Zona(
-            nome=str(nome),
+            nome=str(r[i_nome]),
             categoria=str(categoria) if categoria else "Outra",
-            comp_m=float(comp),
-            larg_m=float(larg),
+            comp_m=_metros(r[i_comp], "Zonas", n_linha, "Comp_m"),
+            larg_m=_metros(r[i_larg], "Zonas", n_linha, "Larg_m"),
             justificacao=justificacao,
         ))
     return zonas
+
+
+CAIXAS_ESPECIAIS_FOLHA = "Caixas Especiais"
+CAIXAS_ESPECIAIS_COLUNAS = ("SKU", "Quantidade", "Comprimento_m", "Largura_m", "Altura_m",
+                            "Notas", "Número/ID", "Estação")
+
+
+def _chave_cabecalho(nome) -> str:
+    """'Número/ID' -> 'numero/id': sem acentos, minúsculas -- para o
+    cabeçalho não falhar por um acento ou maiúscula escritos à mão."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(nome or "")).encode("ascii", "ignore").decode()
+    return s.strip().lower()
+
+
+def _id_carrinho(v) -> str:
+    """Número/ID como texto estável: 1 / 1.0 / '1' -> '1'."""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return str(v).strip()
+
+
+def load_caixas_especiais(path: Path) -> list[CaixaEspecial]:
+    """Folha «Caixas Especiais» -> list[CaixaEspecial], 1 por CARRINHO (ver
+    models.CaixaEspecial / Config.caixas_especiais / boxing.choose_load).
+    Sheet opcional: devolve [] se não existir.
+
+    Uma linha por SKU: SKU | Quantidade | Comprimento_m | Largura_m |
+    Altura_m | Notas | Número/ID | Estação. As linhas com o mesmo
+    Número/ID são o MESMO carrinho físico e juntam-se num só registo, cada
+    SKU com a sua Quantidade (= stock desse SKU na linha). Dimensões,
+    Notas e Estação são do carrinho: basta preenchê-las numa das linhas;
+    se vierem em várias têm de coincidir -- um carrinho não tem dois
+    tamanhos nem está em duas estações. Número/ID vazio = carrinho só
+    desse SKU (id = o próprio SKU).
+
+    Folha presente mas mal preenchida (colunas em falta, quantidade ou
+    cota inválida, SKU repetido, carrinho incoerente) -> ValueError com a
+    linha do Excel, nunca [] em silêncio: o leitor antigo (formato
+    'SKU:qtd | SKU:qtd' numa só célula) ignorava o que não reconhecia, e
+    quando a folha passou a este formato a linha ficou sem carrinho
+    nenhum sem qualquer aviso.
+
+    O SKU não leva strip -- tem de bater com load_articles, que também não
+    o faz (há SKUs reais com espaço no fim, ex. 'BEN10.FHB001_____DOOR
+    STRUCTURE ASSY ')."""
+    wb = openpyxl.load_workbook(path, data_only=True)
+    if CAIXAS_ESPECIAIS_FOLHA not in wb.sheetnames:
+        return []
+    rows = list(wb[CAIXAS_ESPECIAIS_FOLHA].iter_rows(values_only=True))
+    if not rows:
+        return []
+    idx = {_chave_cabecalho(c): i for i, c in enumerate(rows[0]) if c is not None}
+
+    def col(nome: str) -> int | None:
+        return idx.get(_chave_cabecalho(nome))
+
+    obrigatorias = ("SKU", "Quantidade", "Comprimento_m", "Largura_m", "Altura_m")
+    em_falta = [c for c in obrigatorias if col(c) is None]
+    if em_falta:
+        raise ValueError(
+            f"Folha «{CAIXAS_ESPECIAIS_FOLHA}»: faltam as colunas {', '.join(em_falta)} "
+            f"(esperado: {' | '.join(CAIXAS_ESPECIAIS_COLUNAS)}).")
+    i_sku, i_qtd = col("SKU"), col("Quantidade")
+    i_cotas = {"Comprimento_m": col("Comprimento_m"), "Largura_m": col("Largura_m"),
+               "Altura_m": col("Altura_m")}
+    i_notas, i_id, i_est = col("Notas"), col("Número/ID"), col("Estação")
+
+    def celula(r, i):
+        v = r[i] if i is not None and i < len(r) else None
+        return None if v is None or str(v).strip() == "" else v
+
+    def numero(v, onde: str, nome: str) -> float:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            raise ValueError(f"{onde}: {nome} '{v}' não é um número.")
+        if f <= 0:
+            raise ValueError(f"{onde}: {nome} tem de ser maior que zero.")
+        return f
+
+    caixas: dict[str, CaixaEspecial] = {}
+    vistos: set[str] = set()
+    for n, r in enumerate(rows[1:], start=2):
+        sku = celula(r, i_sku)
+        if sku is None:
+            continue
+        sku = str(sku)
+        onde = f"Folha «{CAIXAS_ESPECIAIS_FOLHA}», linha {n} ({sku.strip()})"
+        if sku in vistos:
+            raise ValueError(f"{onde}: SKU repetido -- cada SKU só pode estar num carrinho.")
+        vistos.add(sku)
+
+        qtd = numero(celula(r, i_qtd), onde, "Quantidade")
+        if not qtd.is_integer():
+            raise ValueError(f"{onde}: Quantidade tem de ser um número inteiro de peças.")
+        id_raw = celula(r, i_id)
+        id_ = _id_carrinho(id_raw) if id_raw is not None else sku
+        notas = celula(r, i_notas)
+        notas = str(notas).strip() if notas is not None else ""
+        estacao = celula(r, i_est)
+        estacao = str(estacao).strip() if estacao is not None else ""
+
+        caixa = caixas.get(id_)
+        if caixa is None:
+            cotas = {}
+            for nome, i in i_cotas.items():
+                v = celula(r, i)
+                if v is None:
+                    raise ValueError(f"{onde}: {nome} em falta (1ª linha do carrinho {id_}).")
+                cotas[nome] = numero(v, onde, nome)
+            caixa = CaixaEspecial(quantidades={}, comp_m=cotas["Comprimento_m"],
+                                  larg_m=cotas["Largura_m"], alt_m=cotas["Altura_m"],
+                                  notas=notas, id=id_, estacao=estacao)
+            caixas[id_] = caixa
+        else:
+            atuais = {"Comprimento_m": caixa.comp_m, "Largura_m": caixa.larg_m,
+                      "Altura_m": caixa.alt_m}
+            for nome, i in i_cotas.items():
+                v = celula(r, i)
+                if v is not None and abs(numero(v, onde, nome) - atuais[nome]) > 1e-9:
+                    raise ValueError(
+                        f"{onde}: {nome}={v} diferente do resto do carrinho {id_} "
+                        f"({atuais[nome]}) -- um carrinho só tem um tamanho.")
+            if estacao and caixa.estacao and estacao != caixa.estacao:
+                raise ValueError(
+                    f"{onde}: Estação '{estacao}' diferente do resto do carrinho {id_} "
+                    f"('{caixa.estacao}') -- um carrinho só está numa estação.")
+            caixa.estacao = caixa.estacao or estacao
+            caixa.notas = caixa.notas or notas
+        caixa.quantidades[sku] = int(qtd)
+    return list(caixas.values())
+
+
+def caixas_especiais_por_sku(caixas: list[CaixaEspecial]) -> dict[str, CaixaEspecial]:
+    """Expande list[CaixaEspecial] (cada uma podendo cobrir vários SKUs) num
+    dict indexado por SKU individual -- é isto que Config.caixas_especiais
+    guarda e boxing.choose_load consulta. Chaves diferentes podem apontar
+    para o MESMO objeto quando partilham registo (mesmo equipamento)."""
+    return {sku: caixa for caixa in caixas for sku in caixa.skus}
 
 
 def write_pecas_com_caixa(master_path: Path, out_path: Path,
@@ -366,8 +631,8 @@ def write_results(path: Path,
     texto(ws_log, "Best-fit entre S/M/L/MEIA/PALLET — escolhe a caixa que minimiza o nº total de", 8)
     texto(ws_log, "unidades de carga para o stock máximo (não é 'a 1ª onde cabe', testa todas as opções).", 9)
     texto(ws_log, "Plano horizontal (comp x larg): envelope 2D, testa as 2 orientações do artigo no plano.", 10)
-    texto(ws_log, "Orientação 'Livre' (a maioria): testa ainda as 3 cotas como altura, fica com a que rende mais;", 11)
-    texto(ws_log, "'Base fixa'/'Não deitar' mantêm o Z medido. Fator de enchimento (encaixe imperfeito): todas as classes.", 12)
+    texto(ws_log, "ALTURA_OVERRIDE vazio (a maioria): testa ainda as 3 cotas como altura, fica com a que rende mais;", 11)
+    texto(ws_log, "'x'/'y'/'z' força essa cota como altura. Fator de enchimento (encaixe imperfeito): todas as classes.", 12)
     texto(ws_log, "Eixo vertical (altura): regra de empilhamento — ver 'Parâmetros utilizados' abaixo.", 13)
     texto(ws_log, "Corte adicional pelo peso máximo da caixa (peso_max_caixa / peso_artigo).", 14)
     texto(ws_log, "Output: tipo de carga por SKU + nº de unidades para cobrir o stock máximo (teto).", 15)
@@ -406,15 +671,15 @@ def write_results(path: Path,
     par(ws_log, "Estratégia de escolha de caixa", "Best-fit: minimiza nº total de unidades de carga", 46)
     par(ws_log, "Atribuição de rack", "Por eficiência: menor m² de rack por unidade (entre os compatíveis)", 47)
     par(ws_log, "Packing plano horizontal",
-        "Envelope 2D; orientação 'Livre' roda nos 3 eixos (melhor escolhida)", 48)
+        "Envelope 2D; ALTURA_OVERRIDE vazio roda nos 3 eixos (melhor escolhida)", 48)
     par(ws_log, "Fator de enchimento (todas as classes)",
         "floor(peças_plano_teórico × 70%) — folgas de manuseio/encaixe imperfeito", 49)
     par(ws_log, "Packing por nível de rack", "Envelope 2D (2 orientações, melhor escolhida)", 50)
     par(ws_log, "Empilhamento NAO_EMPILHAVEL", "1 peça de altura, nunca empilha", 52)
     par(ws_log, "Empilhamento EMPILHAVEL",
         "altura cheia somada: floor(altura_disponível / altura_artigo), sem nesting", 53)
-    par(ws_log, "Empilhamento ANINHAVEL",
-        "altura_stack(n) = altura_artigo × (1 + (n-1) × fator_empilhamento), fator = 30%", 54)
+    par(ws_log, "EIXO_ANINHAGEM (x/y/z, independente do Empilhável)",
+        "nessa cota: total(n) = dimensão × (1 + (n-1) × fator_empilhamento), fator = 30%", 54)
     par(ws_log, "Empilhamento de módulos de rack",
         "floor(altura_armazem_m / altura_do_módulo), por tipologia, independente", 55)
 

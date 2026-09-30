@@ -15,30 +15,52 @@ from dataclasses import dataclass
 
 from rectpack import newPacker, PackingMode
 
-from .models import (RackType, BoxType, LoadType,
+from .models import (RackType, BoxType, LoadType, CaixaEspecial,
                      BoxAssignment, RackRequirement, Article,
                      PosicaoChao, BlocoRack, NivelRack, CaixaColocada)
-from .boxing import capacidade_reportada, pode_deitar
+from .boxing import capacidade_manual, capacidade_reportada, carrinhos_fisicos, eixos_possiveis
 from .config import Config
 
 
 # ----------------------------------------------------------- capacidade base
+
+def altura_nivel(rack: RackType, idx: int) -> float:
+    """Altura útil do nível `idx` (0 = base). Usa `alturas_niveis_m` quando
+    definido (bordo de linha, alturas heterogéneas); senão `alt_nivel_m`
+    uniforme (comportamento de sempre)."""
+    if rack.alturas_niveis_m:
+        return rack.alturas_niveis_m[idx]
+    return rack.alt_nivel_m
+
+
+def altura_ate_niveis(rack: RackType, n: int) -> float:
+    """Altura total ocupada pelos primeiros `n` níveis do módulo (offset
+    acumulado). Sem `alturas_niveis_m`, reduz a `alt_nivel_m * n`."""
+    if rack.alturas_niveis_m:
+        return sum(rack.alturas_niveis_m[:n])
+    return rack.alt_nivel_m * n
+
 
 def rack_capacity(rack: RackType, box: BoxType) -> int:
     """Quantas unidades de carga cabem num rack (envelope 2D por nível).
 
     Por nível: divide footprint do nível (larg_m x prof_m) pelo footprint
     exterior da caixa (ext_comp_m x ext_larg_m), orientando a caixa da forma
-    mais favorável. Valida que a altura exterior da caixa cabe no nível.
-    Total = caixas por nível x niveis.
+    mais favorável. Valida que a altura exterior da caixa cabe no nível --
+    com `alturas_niveis_m` definido (nível a nível, heterogéneo), só conta os
+    níveis onde a caixa cabe; sem isso, todos os níveis têm a mesma altura
+    (alt_nivel_m) e o resultado é idêntico ao de sempre (todos ou nenhum).
+    Total = caixas por nível x nº de níveis compatíveis.
     """
-    if box.ext_alt_m > rack.alt_nivel_m:
-        return 0
-
     op1 = math.floor(rack.larg_m / box.ext_comp_m) * math.floor(rack.prof_m / box.ext_larg_m)
     op2 = math.floor(rack.larg_m / box.ext_larg_m) * math.floor(rack.prof_m / box.ext_comp_m)
     por_nivel = max(op1, op2)
-    return por_nivel * rack.niveis
+    if por_nivel <= 0:
+        return 0
+
+    n_compat = sum(1 for n in range(rack.niveis)
+                   if box.ext_alt_m <= altura_nivel(rack, n) + 1e-9)
+    return por_nivel * n_compat
 
 
 def _oversize_plano_altura(rack: RackType, art: Article,
@@ -55,19 +77,18 @@ def _oversize_plano_altura(rack: RackType, art: Article,
     item no packer 2D com a MESMA orientação usada na estimativa de
     capacidade (ver nota no bug de boxes_per_stack, corrigido nesta função).
 
-    Orientação (ver `boxing.pode_deitar`): se a peça permite deitar (tudo
-    menos «Base fixa»/«Não deitar»), testam-se as 3 escolhas de cota vertical
-    e fica a que MAXIMIZA a capacidade do nível (por_plano x por_altura) --
-    não se força sempre a menor cota como altura. "Painéis não se põem ao
-    alto" é o caso comum, mas uma peça com orientação Livre já diz que é
-    segura de reorientar; forçar sempre a maior footprint desperdiçava
-    capacidade nesses SKUs. Orientação travada mantém o Z medido como altura,
-    como em `boxing.pieces_per_box`."""
+    Orientação (ver `boxing.eixos_possiveis`): se ALTURA_OVERRIDE estiver
+    vazio (livre), testam-se as 3 escolhas de cota vertical e fica a que
+    MAXIMIZA a capacidade do nível (por_plano x por_altura) -- não se força
+    sempre a menor cota como altura. "Painéis não se põem ao alto" é o caso
+    comum, mas a maioria dos SKUs fica livre; forçar sempre a maior footprint
+    desperdiçava capacidade nesses SKUs. 'x'/'y'/'z' força essa cota como
+    altura, como em `boxing.pieces_per_box`."""
     if art.comp_m <= 0 or art.larg_m <= 0 or art.alt_m <= 0:
         return 0, 0, 0.0, 0.0, 0.0
 
     dims = (art.comp_m, art.larg_m, art.alt_m)
-    eixos = range(3) if pode_deitar(art.orientacao) else (2,)  # travada: Z medido = altura
+    eixos = eixos_possiveis(art.altura_override)
 
     melhor_plano, melhor_altura, melhor_cap = 0, 0, 0
     melhor_plano_a, melhor_plano_b, melhor_vertical = 0.0, 0.0, 0.0
@@ -119,9 +140,9 @@ def rack_capacity_oversize(rack: RackType, art: Article,
         capacidade = por_nivel x niveis
 
     A orientação da peça decide qual cota fica vertical (ver `_oversize_plano_
-    altura`/`boxing.pode_deitar`): deitada por omissão (menor cota = altura),
-    mas testam-se as 3 escolhas quando `Orientação_permitida` não está travada,
-    ficando a que maximiza peças por nível. Testam-se sempre as duas
+    altura`/`boxing.eixos_possiveis`): deitada por omissão (menor cota =
+    altura), mas testam-se as 3 escolhas quando `ALTURA_OVERRIDE` está vazio
+    (livre), ficando a que maximiza peças por nível. Testam-se sempre as duas
     orientações no plano.
 
     Dois limites independentes ao empilhamento, e vale o MENOR:
@@ -192,6 +213,7 @@ def com_par_oversize(rack_types: list[RackType], cfg: Config) -> list[RackType]:
         alt_nivel_m=base.alt_nivel_m, niveis=base.niveis,
         aceita=[*base.aceita, LoadType.OVERSIZE], corredor_m=cfg.oversize_par_corredor_m,
         profundidade_inclui_par=True,
+        alturas_niveis_m=base.alturas_niveis_m,
     )
     return [*rack_types, sintetico]
 
@@ -211,6 +233,25 @@ def _melhor_oversize_ativo(rack_types: list[RackType], cfg: Config) -> RackType 
         return wide_span
     pares = [r for r in rack_types if r.profundidade_inclui_par]
     return min(pares, key=_rack_footprint_m2) if pares else None
+
+
+def carrinho_cabe_na_rack_oversize(rack_types: list[RackType], cfg: Config,
+                                   alt_carrinho_m: float) -> RackType | None:
+    """Rack (wide-span dedicada OU par emparelhado -- mesma prioridade de
+    `_melhor_oversize_ativo`) onde um carrinho OVERSIZE2 de altura
+    `alt_carrinho_m` (ver models.CaixaEspecial.alt_m -- cada caixa especial
+    tem a sua própria, não é um valor global) cabe no NÍVEL DE CHÃO
+    (`alt_carrinho_m <= alt_nivel_m` dessa rack). None = não há rack
+    OVERSIZE ativa, ou a altura não cabe no nível -- nesses casos o
+    carrinho cai para uma fiada própria ao chão (ver area.
+    artigos_chao_oversize2), tal como o OVERSIZE ao chão cai quando não há
+    wide-span."""
+    if not cfg.carrinhos_em_rack:
+        return None
+    rack_o = _melhor_oversize_ativo(rack_types, cfg)
+    if rack_o is None or alt_carrinho_m > rack_o.alt_nivel_m + 1e-9:
+        return None
+    return rack_o
 
 
 def _rack_footprint_m2(rack: RackType) -> float:
@@ -319,7 +360,7 @@ def blocos_empilhados(rack: RackType, altura_armazem_m: float,
     1 módulo mais baixo (2 dos 4 níveis), que cabe mesmo."""
     if _nome_bate(rack, empilhamento_por_nivel):
         return 1
-    altura_modulo = rack.alt_nivel_m * rack.niveis
+    altura_modulo = altura_ate_niveis(rack, rack.niveis)
     if altura_armazem_m <= 0 or altura_modulo <= 0:
         cabem = 1
     else:
@@ -412,6 +453,58 @@ def racks_needed(assignments: list[BoxAssignment],
     por_tipologia: dict[str, dict[LoadType, int]] = {}
 
     for lt, total_unidades in totais.items():
+        if lt == LoadType.OVERSIZE2:
+            # Cada caixa especial (models.CaixaEspecial, ver Config.
+            # caixas_especiais) tem a sua PRÓPRIA capacidade/dimensões --
+            # agrupa os assignments deste tipo de carga por caixa especial
+            # (SKUs que partilham o mesmo registo -- mesmo objeto Python,
+            # via caixas_especiais_por_sku -- partilham o mesmo cálculo).
+            # Cada grupo fica SEMPRE ao solo (nunca sobe de nível), mas
+            # dentro do FOOTPRINT da mesma rack usada para OVERSIZE (wide-
+            # span/emparelhada) quando existe e o carrinho cabe no nível de
+            # chão -- carrinho_cabe_na_rack_oversize. Sem isso, cai para uma
+            # fiada própria ao chão (ver area.artigos_chao_oversize2).
+            por_caixa: dict[int, tuple[CaixaEspecial, list[BoxAssignment]]] = {}
+            for a in assignments:
+                if a.load_type != LoadType.OVERSIZE2:
+                    continue
+                especial = cfg.caixas_especiais.get(a.sku)
+                if especial is None:
+                    continue
+                chave = id(especial)
+                if chave not in por_caixa:
+                    por_caixa[chave] = (especial, [])
+                por_caixa[chave][1].append(a)
+
+            for especial, lista in por_caixa.values():
+                total_grupo = max(a.num_unidades for a in lista)   # carrinho partilhado: ver boxing.carrinhos_fisicos
+                rotulo = especial.notas or ", ".join(especial.skus)
+                rack_c = carrinho_cabe_na_rack_oversize(rack_types, cfg, especial.alt_m)
+                if rack_c is None:
+                    avisos.append(
+                        f"{total_grupo} unidade(s) de caixa especial '{rotulo}' "
+                        f"({len(lista)} SKU) -- sem rack wide-span/emparelhada onde "
+                        f"caibam no nível de chão -- arrumadas EM FIADA PRÓPRIA ao "
+                        f"chão, ver 'Area ao chao' no resumo.")
+                    continue
+                # Estimativa: cada MÓDULO da rack contribui só o seu nível de
+                # chão para carrinhos (os níveis acima continuam livres para
+                # OVERSIZE/outras cargas -- ver allocate_to_racks) -- por
+                # isso a capacidade aqui NÃO multiplica por rack_c.niveis,
+                # ao contrário de rack_capacity/rack_capacity_oversize.
+                cap_nivel0 = math.floor(rack_c.larg_m / especial.comp_m) * \
+                    math.floor(rack_c.prof_m / especial.larg_m)
+                if cap_nivel0 <= 0:
+                    avisos.append(
+                        f"{total_grupo} unidade(s) de caixa especial '{rotulo}' não "
+                        f"cabem no plano do nível de chão da '{rack_c.nome}' "
+                        f"({rack_c.larg_m:.2f} x {rack_c.prof_m:.2f} m) -- arrumadas "
+                        f"EM FIADA PRÓPRIA ao chão.")
+                    continue
+                modulos_c = max(math.ceil(total_grupo / cap_nivel0), 1)
+                por_tipologia.setdefault(rack_c.nome, {})
+                por_tipologia[rack_c.nome][lt] = por_tipologia[rack_c.nome].get(lt, 0) + modulos_c
+            continue
         if lt == LoadType.OVERSIZE:
             # Peças que não assentam em nenhuma unidade de carga do catálogo.
             # Se houver uma wide-span na folha «Racks» (Config.oversize_racks) ou
@@ -527,7 +620,7 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
     uma caixa rodada pelo packer era gravada na orientação original e desenhada
     a sair da rack / a sobrepor-se às vizinhas.
     """
-    if item.alt_m > rack.alt_nivel_m + 1e-9:
+    if item.alt_m > altura_nivel(rack, nivel.nivel_idx) + 1e-9:
         return None
 
     packer = newPacker(mode=PackingMode.Offline, rotation=True)
@@ -556,15 +649,16 @@ def _abrir_bloco(rack: RackType, bloco_idx: int, altura_picking_m: float,
     catálogo prevê, quando o pé-direito não dá para todos. Sem override
     (comportamento de sempre), o módulo continua completo."""
     n_niveis = niveis_override if niveis_override is not None else rack.niveis
+    altura_modulo = altura_ate_niveis(rack, rack.niveis)
     niveis = []
     for n in range(n_niveis):
-        base_nivel = bloco_idx * (rack.alt_nivel_m * rack.niveis) + n * rack.alt_nivel_m
+        base_nivel = bloco_idx * altura_modulo + altura_ate_niveis(rack, n)
         # altura_picking_m é a altura MÁXIMA até onde o operador faz picking, por
         # isso o nível inteiro tem de estar ao alcance: conta o LIMITE SUPERIOR
         # do nível (base + altura do nível), não a base. Ex.: rack de palete com
         # níveis de 1.8 m e picking a 2 m -> só o nível 0 (topo 1.8 <= 2) é de
         # picking; o nível 1 (topo 3.6) não, apesar de a base (1.8) ser < 2.
-        topo_nivel = base_nivel + rack.alt_nivel_m
+        topo_nivel = base_nivel + altura_nivel(rack, n)
         eh_picking = altura_picking_m > 0 and topo_nivel <= altura_picking_m + 1e-9
         niveis.append(NivelRack(nivel_idx=n, eh_picking=eh_picking))
     return BlocoRack(bloco_idx=bloco_idx, niveis=niveis)
@@ -590,6 +684,22 @@ def _commit_nivel(nivel: NivelRack, item: _ItemParaColocar, solucao: dict) -> No
         num_boxes_in_stack=item.num_boxes_in_stack,
     ))
     nivel.caixas = novas
+
+
+def _tentar_colocar_carrinho(pos: PosicaoChao, rack: RackType, item: _ItemParaColocar) -> bool:
+    """Coloca um carrinho OVERSIZE2 -- SEMPRE no NÍVEL 0 do BLOCO 0 desta
+    posição (nunca sobe de nível, nem abre bloco novo além do 0): é um
+    carrinho ao solo, não uma caixa que sobe pela rack. Só tenta esse único
+    nível; se não couber, falha (o chamador tenta outra posição ou abre uma
+    nova -- sempre com bloco 0 recém-aberto, nunca um bloco > 0)."""
+    if not pos.blocos or not pos.blocos[0].niveis:
+        return False
+    nivel0 = pos.blocos[0].niveis[0]
+    sol = _empacotar_nivel(nivel0, rack, item)
+    if sol is None:
+        return False
+    _commit_nivel(nivel0, item, sol)
+    return True
 
 
 def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemParaColocar,
@@ -713,10 +823,13 @@ def allocate_to_racks(assignments: list[BoxAssignment],
     candidatos_por_tipo: dict[LoadType, list[RackType]] = {}
     for lt in LoadType:
         compativeis = [r for r in rack_types if lt in r.aceita]
-        if lt == LoadType.OVERSIZE:
-            # Não há BoxType para OVERSIZE (a peça não vai a caixa): a
+        if lt in (LoadType.OVERSIZE, LoadType.OVERSIZE2):
+            # Não há BoxType para OVERSIZE/OVERSIZE2 (não vão a caixa): a
             # compatibilidade vem do NOME da tipologia, não do catálogo. Aceita-se
             # também quem declare OVERSIZE na coluna «Aceita» da folha «Racks».
+            # OVERSIZE2 partilha a MESMA rack de OVERSIZE (carrinho ao solo
+            # dentro do footprint da wide-span/emparelhada) -- ver
+            # carrinho_cabe_na_rack_oversize/_tentar_colocar_carrinho abaixo.
             compativeis = [r for r in rack_types
                            if aceita_oversize(r, _cfg.oversize_racks)
                            or LoadType.OVERSIZE in r.aceita]
@@ -738,8 +851,17 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             # e o nível baixo dela matava o empilhamento de L nos porta-paletes)
             compatible_racks = [r for r in rack_types
                                 if load_type in r.aceita and rack_capacity(r, box) > 0]
-            if compatible_racks:
-                min_level_height = min(r.alt_nivel_m for r in compatible_racks)
+            # Alturas de TODOS os níveis (de todos os racks compatíveis) onde
+            # a caixa efetivamente cabe -- não só um valor por rack: com
+            # alturas_niveis_m heterogéneo, níveis diferentes do MESMO rack
+            # podem ter alturas diferentes. Sem alturas_niveis_m, isto reduz
+            # a "alt_nivel_m repetido niveis vezes" == comportamento de sempre.
+            alturas_compat = [altura_nivel(r, n)
+                              for r in compatible_racks
+                              for n in range(r.niveis)
+                              if altura_nivel(r, n) + 1e-9 >= box_height]
+            if alturas_compat:
+                min_level_height = min(alturas_compat)
                 boxes_per_stack = max(1, int(min_level_height / box_height))
                 boxes_per_stack_per_type[load_type] = boxes_per_stack
             else:
@@ -748,6 +870,7 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             boxes_per_stack_per_type[load_type] = 1
 
     itens: list[_ItemParaColocar] = []
+    fisicos = carrinhos_fisicos(assignments, _cfg)
     for a in assignments:
         art = article_idx.get(a.sku)
         desc = art.descricao if art else ""
@@ -780,6 +903,23 @@ def allocate_to_racks(assignments: list[BoxAssignment],
                 continue      # não assenta no nível: já reportado em racks_needed
             comp_dim, larg_dim, alt_dim = plano_a, plano_b, altura_peca
             boxes_per_stack = max(por_altura, 1)
+        elif a.load_type == LoadType.OVERSIZE2:
+            # Caixa especial (models.CaixaEspecial): footprint/altura FIXOS
+            # (não geometria da peça), próprios de CADA registo -- não um
+            # valor global. Só entra aqui (para ser colocada dentro do
+            # footprint da rack OVERSIZE) quando essa rack existe e a caixa
+            # cabe no seu nível de chão -- ver carrinho_cabe_na_rack_oversize.
+            # Caso contrário fica de fora (continue): main.py/web.py já não a
+            # adicionam aos artigos_chao normais, tratando-a à parte como
+            # fiada própria ao chão (area.artigos_chao_oversize2).
+            especial = _cfg.caixas_especiais.get(a.sku)
+            if especial is None:
+                continue
+            rack_c = carrinho_cabe_na_rack_oversize(rack_types, _cfg, especial.alt_m)
+            if rack_c is None:
+                continue
+            comp_dim, larg_dim, alt_dim = especial.comp_m, especial.larg_m, especial.alt_m
+            boxes_per_stack = 1   # carrinho nunca empilha -- sempre 1 por posição
         else:
             box = catalogo.get(a.load_type)
             if box is None:
@@ -795,8 +935,9 @@ def allocate_to_racks(assignments: list[BoxAssignment],
 
         # Create stacks instead of individual boxes
         boxes_allocated = 0
-        while boxes_allocated < a.num_unidades:
-            boxes_in_stack = min(boxes_per_stack, a.num_unidades - boxes_allocated)
+        n_unidades = fisicos[a.sku] if a.load_type == LoadType.OVERSIZE2 else a.num_unidades
+        while boxes_allocated < n_unidades:
+            boxes_in_stack = min(boxes_per_stack, n_unidades - boxes_allocated)
             stack_height = boxes_in_stack * alt_dim
 
             # Peças nesta caixa/stack: SEMPRE a capacidade cheia da caixa
@@ -811,7 +952,8 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             # milhares) -- é esperado, não é bug: o espaço é o mesmo, muda só a
             # quantidade armazenada.
             pecas_aqui = boxes_in_stack * capacidade_reportada(
-                a.load_type, a.pecas_por_unidade, a.sku, _cfg)
+                a.load_type, a.pecas_por_unidade, a.sku, _cfg,
+                manual=art is not None and capacidade_manual(art, a.load_type))
 
             # Determine if this stack contains picking boxes
             eh_primeira_do_sku = boxes_allocated < num_unidades_picking
@@ -836,6 +978,36 @@ def allocate_to_racks(assignments: list[BoxAssignment],
     for item in itens:
         candidatos = candidatos_por_tipo.get(item.load_type, [])
         if not candidatos:
+            continue
+
+        if item.load_type == LoadType.OVERSIZE2:
+            # Carrinho: SEMPRE nível 0 / bloco 0 -- nunca a lógica de
+            # picking/reserva nem a de empilhar blocos de _tentar_colocar_
+            # em_posicao (essa serve caixas que sobem na rack; um carrinho
+            # nunca sobe). Tenta posições já abertas primeiro, só abre nova
+            # se nenhuma tiver espaço no seu nível de chão.
+            colocado = False
+            for rack in candidatos:
+                for pos in posicoes_por_tipologia[rack.nome]:
+                    if _tentar_colocar_carrinho(pos, rack, item):
+                        colocado = True
+                        break
+                if colocado:
+                    break
+            if not colocado:
+                for rack in candidatos:
+                    lista = posicoes_por_tipologia[rack.nome]
+                    pos = PosicaoChao(rack_nome=rack.nome, indice=len(lista))
+                    pos.blocos.append(_abrir_bloco(rack, 0, altura_picking_m,
+                                                   niveis_ov_por_rack[rack.nome]))
+                    if _tentar_colocar_carrinho(pos, rack, item):
+                        colocado = True
+                        lista.append(pos)
+                        break
+            # Não coube em nada (footprint do carrinho maior que o nível de
+            # chão de todas as candidatas): fica de fora -- já reportado em
+            # racks_needed/carrinho_cabe_na_rack_oversize, main.py trata como
+            # fiada própria ao chão.
             continue
 
         colocado = False

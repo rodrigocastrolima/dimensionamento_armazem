@@ -37,7 +37,11 @@ resultados.xlsx / web (canvas de arranjo + 3D)
 
 ## 2. Dados de entrada (`io_excel.py`)
 
-Ficheiro por defeito: `dados/master_data_classificado_v1.xlsx`.
+Ficheiro por defeito: `dados/master_data_classificado_v3.xlsx`.
+
+> **Nota (2026-09-30):** o motor (boxing/racking/leitura) está alinhado com o
+> `dimensionamento_linha` — ver `CLAUDE.md`, «motor alinhado». A tabela abaixo
+> descreve colunas por NOME; as secções 3.2/3.3 foram atualizadas.
 
 ### Folha «Peças» → `Article`
 Leitura **por posição de coluna** (ordem fixa; os cabeçalhos têm problemas de
@@ -51,8 +55,10 @@ encoding, por isso não se procura por nome):
 | 5 | Peso_kg | `peso_kg` | `#N/A`/vazio → 0.0 (peso desconhecido não corta) |
 | 6 | Stock_máx_un | `stock_max_un` | motor do dimensionamento |
 | 7 | Peças_por_carro | `pecas_por_carro` | **obrigatório**; erro se faltar |
-| 8 | Orientação_permitida | `orientacao` | |
-| 9 | Empilhável | `empilhamento` | NAO_EMPILHAVEL / EMPILHAVEL / ANINHAVEL |
+| 8 | ALTURA_OVERRIDE | `altura_override` | `x`/`y`/`z`/vazio: força essa cota como vertical; vazio = livre |
+| 9 | Empilhável | `empilhamento` | NAO_EMPILHAVEL / EMPILHAVEL |
+| — | EIXO_ANINHAGEM | `eixo_aninhagem` | `x`/`y`/`z`/vazio: cota onde a peça aninha (ver 3.2) |
+| — | CAIXA_FORCADA / PECAS_CAIXA_FORCADA | `caixa_forcada` / `pecas_caixa_forcada` | opcionais: caixa forçada por SKU e capacidade manual |
 | 10 | Fragilidade | `fragilidade` | |
 | 11 | Geometria | `geometria` | informativo (sem uso no cálculo) |
 | 12 | Volume_unit_m³ | (não lido) | |
@@ -94,38 +100,36 @@ negócio — ver `CLAUDE.md`). Todos os artigos seguem agora o best-fit normal
 ### 3.2 Peças por unidade de carga — `pieces_per_box()`
 Modelo de envelope 3D com três cortes:
 
-1. **Orientação da peça** (coluna `Orientação_permitida`): se permite deitar
-   (tudo menos «Base fixa»/«Não deitar»), testam-se as **3 escolhas de cota
-   vertical** e fica a que mais peças rende — não se força o Z medido como
-   altura. «Base fixa»/«Não deitar» mantêm o Z medido de pé. Para cada escolha
-   de altura, o **plano horizontal** (as outras 2 cotas vs. interior da caixa)
-   usa `floor(dim_caixa / dim_peça)` por eixo, testando as 2 orientações no
-   plano; fica a melhor. O resultado é multiplicado por `fill_factor_plano =
-   0.7` (folgas de manuseio/encaixe imperfeito — o floor() assume encaixe
-   perfeito, que não é realista), arredondado para baixo (mínimo 1). Aplica-se
-   a **todas as classes** (RIGIDO e FLEXIVEL/CONTENTOR).
-2. **Eixo vertical** — `pieces_in_stack()` conforme a coluna Empilhável:
-   - `NAO_EMPILHAVEL` → 1 peça de altura, sempre.
-   - `EMPILHAVEL` → `floor(altura_int / altura_peça)` (altura cheia somada).
-   - `ANINHAVEL` → a 1ª peça ocupa a altura inteira; cada peça extra
-     acrescenta só `fator_empilhamento × altura_peça` (encaixa na anterior),
-     com `fator_empilhamento = 0.3`:
-     `n = floor((altura_int/altura_peça − 1)/0.3) + 1`.
+1. **Orientação da peça** (`ALTURA_OVERRIDE`): vazio = testam-se as **3 escolhas
+   de cota vertical** e fica a que mais peças rende; `x`/`y`/`z` força essa
+   cota (`boxing.eixos_possiveis`). Para cada escolha, o **plano horizontal**
+   (as outras 2 cotas vs. interior da caixa) testa as 2 orientações. O
+   resultado é multiplicado por `fill_factor_plano = 0.80`, arredondado para
+   baixo (mínimo 1), em **todas as classes**.
+2. **Por eixo** (vertical ou plano), três vias nunca simultâneas:
+   - eixo == `EIXO_ANINHAGEM` → aninhagem (`pecas_no_eixo`): a 1ª peça ocupa a
+     dimensão inteira, cada extra só `fator_empilhamento (0.3) × dimensão`;
+     devolve sempre o máximo entre rígido e aninhado;
+   - eixo vertical e não de aninhagem → `Empilhável`: `NAO_EMPILHAVEL` = 1;
+     `EMPILHAVEL` = `floor(altura_int / altura_peça)`;
+   - eixo do plano e não de aninhagem → encaixe rígido `floor`.
 3. **Peso**: `floor(peso_max_caixa / peso_peça)`. Peso 0/desconhecido não corta.
+
+**PALLET/MEIA** recebem `Config.pallet_tolerancia_lateral_m` (0.10 m) somada aos
+dois lados de cada cota do plano, no mesmo cálculo.
 
 `peças_por_unidade = min(plano × vertical, corte_por_peso)`.
 
 ### 3.3 Escolha da unidade — `choose_load()`
-Minimiza o **nº de unidades de carga**: testa todas as candidatas
-**S → M → L → MEIA → PALLET** onde caiba ≥ 1 peça e escolhe a que minimiza
-`ceil(stock_max_un / peças_por_unidade)`. Em **empate ganha a mais pequena**
-(ordem de teste). Se a peça não cabe em nenhuma → PALLET com 1 peça/palete
-(fallback para oversize).
+Por ordem: (1) SKU em `Config.caixas_especiais` (só se ligado) → OVERSIZE2;
+(2) `CAIXA_FORCADA` → essa caixa (capacidade manual ou geométrica); (3)
+best-fit: minimiza `ceil(stock_max_un / peças_por_unidade)` entre
+**XS → S → M → L → MEIA → PALLET** (empate: a mais pequena). Com
+`pallet_ultimo_recurso` (SIA) a PALLET só é testada se nenhuma caixa couber.
+Se não coube em nenhuma → **OVERSIZE** (nunca «1 peça/palete» inventado).
 
 > Nota validada com dados reais: minimizar o nº de unidades também minimiza a
-> área de chão, porque as unidades grandes preenchem exatamente os slots dos
-> racks (o desperdício fica *dentro* da caixa, não no chão). Estratégias de
-> "mínimo volume" foram testadas e dão armazéns maiores.
+> área de chão (as estratégias de «mínimo volume» dão armazéns maiores).
 
 **Output**: `BoxAssignment(sku, load_type, pecas_por_unidade, num_unidades)`.
 No fluxo web é também escrito `dados/pecas_tipo_caixa.xlsx` — a folha «Peças»
