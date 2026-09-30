@@ -1242,11 +1242,21 @@ function desenharParedes(maxX, maxY, maxZ, cubo = null) {
   scene.add(grupo);
 }
 
+// Matiz por ORDEM DE APARIÇÃO (ângulo dourado), não hash do nome: fonte ÚNICA
+// para a cor de uma zona, partilhada pelo 2D («Arranjar», corZonaCss) e pelo 3D
+// (corZona), para a mesma zona ter sempre a mesma cor nos dois sítios. Um hash
+// do nome dava tons quase iguais a nomes parecidos. Igual à «Linha 3D».
+const _GOLDEN_ANGLE = 137.508;
+const _corZonaCache = new Map();
+function hueZona(nome) {
+  if (!_corZonaCache.has(nome)) _corZonaCache.set(nome, (_corZonaCache.size * _GOLDEN_ANGLE) % 360);
+  return _corZonaCache.get(nome);
+}
 function corZona(texto) {
-  let hash = 0;
-  for (let i = 0; i < texto.length; i++) hash = texto.charCodeAt(i) + ((hash << 5) - hash);
-  const hue = Math.abs(hash) % 360;
-  return new THREE.Color(`hsl(${hue}, 65%, 55%)`);
+  return new THREE.Color(`hsl(${hueZona(texto)}, 65%, 55%)`);
+}
+function corZonaCss(nome, alpha) {
+  return `hsla(${hueZona(nome)}, 65%, 55%, ${alpha})`;
 }
 
 const ALTURA_ZONA_M = 0.3;
@@ -1786,17 +1796,24 @@ function desenharZonas(zonasLayout) {
     const aspecto = Math.min(Math.max(z.prof_m / Math.max(z.larg_m, 0.1), 0.15), 6);
     const texH = Math.min(Math.max(Math.round(512 * aspecto), 96), 1024);
     const tex = _canvasTex((ctx, w, h) => {
-      ctx.fillStyle = cor; ctx.globalAlpha = 0.24; ctx.fillRect(0, 0, w, h);
-      ctx.globalAlpha = 1; ctx.lineWidth = 12; ctx.strokeStyle = cor;
+      // preenchimento bem saturado (não só um tom ligeiro) -- para se distinguir
+      // claramente de cima, sem depender do ângulo de câmara.
+      ctx.fillStyle = cor; ctx.globalAlpha = 0.62; ctx.fillRect(0, 0, w, h);
+      ctx.globalAlpha = 1; ctx.lineWidth = 14; ctx.strokeStyle = cor;
       ctx.strokeRect(8, 8, w - 16, h - 16);
       ctx.setLineDash([26, 16]); ctx.lineWidth = 4;
       ctx.strokeRect(30, 30, w - 60, h - 60);
       ctx.setLineDash([]);
+      // nome em branco com contorno preto -- lê-se bem em qualquer matiz de
+      // zona, ao contrário de texto na mesma cor do preenchimento.
       const nome = z.nome.toUpperCase();
-      const fs = Math.min((w - 80) / Math.max(nome.length * 0.62, 1), h * 0.22, 90);
-      ctx.font = `bold ${Math.max(fs, 14)}px system-ui, sans-serif`;
+      const fs = Math.min((w - 60) / Math.max(nome.length * 0.58, 1), h * 0.26, 110);
+      ctx.font = `bold ${Math.max(fs, 16)}px system-ui, sans-serif`;
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillStyle = cor;
+      ctx.lineJoin = "round"; ctx.lineWidth = Math.max(fs * 0.12, 3);
+      ctx.strokeStyle = "rgba(0,0,0,0.85)";
+      ctx.strokeText(nome, w / 2, h / 2);
+      ctx.fillStyle = "#ffffff";
       ctx.fillText(nome, w / 2, h / 2);
     }, 512, texH);
 
@@ -2232,9 +2249,9 @@ function inicializarCanvas() {
       // ou seja é a ÁREA POR CLASSIFICAR. Era branco e passava despercebida;
       // a vermelho lê-se logo que ali há chão que o layout não atribuiu a nada.
       rect.setAttribute("fill", isObstaculo ? "#fca5a533" : (isRackManual ? "#fde68a4d" :
-        (isRacking && b.geom ? "#fde2e2" : (isRacking ? "#d8cef0" : "#f5e7c4"))));
+        (isRacking && b.geom ? "#fde2e2" : (isRacking ? "#d8cef0" : corZonaCss(b.nome, 0.35)))));
       rect.setAttribute("stroke", isSel ? "#2563eb" : (isObstaculo ? "#b91c1c" :
-        (isRackManual ? "#b45309" : (isRacking ? "#7c3aed" : "#d97706"))));
+        (isRackManual ? "#b45309" : (isRacking ? "#7c3aed" : corZonaCss(b.nome, 1)))));
       rect.setAttribute("stroke-width", isSel ? "3" : (isObstaculo || isRackManual ? "2.5" : "1.5"));
       if (isObstaculo) rect.setAttribute("stroke-dasharray", "5,3");
       rect.setAttribute("cursor", "grab");
