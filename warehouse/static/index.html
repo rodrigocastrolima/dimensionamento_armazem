@@ -2319,18 +2319,50 @@ function inicializarCanvas() {
         }
       }
 
-      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      text.setAttribute("x", x + 5);
-      text.setAttribute("y", y + 16);
-      text.setAttribute("font-size", "12");
-      text.setAttribute("fill", "#333");
-      text.setAttribute("pointer-events", "none");
-      text.textContent = `${b.nome} (${b.w.toFixed(1)}×${b.h.toFixed(1)}m${b.rot ? ", " + b.rot + "°" : ""})`;
-      g.appendChild(text);
+      // O nome só aparece ao passar o rato por cima (hover): com dezenas de zonas
+      // e racks, os nomes sempre visíveis sobrepunham-se e tapavam tudo.
+      const rotulo = `${b.nome} (${b.w.toFixed(1)}×${b.h.toFixed(1)}m${b.rot ? ", " + b.rot + "°" : ""})`;
+      g.addEventListener("mouseenter", () => mostrarRotuloBloco(g, rotulo));
+      g.addEventListener("mouseleave", esconderRotuloBloco);
 
       svg.appendChild(g);
     });
     atualizarInfo();
+  }
+
+  // Rótulo flutuante do bloco sob o rato: sempre horizontal (mesmo em blocos
+  // rodados), por cima de tudo e com fundo, para se ler sobre qualquer cor.
+  function esconderRotuloBloco() {
+    const r = svg.querySelector("#rotulo-bloco");
+    if (r) r.remove();
+  }
+
+  function mostrarRotuloBloco(g, texto) {
+    esconderRotuloBloco();
+    const sr = svg.getBoundingClientRect(), gr = g.getBoundingClientRect();
+    const tag = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    tag.setAttribute("id", "rotulo-bloco");
+    tag.setAttribute("pointer-events", "none");
+    const fundo = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+    const txt = document.createElementNS("http://www.w3.org/2000/svg", "text");
+    txt.setAttribute("font-size", "12");
+    txt.setAttribute("font-weight", "600");
+    txt.setAttribute("fill", "#111");
+    txt.textContent = texto;
+    tag.appendChild(fundo);
+    tag.appendChild(txt);
+    svg.appendChild(tag);
+    const w = txt.getBBox().width + 12, h = 20;
+    // por cima do bloco; se não houver espaço, por baixo do topo dele
+    let x = gr.left - sr.left, y = gr.top - sr.top - h - 2;
+    if (y < 2) y = gr.top - sr.top + 2;
+    x = Math.max(2, Math.min(x, svg.clientWidth - w - 2));
+    fundo.setAttribute("x", x); fundo.setAttribute("y", y);
+    fundo.setAttribute("width", w); fundo.setAttribute("height", h);
+    fundo.setAttribute("rx", "4");
+    fundo.setAttribute("fill", "#ffffff"); fundo.setAttribute("fill-opacity", "0.95");
+    fundo.setAttribute("stroke", "#888"); fundo.setAttribute("stroke-width", "1");
+    txt.setAttribute("x", x + 6); txt.setAttribute("y", y + 14);
   }
 
   function iniciarDrag(b, e) {
