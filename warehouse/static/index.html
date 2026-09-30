@@ -2643,7 +2643,31 @@ function inicializarCanvas() {
       // "Gerar racks" volta sempre a colocar na grelha por omissão), não
       // fazem sentido perder-se só porque se gerou o bloco de racks outra vez.
       const fixosExistentes = canvasBlocks.filter(b => b.type === "obstaculo" || b.type === "rack_manual");
-      canvasBlocks = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b })).concat(fixosExistentes);
+      // As zonas e o bloco de racks que JÁ estão arranjados no canvas (à mão, ou
+      // vindos de um ficheiro «Carregar») mantêm posição e rotação: «Gerar racks»
+      // só atualiza tamanhos e conteúdo (vêm sempre do Excel/stock). As zonas novas
+      // (sem correspondência) ficam na grelha por omissão; «Repor» limpa tudo.
+      // A correspondência ignora maiúsculas e o prefixo numérico («1 - Receção»
+      // == «Receção»), para sobreviver a renomeações simples no Excel.
+      const chaveZona = (n) => String(n || "").toLowerCase().replace(/^\s*\d+\s*[-–.]\s*/, "").trim();
+      const zonasAntes = new Map();
+      for (const b of canvasBlocks.filter(b => b.type === "zone")) {
+        const k = chaveZona(b.nome);
+        if (!zonasAntes.has(k)) zonasAntes.set(k, []);
+        zonasAntes.get(k).push(b);
+      }
+      const racksAntes = canvasBlocks.find(b => b.type === "racking");
+      const blocosNovos = (lastGerarData.blocks_for_canvas || []).map(b => {
+        const o = { rot: 0, ...b };
+        if (o.type === "zone") {
+          const p = (zonasAntes.get(chaveZona(o.nome)) || []).shift();   // 1 a 1, p/ nomes repetidos
+          if (p) { o.x = p.x; o.y = p.y; o.rot = p.rot || 0; }
+        } else if (o.type === "racking" && racksAntes) {
+          o.x = racksAntes.x; o.y = racksAntes.y; o.rot = racksAntes.rot || 0;
+        }
+        return o;
+      });
+      canvasBlocks = blocosNovos.concat(fixosExistentes);
       // Geometria real (posições e corredores) do bloco de racks,
       // no referencial local do próprio bloco -- anexada ao bloco "racking"
       // para desenharBlocks() a desenhar por cima do retângulo único de sempre.
