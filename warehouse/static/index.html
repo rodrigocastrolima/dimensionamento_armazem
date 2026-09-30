@@ -2165,6 +2165,7 @@ const PXM = 20; // pixels por metro
 const GRID = 0.25; // snap da grelha (m)
 const snap = v => Math.round(v / GRID) * GRID;
 let canvasBlocks = [];
+let _semBlocoRacks = false;   // Carregar de um arranjo sem bloco de racks: «Gerar racks» não o repõe
 let selBlockId = null;
 let dragging = null;
 let lastGerarData = null;
@@ -2434,7 +2435,56 @@ function inicializarCanvas() {
     return o;
   }
 
+  // Layout desenhado do zero (o bloco de racks gerado foi removido do canvas):
+  // o que o dimensionamento diz que é PRECISO contra o que as filas sandbox
+  // DÃO. Os racks gerados deixam de contar como capacidade -- não estão no
+  // layout. As posições emparelhadas (OVERSIZE, 2 posições costas com costas)
+  // contam como 2 posições de porta-paletes.
+  function blocoNecessidade() {
+    if (!lastGerarData || !lastGerarData.ocupacao) return "";
+    const cap = lastGerarData.capacidade_por_tipologia || {};
+    const base = (n) => String(n).replace(/\s*\(emparelhada\)\s*$/i, "");
+    const fator = (n) => (/emparelhada/i.test(n) ? 2 : 1);
+    const prec = {}, ten = {};
+    for (const x of (lastGerarData.ocupacao.por_tipologia || [])) {
+      const k = base(x.rack_nome), f = fator(x.rack_nome);
+      prec[k] = prec[k] || { pos: 0, niv: 0 };
+      prec[k].pos += x.posicoes * f; prec[k].niv += x.niveis_ocupados * f;
+    }
+    let semCap = false;
+    for (const b of canvasBlocks) {
+      if (b.type !== "rack_manual") continue;
+      const k = b.rack_tipo, c = cap[k], nPos = (b.n || 0) * (b.dupla ? 2 : 1);
+      ten[k] = ten[k] || { pos: 0, niv: 0 };
+      ten[k].pos += nPos;
+      if (c) ten[k].niv += nPos * c.niveis_por_posicao_total; else semCap = true;
+    }
+    const tipos = [...new Set([...Object.keys(prec), ...Object.keys(ten)])];
+    let precNiv = 0, tenNiv = 0;
+    const linhas = tipos.map(k => {
+      const p = prec[k] || { pos: 0, niv: 0 }, s = ten[k] || { pos: 0, niv: 0 };
+      precNiv += p.niv; tenNiv += s.niv;
+      const saldo = s.pos - p.pos;
+      const cor = saldo < 0 ? "#ef4444" : "#22c55e";
+      return `<span>${k}</span><b>preciso ${p.pos} · tenho ${s.pos} · <span style="color:${cor}">${saldo > 0 ? "+" : ""}${saldo}</span></b>`;
+    }).join("");
+    const pct = tenNiv > 0 ? (100 * precNiv) / tenNiv : 0;
+    const cor = pct > 100 ? "#ef4444" : pct >= 80 ? "#fbbf24" : "#22c55e";
+    let html = `<div class="ocup-bloco"><b>Necessário vs disponível</b>`;
+    html += `<div class="ocup-destaque">${pct.toFixed(1)}% <small>dos níveis das filas sandbox</small></div>`;
+    html += `<div class="ocup-barra"><i style="width:${Math.min(pct, 100).toFixed(1)}%;background:${cor}"></i></div>`;
+    html += `<div style="font-size:11px;color:#999">preciso ${precNiv} níveis · tenho ${tenNiv} · `
+          + `<b style="color:#bbb">${tenNiv - precNiv >= 0 ? "sobram " + (tenNiv - precNiv) : "faltam " + (precNiv - tenNiv)}</b></div>`;
+    html += `<div class="ocup-linhas" style="margin-top:8px">${linhas}</div>`;
+    html += `<div class="ocup-sandbox" style="color:#999">Sem bloco de racks gerado: só as filas sandbox contam como disponível. `
+          + `Posições em posições de chão (posições, não níveis).`
+          + (semCap ? `<br>⚠ há filas sem capacidade conhecida — gera os racks outra vez` : "") + `</div>`;
+    return html + `</div>`;
+  }
+
   function blocoOcupacao() {
+    if (!canvasBlocks.some(b => b.type === "racking") && canvasBlocks.some(b => b.type === "rack_manual"))
+      return blocoNecessidade();
     const o = calcularOcupacao();
     if (!o || !o.niveis) return "";
     const pct = (a, b) => (b > 0 ? (100 * a) / b : 0);
@@ -2706,7 +2756,9 @@ function inicializarCanvas() {
       // A correspondência (ver emparelharZonas) ignora maiúsculas e o prefixo
       // numérico («1 - Receção» == «Receção») e tolera renomeações simples.
       const racksAntes = canvasBlocks.find(b => b.type === "racking");
-      const novas = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b }));
+      let novas = (lastGerarData.blocks_for_canvas || []).map(b => ({ rot: 0, ...b }));
+      if (_semBlocoRacks) novas = novas.filter(b => b.type !== "racking");
+      _semBlocoRacks = false;
       const pares = emparelharZonas(novas.filter(b => b.type === "zone"),
                                     canvasBlocks.filter(b => b.type === "zone"));
       const blocosNovos = novas.map(o => {
@@ -2906,7 +2958,12 @@ function inicializarCanvas() {
         // Sincroniza logo com o Excel: «Gerar racks» mantém as posições do
         // ficheiro mas atualiza tamanhos e zonas novas (um arranjo antigo não
         // traz o tamanho atual das zonas). Se falhar, fica o ficheiro tal e qual.
-        if (d.blocks && d.blocks.length) document.getElementById("btn-gerar-racks").click();
+        // (se o ficheiro não tem bloco de racks -- layout desenhado do zero --,
+        // o «Gerar racks» não o repõe)
+        if (d.blocks && d.blocks.length) {
+          _semBlocoRacks = !d.blocks.some(b => b.type === "racking");
+          document.getElementById("btn-gerar-racks").click();
+        }
       } catch (err) {
         alert("Ficheiro inválido.");
       }
