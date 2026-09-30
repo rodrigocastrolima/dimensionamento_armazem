@@ -323,7 +323,8 @@
       <button id="btn-carregar-arranjo" title="Carrega um arranjo guardado (.json)">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10.5v-8M4.5 6L8 2.5 11.5 6M2.5 12.5h11"/></svg>Carregar</button>
       <input type="file" id="fileInArranjo" accept=".json" style="display:none">
-      <button class="action" id="btn-renderizar">Renderizar 3D</button>
+      <!-- Escondido, não removido: o JS aciona-o (abrir o 3D e o 3D em segundo plano). -->
+      <button class="action" id="btn-renderizar" style="display:none">Renderizar 3D</button>
     </div>
   </div>
   <div id="canvas-resumo"></div>
@@ -499,6 +500,7 @@ document.querySelectorAll("nav button").forEach(btn => {
 // Os botões «Gerar racks» / «Renderizar 3D» continuam a funcionar como antes.
 let _assinaturaRender = null;
 let _auto3dEmCurso = false;
+let _render3dSilencioso = false;    // render em segundo plano: não muda de separador
 
 function _assinaturaArranjo() {
   const v = (id) => document.getElementById(id)?.value ?? "";
@@ -531,6 +533,27 @@ async function gerar3DAutomatico() {
 document.getElementById("btn-renderizar").addEventListener("click", () => {
   _assinaturaRender = _assinaturaArranjo();
 });
+
+// O 3D acompanha o arranjo: quando os blocos (ou os parâmetros) mudam e ficam
+// parados ~1 s, renderiza em segundo plano, sem mudar de separador -- ao abrir
+// o «Armazém 3D» já está atualizado. Não há botão «Renderizar 3D»: o intervalo
+// espera que a assinatura fique estável (não renderiza a meio de um arrasto).
+let _assinaturaVista = null;
+setInterval(async () => {
+  if (_auto3dEmCurso || !canvasBlocks.length || _assinaturaRender === null) return;
+  const atual = _assinaturaArranjo();
+  if (atual === _assinaturaRender) { _assinaturaVista = atual; return; }
+  if (atual !== _assinaturaVista) { _assinaturaVista = atual; return; }   // ainda a mudar
+  _auto3dEmCurso = true;
+  _render3dSilencioso = true;
+  try {
+    document.getElementById("btn-renderizar").click();
+    await _esperarBotao("btn-renderizar");
+  } finally {
+    _render3dSilencioso = false;
+    _auto3dEmCurso = false;
+  }
+}, 700);
 
 // ----------------------------------------------------------------- artigos
 let todosArtigos = [];
@@ -2713,12 +2736,15 @@ function inicializarCanvas() {
       });
       const data = await resp.json();
 
-      // muda para o separador 3D e desenha racks + zonas
-      document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
-      document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
-      document.querySelector('[data-tab="armazem"]').classList.add("active");
-      document.getElementById("armazem").classList.add("active");
-      if (window.redimensionarViewer) window.redimensionarViewer();
+      // muda para o separador 3D e desenha racks + zonas (a atualização em
+      // segundo plano, ver o setInterval a seguir a gerar3DAutomatico, não muda de separador)
+      if (!_render3dSilencioso) {
+        document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+        document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+        document.querySelector('[data-tab="armazem"]').classList.add("active");
+        document.getElementById("armazem").classList.add("active");
+        if (window.redimensionarViewer) window.redimensionarViewer();
+      }
 
       const _rk = canvasBlocks.find(b => b.type === "racking");
       _rotRacks = _rk ? ((((+_rk.rot || 0) % 360) + 360) % 360) : 0;

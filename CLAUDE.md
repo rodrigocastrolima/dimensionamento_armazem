@@ -133,7 +133,10 @@ O que mudou no armazém:
   por isso nunca perde capacidade. Efeito: área bruta 319,3 -> 308,0 m².
 - **«Armazém 3D» gera sozinho** ao abrir o separador (como a «Linha 3D»): corre
   «Gerar racks» se ainda não há racks e renderiza com o arranjo atual; só volta
-  a renderizar se o arranjo ou os parâmetros mudaram (`gerar3DAutomatico`).
+  a renderizar se o arranjo ou os parâmetros mudaram (`gerar3DAutomatico`). Depois
+  do 1.º render, um `setInterval` atualiza o 3D em segundo plano quando o arranjo
+  fica parado ~1 s (sem mudar de separador); o botão «Renderizar 3D» está
+  escondido (o JS ainda o aciona).
   Tabela de Artigos igual à do `linha.html` (Estação, Aninhável = EIXO_ANINHAGEM,
   Caixa forçada).
 - **Leitura do master data com o Excel aberto**: se o ficheiro estiver bloqueado
