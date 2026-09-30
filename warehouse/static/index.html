@@ -1248,9 +1248,15 @@ function desenharParedes(maxX, maxY, maxZ, cubo = null) {
 // do nome dava tons quase iguais a nomes parecidos. Igual à «Linha 3D».
 const _GOLDEN_ANGLE = 137.508;
 const _corZonaCache = new Map();
+// A cor é por PRIMEIRA PALAVRA do nome (sem maiúsculas/minúsculas): zonas cujo
+// nome começa pela mesma palavra partilham a cor (ex.: «Estação C1», «Estação C2»).
+function chaveCorZona(nome) {
+  return String(nome || "").trim().split(/\s+/)[0].toLowerCase();
+}
 function hueZona(nome) {
-  if (!_corZonaCache.has(nome)) _corZonaCache.set(nome, (_corZonaCache.size * _GOLDEN_ANGLE) % 360);
-  return _corZonaCache.get(nome);
+  const k = chaveCorZona(nome);
+  if (!_corZonaCache.has(k)) _corZonaCache.set(k, (_corZonaCache.size * _GOLDEN_ANGLE) % 360);
+  return _corZonaCache.get(k);
 }
 function corZona(texto) {
   return new THREE.Color(`hsl(${hueZona(texto)}, 65%, 55%)`);
