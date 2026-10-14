@@ -53,7 +53,8 @@ def healthz():
 def get_articles():
     articles = data_access.load_articles(cfg)
     catalogo = data_access.load_catalog(cfg)
-    articles, _ = boxing.aplicar_stock_autonomia(articles, catalogo, cfg)  # Passo 0
+    articles, _ = boxing.aplicar_stock_autonomia(
+        articles, catalogo, io_excel.com_carrinhos_da_linha(cfg))  # Passo 0
     return [
         {
             "sku": a.sku, "descricao": a.descricao,
@@ -280,6 +281,7 @@ def gerar(body: GerarRequest):
         largura_max_m=body.largura_max_m,
         profundidade_max_m=body.profundidade_max_m,
         caixas_especiais=_caixas_especiais_do_armazem())
+    local_cfg = io_excel.com_carrinhos_da_linha(local_cfg)   # Config.unidade_da_linha
 
     articles = data_access.load_articles(cfg)
     catalogo = data_access.load_catalog(cfg)
@@ -619,6 +621,7 @@ def render_layout(body: ArrangeRequest):
         largura_max_m=body.largura_max_m,
         profundidade_max_m=body.profundidade_max_m,
         caixas_especiais=_caixas_especiais_do_armazem())
+    local_cfg = io_excel.com_carrinhos_da_linha(local_cfg)   # Config.unidade_da_linha
 
     articles = data_access.load_articles(cfg)
     catalogo = data_access.load_catalog(cfg)

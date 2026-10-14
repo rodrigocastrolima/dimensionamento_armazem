@@ -301,12 +301,18 @@ def choose_load(article: Article, catalogo: list[BoxType],
     geometria) -- ver Config.caixas_especiais/models.CaixaEspecial. Nenhum
     cálculo geométrico é feito para estes SKUs.
 
+    Depois, `cfg.unidade_da_linha` (SIA): o tipo de carga é o que a LINHA
+    escolhe (`unidade_da_linha`), exceto SKUs que na linha vão em carrinho.
+
     A seguir, CAIXA_FORCADA do master data (ver `_caixa_forcada`): o tipo de
     carga vem da folha, não do best-fit.
     """
     especial = cfg.caixas_especiais.get(article.sku)
     if especial is not None:
         return LoadType.OVERSIZE2, especial.quantidades[article.sku]
+
+    if cfg.unidade_da_linha and article.sku not in cfg.skus_carrinho_linha:
+        return unidade_da_linha(article, catalogo, cfg)
 
     if article.caixa_forcada:
         return _caixa_forcada(article, catalogo, cfg)
@@ -350,6 +356,34 @@ def choose_load(article: Article, catalogo: list[BoxType],
             if ppu > 0:
                 return LoadType.PALLET, ppu
     return LoadType.OVERSIZE, 1
+
+
+def unidade_da_linha(article: Article, catalogo: list[BoxType],
+                     cfg: Config) -> tuple[LoadType, int]:
+    """(LoadType, peças_por_unidade) que o dimensionamento_linha escolhe para
+    este SKU no bordo de linha (ver Config.unidade_da_linha) -- reproduz
+    bordo_linha.calcular_bordo_linha: Passo 0 para
+    cfg.autonomia_minima_carros_linha carros e Passo 1 (choose_load) sobre o
+    stock resultante, com as regras da linha (sem pallet_ultimo_recurso, que
+    a linha não tem). O mínimo kanban da linha só muda o nº de caixas, não o
+    tipo, por isso não entra aqui.
+
+    Peças por unidade = capacidade PRÁTICA (capacidade_reportada: teto por
+    caixa, centena, override por SKU ou PECAS_CAIXA_FORCADA), a mesma que o
+    bordo de linha usa -- é a quantidade com que o fornecedor entrega, por
+    isso é também a que dimensiona o armazém (não o máximo geométrico).
+    capacidade_reportada é idempotente, por isso o Passo 0 do armazém, que a
+    volta a aplicar, não a altera."""
+    cfg_linha = dataclasses.replace(
+        cfg, unidade_da_linha=False, pallet_ultimo_recurso=False,
+        autonomia_minima_carros=cfg.autonomia_minima_carros_linha)
+    stock_linha = stock_para_autonomia(article, catalogo, cfg_linha).stock_ajustado_un
+    load_type, ppu = choose_load(dataclasses.replace(article, stock_max_un=stock_linha),
+                                 catalogo, cfg_linha)
+    if load_type in (LoadType.OVERSIZE, LoadType.OVERSIZE2):
+        return load_type, ppu
+    return load_type, capacidade_reportada(load_type, ppu, article.sku, cfg,
+                                           manual=capacidade_manual(article, load_type))
 
 
 def _caixa_forcada(article: Article, catalogo: list[BoxType],

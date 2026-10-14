@@ -33,6 +33,7 @@ _CLIENT_FIELD_CONVERTERS = {
     "output": Path,
     "autonomia_minima_carros": float,
     "pallet_ultimo_recurso": bool,
+    "unidade_da_linha": bool,
     "capacidade_override_sku": dict,
     "stock_autonomia_override_sku": dict,
     "oversize_racks": tuple,
@@ -93,6 +94,28 @@ class Config:
     # verdade universal do algoritmo) -- vive em dados/clients/<nome>.json,
     # não aqui.
     pallet_ultimo_recurso: bool = False
+
+    # Decisão de negócio (SIA, 2026-10-14): a unidade de movimentação de cada
+    # SKU é decidida pela LINHA (dimensionamento_linha, bordo de linha) e é
+    # imposta aos fornecedores -- o armazém HERDA-A em vez de escolher a sua.
+    # True = boxing.choose_load devolve o tipo de carga que a linha escolhe
+    # (boxing.unidade_da_linha: mesmo motor, alvo de autonomia_minima_carros_linha
+    # carros, regras da linha); o armazém só decide QUANTAS dessas unidades
+    # guarda (Passo 0 com autonomia_minima_carros). Com isto ligado,
+    # pallet_ultimo_recurso deixa de mandar nos SKUs herdados (a linha não o
+    # tem). Exceção: SKUs que na linha vão em CARRINHO (skus_carrinho_linha)
+    # -- não há carrinhos no armazém, seguem o best-fit próprio do armazém.
+    # CLIENT-SPECIFIC (dados/clients/<nome>.json).
+    unidade_da_linha: bool = False
+
+    # Autonomia (em carros) para a qual a linha escolhe a unidade -- TEM de ser
+    # igual a Config.autonomia_minima_carros_linha do dimensionamento_linha.
+    autonomia_minima_carros_linha: float = 1.0
+
+    # SKUs que na linha vão num carrinho (folha «Caixas Especiais»). Vazio por
+    # omissão: main.py/web.py preenchem-no a partir do master data
+    # (io_excel.skus_carrinho_linha) quando unidade_da_linha está ligado.
+    skus_carrinho_linha: frozenset = frozenset()
 
     # Fator usado pela fórmula de aninhagem (boxing.pecas_no_eixo), aplicada a
     # QUALQUER eixo -- vertical ou do plano -- que seja o `Article.

@@ -10,6 +10,9 @@
   "_comment_pallet_ultimo_recurso": "Decisao de negocio (2026-09): SIA prefere caixas pequenas (L/MEIA/M/S/XS) a paletes sempre que fisicamente possivel, mesmo custando mais unidades de carga/racks/area -- caixas menores sao mais faceis e seguras de mover, e o armazem e' grande o suficiente para absorver o custo de area. A palete continua a ser o ultimo recurso, nunca se perde stock (ver boxing.choose_load). Ver tambem: 'L' removido do Aceita do Rack Porta-Paletes na folha Racks do master data, para forcar caixas L so para a Prateleira Leve.",
   "pallet_ultimo_recurso": true,
 
+  "_comment_unidade_da_linha": "Decisao de negocio (2026-10-14): a unidade de movimentacao e decidida pela linha (dimensionamento_linha, bordo de linha) e imposta aos fornecedores; o armazem herda-a e so decide quantas guarda. Excecao: SKUs em carrinho na linha (folha Caixas Especiais) seguem o best-fit do armazem.",
+  "unidade_da_linha": true,
+
   "capacidade_override_sku": {
     "BEN00.FHG111": 100
   },

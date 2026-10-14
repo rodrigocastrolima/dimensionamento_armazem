@@ -24,6 +24,7 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
     if cfg.caixas_especiais_no_armazem:   # carrinhos da linha -- ver Config
         caixas_especiais = io_excel.load_caixas_especiais(cfg.master_data)
         cfg = dataclasses.replace(cfg, caixas_especiais=io_excel.caixas_especiais_por_sku(caixas_especiais))
+    cfg = io_excel.com_carrinhos_da_linha(cfg)   # Config.unidade_da_linha
     catalogo = data_access.load_catalog(cfg)          # S/M/L + PALLET
     autonomia_resultados = None
     if articles is None:

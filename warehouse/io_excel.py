@@ -1,5 +1,6 @@
 """Leitura do master data e escrita dos resultados (openpyxl). Unidades: metros."""
 from __future__ import annotations
+import dataclasses
 import math
 import shutil
 import tempfile
@@ -554,6 +555,18 @@ def caixas_especiais_por_sku(caixas: list[CaixaEspecial]) -> dict[str, CaixaEspe
     guarda e boxing.choose_load consulta. Chaves diferentes podem apontar
     para o MESMO objeto quando partilham registo (mesmo equipamento)."""
     return {sku: caixa for caixa in caixas for sku in caixa.skus}
+
+
+def com_carrinhos_da_linha(cfg):
+    """Config.unidade_da_linha: devolve o cfg com skus_carrinho_linha
+    preenchido a partir da folha «Caixas Especiais» (os SKUs que na linha vão
+    em carrinho e por isso NÃO herdam a unidade da linha). Desligado -> o
+    próprio cfg, sem ler nada. Lido a cada chamada (e não uma vez ao subir o
+    servidor) para acompanhar edições ao master data."""
+    if not cfg.unidade_da_linha:
+        return cfg
+    skus = caixas_especiais_por_sku(load_caixas_especiais(cfg.master_data))
+    return dataclasses.replace(cfg, skus_carrinho_linha=frozenset(skus))
 
 
 def write_pecas_com_caixa(master_path: Path, out_path: Path,

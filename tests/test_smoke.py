@@ -354,6 +354,31 @@ def test_pallet_ultimo_recurso_off_por_omissao_nao_muda_nada():
     assert Config().pallet_ultimo_recurso is False
 
 
+# ----------------------------------------------- unidade_da_linha (Config)
+# Decisão SIA (2026-10-14): o armazém herda a unidade que a linha escolhe
+# para 1 carro; só muda o nº de unidades. SKUs em carrinho na linha não herdam.
+
+def test_unidade_da_linha_herda_a_caixa_escolhida_para_1_carro():
+    from warehouse import boxing
+    from warehouse.models import Article, Empilhamento
+    from warehouse.config import Config
+    cat = _catalogo_minimo()
+    # 5 peças/carro: para 1 carro cabe numa S (empate com a PALLET -> a menor);
+    # para os 10 carros do armazém (50 peças) a PALLET minimiza unidades.
+    art = Article(sku="x", descricao="", comp_m=0.10, larg_m=0.10, alt_m=0.10,
+                  peso_kg=0.5, stock_max_un=50, pecas_por_carro=5,
+                  empilhamento=Empilhamento.EMPILHAVEL)
+
+    assert boxing.choose_load(art, cat, Config())[0] == LoadType.PALLET
+    lt, ppu = boxing.choose_load(art, cat, Config(unidade_da_linha=True))
+    assert lt == LoadType.S
+    assert ppu == boxing.choose_load(art, cat, Config(unidade_da_linha=True))[1]
+
+    # em carrinho na linha -> não herda, segue o best-fit do armazém
+    cfg_carrinho = Config(unidade_da_linha=True, skus_carrinho_linha=frozenset({"x"}))
+    assert boxing.choose_load(art, cat, cfg_carrinho)[0] == LoadType.PALLET
+
+
 # --------------------------------------------------------- envelope do bloco
 # Config.largura_max_m / profundidade_max_m: restrição de FORMA, não de
 # capacidade -- nunca se perdem posições, avisa-se quando não cabe.

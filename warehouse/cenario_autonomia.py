@@ -14,7 +14,7 @@ import math
 import os
 from pathlib import Path
 
-from . import boxing, data_access, main as main_mod
+from . import boxing, data_access, io_excel, main as main_mod
 from .config import Config
 from .models import Article
 
@@ -60,6 +60,8 @@ def main() -> None:
         cfg.altura_armazem_m = args.altura
     if args.picking:
         cfg.altura_picking_m = args.picking
+
+    cfg = io_excel.com_carrinhos_da_linha(cfg)   # Config.unidade_da_linha
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     catalogo = data_access.load_catalog(cfg)

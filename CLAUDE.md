@@ -504,6 +504,37 @@ fator único não distingue corredor de empilhador (2.5 m) de picking manual
 (1.2 m), e subestimava — nos dados atuais os corredores dão ~108% da footprint,
 não 60%.
 
+## Decisão fechada: o armazém HERDA a unidade de movimentação da linha (SIA, 2026-10-14)
+A unidade de movimentação (tipo de carga) de cada SKU é decidida pela LINHA
+(`dimensionamento_linha`, bordo de linha: Passo 0 para 1 carro + Passo 1) e vai
+ser imposta aos fornecedores. `Config.unidade_da_linha` (CLIENT-SPECIFIC, `true`
+no `sia.json`): `boxing.choose_load` devolve `boxing.unidade_da_linha`, que
+reproduz o cálculo da linha com o mesmo motor (`autonomia_minima_carros_linha`
+= 1, sem `pallet_ultimo_recurso`, que a linha não tem). O armazém só decide
+QUANTAS unidades guarda (Passo 0 com os 10 carros). Com isto ligado,
+`pallet_ultimo_recurso` só conta para os SKUs que não herdam.
+
+**Exceção:** SKUs que na linha vão em CARRINHO (folha «Caixas Especiais»,
+copiada do master data da linha) não herdam — não há carrinhos no armazém;
+seguem o best-fit próprio. `io_excel.com_carrinhos_da_linha(cfg)` preenche
+`Config.skus_carrinho_linha` em `main.run`, `cenario_autonomia` e nas rotas do
+`web.py`.
+
+**Pré-requisito:** as folhas «Peças», «Caixas» e «Caixas Especiais» do master
+data do armazém têm de ser cópia das da linha (sincronizadas em 2026-10-14;
+backups `*.pre-sync-linha-2026-10-14.bak` e `*.pre-caixas-especiais.bak`).
+«Racks» e «Zonas» são próprias de cada projeto.
+
+Validado contra o código da linha (`bordo_linha.calcular_bordo_linha`): tipo de
+carga E peças por unidade iguais em 428/428 SKUs fora de carrinho. Nos SKUs
+herdados as peças por unidade são a capacidade PRÁTICA da linha
+(`capacidade_reportada`: teto/centena/override/PECAS_CAIXA_FORCADA) -- é com
+essa quantidade que o fornecedor entrega, por isso é ela que dimensiona (decisão
+do utilizador, 2026-10-14). Não mudou nenhum nº de caixas face à geométrica:
+o Passo 0 já arredondava o stock à capacidade prática. Efeito medido (SIA, config do cliente):
+área de racks 90,1 -> 95,7 m², área bruta 418,1 -> 461,8 m²; MEIA 129 -> 98,
+PALLET 108 (igual), muitas mais caixas XS/S/M (S 52 -> 221, XS 233 -> 423).
+
 ## Decisão fechada: `pallet_ultimo_recurso` (SIA, 2026-09) — caixas pequenas em vez de paletes
 `Config.pallet_ultimo_recurso` (`bool`, default `False`, CLIENT-SPECIFIC —
 vive em `dados/clients/<nome>.json`, não em `config.py`): quando `True`, a
