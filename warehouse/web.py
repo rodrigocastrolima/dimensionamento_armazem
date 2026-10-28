@@ -402,7 +402,8 @@ def gerar(body: GerarRequest):
 
     # floor_area DEPOIS do layout: as pilhas são uma fiada do bloco e o seu
     # footprint conta como área ocupada (senão aparecia como corredor).
-    dim = area.floor_area(posicoes, rack_by_name, warehouse_layout.pilhas_chao)
+    dim = area.floor_area(posicoes, rack_by_name, warehouse_layout.pilhas_chao,
+                           warehouse_layout.fechos_pilar_m2)
     resumo = area.resumo_area_total(dim, warehouse_layout, zonas,
                                     local_cfg.margem_estrutural_pct, area_chao_m2)
 
@@ -676,7 +677,8 @@ def render_layout(body: ArrangeRequest):
         local_cfg.largura_max_m, local_cfg.profundidade_max_m,
         artigos_chao, local_cfg.oversize_chao_altura_max_m,
         local_cfg.oversize_chao_peso_max_kg, local_cfg.picking_manual_racks)
-    dim = area.floor_area(posicoes, rack_by_name, warehouse_layout.pilhas_chao)
+    dim = area.floor_area(posicoes, rack_by_name, warehouse_layout.pilhas_chao,
+                           warehouse_layout.fechos_pilar_m2)
     layout_json = _serializar_layout(warehouse_layout.posicoes, rack_by_name)
 
     # Racks fantasma (preview, Passo 4): uma posição vazia por slot inteiro
@@ -817,7 +819,7 @@ def render_layout(body: ArrangeRequest):
                         nivel["caixas"] = [dict(c, alt_m=min(c["alt_m"], alt_max))
                                            for c in caixas_exemplo]
 
-        cont_w = n * rack.larg_total_m
+        cont_w = n * rack.larg_total_m + rack.pilar_m   # n módulos + pilar de fecho
         cont_h = rack.prof_m * (2 if dupla else 1)
         _colocar_bloco_manual(itens_json, float(b.get("x", 0.0)), float(b.get("y", 0.0)),
                               b.get("rot", 0), cont_w, cont_h)

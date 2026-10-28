@@ -154,7 +154,8 @@ def artigos_chao_oversize2(assignments: list[BoxAssignment], cfg: Config,
 
 def floor_area(posicoes: list[PosicaoChao],
                rack_types: dict[str, RackType],
-               pilhas_chao: list | None = None) -> WarehouseDimensioning:
+               pilhas_chao: list | None = None,
+               fechos_pilar_m2: dict | None = None) -> WarehouseDimensioning:
     """Footprint total = soma(footprint_rack x nº posições de chão) por tipologia.
 
     Módulos empilhados na mesma posição (PosicaoChao.num_blocos, decidido
@@ -174,6 +175,12 @@ def floor_area(posicoes: list[PosicaoChao],
     for d in detalhe.values():
         d["blocos_empilhados"] = max(round(d["num_racks"] / d["posicoes_chao"]), 1) \
             if d["posicoes_chao"] else 1
+
+    # Pilar de fecho de cada fila (WarehouseLayout.fechos_pilar_m2): área real do
+    # chão, somada à tipologia a que pertence.
+    for nome, m2 in (fechos_pilar_m2 or {}).items():
+        if nome in detalhe:
+            detalhe[nome]["footprint_total_m2"] = round(detalhe[nome]["footprint_total_m2"] + m2, 4)
 
     # Pilhas no chão: são uma fiada do bloco de racks (layout.gerar_layout), por
     # isso o footprint delas é área OCUPADA como a dos racks. Sem isto, o layout

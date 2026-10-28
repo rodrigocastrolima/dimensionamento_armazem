@@ -241,8 +241,17 @@ manual na sandbox (`index.html`, via `larg_total_m` de `/api/racks`) e a área
 (`area_chao_m2`: 3.24 → 3.348 m²; um `Footprint_m2` explícito também leva os
 pilares). A **capacidade** (`racking.py`) continua a usar `larg_m` — somar o
 pilar ao vão inflacionava paletes/caixas.
-- **0.09 m é uma estimativa** (montante típico 80–100 mm): confirmar com a rack real.
-- Conta-se 1 pilar por módulo; o pilar de fecho de cada fila (+1 por fila) não.
+- **0.09 m confirmado pelo utilizador**: o mesmo pilar em todos os módulos, **partilhado**
+  entre vizinhos, e as pontas da fila têm o seu (lado «solto»). Logo uma fila de
+  k módulos mede **k × vão + (k+1) × pilar** — cada módulo leva 1 pilar
+  (`larg_total_m`) e a fila leva +1 de **fecho**. O fecho entra na largura das
+  fiadas (`_decompor_em_fiadas`, `_melhor_num_por_fiada`, `largura_max_m`), no
+  comprimento do corredor, na fila manual da sandbox (`n × total + pilar`) e na
+  área (`WarehouseLayout.fechos_pilar_m2` → `area.floor_area`; sem isso o
+  envolvente contava-o como corredor). SIA, dados reais: bloco 10.8 → 11.2 m,
+  racks 96.1 → 99.4 m².
+- Duas fiadas lado a lado no shelf packing têm cada uma o seu fecho (tratadas como
+  filas separadas); se fossem uma fila contínua partilhariam um — sobrestima 1 pilar.
 - A Prateleira Leve (1.80 m) está **fora**: assume-se que a medida já é total.
 - Fica por modelar o espaço entre costas das filas duplas (hoje `2 × prof`).
 

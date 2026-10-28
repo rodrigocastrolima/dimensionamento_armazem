@@ -473,6 +473,10 @@ class WarehouseLayout:
     # coordenadas para não sobrepor os racks -- a área conta em
     # ResumoAreaTotal.area_oversize_chao_m2, não em largura/profundidade_total_m.
     pilhas_chao: list[PilhaChao] = field(default_factory=list)
+    # Área (m²) dos pilares de FECHO das filas, por tipologia (RackType.pilar_m x
+    # profundidade, 1 por fila): cada módulo já leva o seu pilar, o do fim da fila
+    # é a mais. Entra na área de racks (area.floor_area) para o envolvente bater.
+    fechos_pilar_m2: dict = field(default_factory=dict)
     # Avisos do envelope (Config.largura_max_m / profundidade_max_m): o layout
     # respeita a largura mas o stock manda no nº de racks, por isso a
     # profundidade pode exceder o teto. Lista vazia = cabe tudo (ou sem limites).

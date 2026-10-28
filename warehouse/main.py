@@ -91,7 +91,7 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
     avisos = avisos + wl.avisos
 
     # Passo 3 depois do 3b: o footprint das pilhas conta como área ocupada
-    dim = area.floor_area(posicoes, rack_by_name, wl.pilhas_chao)
+    dim = area.floor_area(posicoes, rack_by_name, wl.pilhas_chao, wl.fechos_pilar_m2)
     resumo = area.resumo_area_total(dim, wl, zonas, cfg.margem_estrutural_pct, area_chao_m2)
 
     slots = io_excel.flatten_posicoes_para_detalhe(posicoes)

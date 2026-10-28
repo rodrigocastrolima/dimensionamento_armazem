@@ -3131,7 +3131,7 @@ function inicializarCanvas() {
     if (!tipo) { alert("Sem tipologias de rack carregadas ainda -- espera um instante e tenta outra vez."); return; }
     const n = Math.max(parseInt(document.getElementById("rack-manual-n").value) || 1, 1);
     const dupla = document.getElementById("rack-manual-dupla").checked;
-    const w = n * (tipo.larg_total_m ?? tipo.larg_m);   // vão + pilar: comprimento real da fila
+    const w = n * (tipo.larg_total_m ?? tipo.larg_m) + (tipo.pilar_m ?? 0);   // n×(vão+pilar) + pilar de fecho = comprimento real da fila
     const h = tipo.prof_m * (dupla ? 2 : 1);
     const id = `rack_manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nome = `${tipo.nome} (fila ${_filaManualSeq})`;

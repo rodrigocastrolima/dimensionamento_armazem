@@ -62,3 +62,39 @@ def test_sia_json_define_pilar_do_porta_paletes():
     cfg = Config.for_client("sia")
     assert cfg.pilar_rack_m.get("porta-paletes", 0) > 0
     assert "prateleira" not in cfg.pilar_rack_m
+
+
+def _posicoes(r, n):
+    return [PosicaoChao(rack_nome=r.nome, indice=i) for i in range(n)]
+
+
+def test_fila_tem_pilar_de_fecho_k_mais_1_pilares():
+    """k módulos: k x vão + (k+1) x pilar (pilar do meio partilhado; as pontas têm o seu)."""
+    r = _pp(pilar_m=0.09)
+    wl = layout_mod.gerar_layout(_posicoes(r, 3), {r.nome: r}, largura_max_m=100)
+    # 3 módulos numa só fiada (frente+trás = 2 por coluna -> k=2 colunas)
+    colunas = len({round(p.x_m, 4) for p in wl.posicoes})
+    assert abs(wl.largura_total_m - (colunas * 2.7 + (colunas + 1) * 0.09)) < 1e-3
+    sem = layout_mod.gerar_layout(_posicoes(_pp(), 3), {r.nome: _pp()}, largura_max_m=100)
+    assert abs(sem.largura_total_m - colunas * 2.7) < 1e-3
+
+
+def test_area_de_racks_inclui_fechos_e_corredores_nao_inflacionam():
+    r, r0 = _pp(pilar_m=0.09), _pp()
+    pos = _posicoes(r, 8)
+    wl = layout_mod.gerar_layout(pos, {r.nome: r})
+    wl0 = layout_mod.gerar_layout(_posicoes(r0, 8), {r0.nome: r0})
+    assert wl.fechos_pilar_m2.get(r.nome, 0) > 0
+    dim = area.floor_area(pos, {r.nome: r}, wl.pilhas_chao, wl.fechos_pilar_m2)
+    # racks + corredores = envolvente (nada do pilar vira "corredor" por engano)
+    assert abs(dim.area_racks_m2 + wl.area_corredores_m2 - wl.area_total_m2) < 5e-3
+    # os pilares custam área; o corredor é praticamente o mesmo (só alonga com a fila)
+    assert wl.area_total_m2 > wl0.area_total_m2
+    assert abs(wl.area_corredores_m2 - wl0.area_corredores_m2) < 0.5 * wl0.area_corredores_m2 + 1.0
+
+
+def test_largura_max_conta_o_pilar_de_fecho():
+    r = _pp(pilar_m=0.09)
+    # 3 módulos = 3*2.79 + 0.09 = 8.46 m: cabe em 8.46, não em 8.40
+    wl = layout_mod.gerar_layout(_posicoes(r, 6), {r.nome: r}, largura_max_m=8.46)
+    assert wl.largura_total_m <= 8.46 + 1e-6

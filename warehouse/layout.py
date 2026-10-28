@@ -45,7 +45,8 @@ def _e_picking_manual(nome: str, chaves: tuple) -> bool:
 
 
 def _melhor_num_por_fiada(n: int, larg_m: float, prof_dupla_m: float, corredor_m: float,
-                          k_max: int | None = None, par_incluido: bool = False) -> int:
+                          k_max: int | None = None, par_incluido: bool = False,
+                          pilar_m: float = 0.0) -> int:
     """Escolhe quantas posições por fiada (frente OU trás) minimizam o
     perímetro do retângulo PRÓPRIO da tipologia (perímetro mínimo, área como
     desempate), testando todas as divisões possíveis de n posições em filas
@@ -60,7 +61,7 @@ def _melhor_num_por_fiada(n: int, larg_m: float, prof_dupla_m: float, corredor_m
     melhor_k, melhor_perimetro, melhor_area = 1, float("inf"), float("inf")
     for k in range(1, limite + 1):
         num_filas_duplas = math.ceil(n / (divisor * k))
-        largura = k * larg_m
+        largura = k * larg_m + pilar_m   # k módulos (vão+pilar) + pilar de fecho da fila
         profundidade = num_filas_duplas * prof_dupla_m + max(num_filas_duplas - 1, 0) * corredor_m
         perimetro = 2 * (largura + profundidade)
         area = largura * profundidade
@@ -90,7 +91,8 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     prof_dupla = prof if par_incluido else 2 * prof
 
     if k is None:
-        k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor, par_incluido=par_incluido)
+        k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor, par_incluido=par_incluido,
+                                  pilar_m=rack.pilar_m)
 
     resultado: list[PosicaoLayout] = []
     corredores: list[Corredor] = []
@@ -118,7 +120,7 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
                 ocupou = True
             if ocupou:
                 lados_ocupados += 1
-        largura_max = max(largura_max, cols_fila * larg)
+        largura_max = max(largura_max, cols_fila * larg + rack.pilar_m)
         # profundidade REAL desta fila dupla: "frente" enche sempre primeiro
         # (idx<n garante-o), por isso só "trás" pode ficar por preencher -- na
         # última fila dupla de uma tipologia, quando o que resta cabe todo em
@@ -131,7 +133,7 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
         # removido abaixo). Cobre a largura realmente usada pela fila.
         corredores.append(Corredor(
             x_m=0.0, y_m=round(y_fila + prof_fila, 4),
-            comp_m=round(cols_fila * larg, 4), larg_m=round(corredor, 4)))
+            comp_m=round(cols_fila * larg + rack.pilar_m, 4), larg_m=round(corredor, 4)))
         y_fila += prof_fila + corredor
         fila_idx += 1
 
@@ -155,7 +157,7 @@ def _decompor_em_fiadas(rack: RackType, posicoes_locais: list[PosicaoLayout],
     for fila_idx in sorted(por_fiada):
         grupo = por_fiada[fila_idx]
         y_base = min(pl.y_m for pl in grupo)
-        largura_fiada = max(pl.x_m + pl.largura_m for pl in grupo)
+        largura_fiada = max(pl.x_m + pl.largura_m for pl in grupo) + rack.pilar_m   # + pilar de fecho
         profundidade_fiada = max(pl.y_m + pl.profundidade_m for pl in grupo) - y_base
         rebasadas = [dataclasses.replace(pl, y_m=round(pl.y_m - y_base, 4),
                                         fila_idx=fila_idx + offset_fila_idx) for pl in grupo]
@@ -192,7 +194,7 @@ def _candidatos_decomposicao(rack: RackType, posicoes: list[PosicaoChao],
         return []
     k_max = None
     if largura_max_m > 0 and rack.larg_total_m > 0:
-        k_max = max(int(largura_max_m / rack.larg_total_m + 1e-9), 1)
+        k_max = max(int((largura_max_m - rack.pilar_m) / rack.larg_total_m + 1e-9), 1)
     candidatos_k = {1, n}
     if k_max is not None:
         candidatos_k = {k for k in candidatos_k if k <= k_max}
@@ -282,8 +284,8 @@ def _fiadas_tipologia(rack: RackType, posicoes: list[PosicaoChao],
 
     k_max = None
     if largura_max_m > 0 and larg > 0:
-        k_max = max(int(largura_max_m / larg + 1e-9), 1)
-    k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor, k_max, par_incluido)
+        k_max = max(int((largura_max_m - rack.pilar_m) / larg + 1e-9), 1)
+    k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor, k_max, par_incluido, rack.pilar_m)
 
     por_fiada_cheia = k if par_incluido else 2 * k
     num_cheias = n // por_fiada_cheia
@@ -294,7 +296,8 @@ def _fiadas_tipologia(rack: RackType, posicoes: list[PosicaoChao],
         locais, _, _, _ = _layout_tipologia(rack, posicoes[:num_cheias * por_fiada_cheia], 0.0, k)
         itens.extend(_decompor_em_fiadas(rack, locais))
     if resto > 0:
-        k_resto = _melhor_num_por_fiada(resto, larg, prof_dupla, corredor, k_max, par_incluido)
+        k_resto = _melhor_num_por_fiada(resto, larg, prof_dupla, corredor, k_max, par_incluido,
+                                        rack.pilar_m)
         locais_resto, _, _, _ = _layout_tipologia(
             rack, posicoes[num_cheias * por_fiada_cheia:], 0.0, k_resto)
         itens.extend(_decompor_em_fiadas(rack, locais_resto, offset_fila_idx=num_cheias))
@@ -599,6 +602,29 @@ def _layout_pilhas_chao(artigos_stock: list[tuple], altura_max_m: float,
     return resultado, corredores
 
 
+def _fechos_pilar_m2(posicoes: list[PosicaoLayout], rack_types: dict[str, RackType]) -> dict[str, float]:
+    """Área do pilar de fecho de cada fila (pilar_m x profundidade), por
+    tipologia. Uma fila = posições da mesma tipologia, ao mesmo y e coladas em
+    x; duas fiadas lado a lado no mesmo y têm o pilar de fecho entre elas (a
+    próxima começa em x + largura da fiada, que já o inclui), por isso contam
+    como filas separadas."""
+    fechos: dict[str, float] = {}
+    prev: PosicaoLayout | None = None
+    ordenadas = sorted(posicoes, key=lambda p: (round(p.y_m, 4), p.x_m))
+    for p in [*ordenadas, None]:
+        novo = (p is None or prev is None
+                or abs(p.y_m - prev.y_m) > 1e-6
+                or abs(p.x_m - (prev.x_m + prev.largura_m)) > 1e-6
+                or p.posicao.rack_nome != prev.posicao.rack_nome)
+        if novo and prev is not None:
+            nome = prev.posicao.rack_nome
+            rack = rack_types.get(nome)
+            if rack is not None and rack.pilar_m > 0:
+                fechos[nome] = fechos.get(nome, 0.0) + rack.pilar_m * prev.profundidade_m
+        prev = p
+    return fechos
+
+
 def gerar_racks_fantasma(espacos_livres: list[EspacoLivre],
                          rack_types: dict[str, RackType],
                          altura_armazem_m: float = 0.0,
@@ -781,6 +807,9 @@ def gerar_layout(posicoes: list[PosicaoChao],
     y_cursor = y0_racks + profundidade_racks
     area_racks = sum(rack_footprint_m2(rack_types[nome]) * len(lista)
                      for nome, lista in por_tipologia.items())
+    # + o pilar de fecho de cada fila (fica no envolvente; sem isto contava como corredor)
+    fechos_pilar = _fechos_pilar_m2(todas, rack_types)
+    area_racks += sum(fechos_pilar.values())
     # corredor de transição para as pilhas ao chão (ver abaixo): o maior
     # corredor entre as tipologias que ficaram na ÚLTIMA prateleira do bloco.
     ultimo_corredor = max((c["corredor_transicao"] for c in chunks), default=CORREDOR_TRANSICAO_M)
@@ -845,4 +874,5 @@ def gerar_layout(posicoes: list[PosicaoChao],
         corredores=corredores,
         avisos=avisos,
         pilhas_chao=pilhas,
+        fechos_pilar_m2=fechos_pilar,
     )
