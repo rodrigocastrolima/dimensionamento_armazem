@@ -88,7 +88,7 @@ def test_cotas_fisicas_niveis_voltam_ao_passo():
     altura útil acumulada (que as punha a 1.61 / 3.22 m)."""
     from warehouse.config import Config
     assert racking.cotas_fisicas_niveis(_pp_161(), 3, Config()) == ([0, 1.8, 3.6], 4.6)
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=6)
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7, niveis=6)
     assert racking.cotas_fisicas_niveis(pl, 6, Config()) == ([0, 0.7, 1.4, 2.1, 2.8, 3.5], 4.2)
 
 
@@ -787,7 +787,7 @@ def test_tipologias_diferentes_partilham_a_mesma_banda_quando_compensa():
     Porta-Paletes (sobra 1 na última fiada dupla) + 2 Prateleira Leve (cabem
     exatamente nessa sobra) é um desses casos."""
     from warehouse import layout as layout_mod
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7,
                   niveis=3, corredor_m=1.2)
     pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
                   niveis=4, corredor_m=3.0)
@@ -820,7 +820,7 @@ def test_picking_manual_nunca_fica_fragmentado():
     Porta-Paletes + 10 Rack C: sem correção dava dois grupos em Y = (0.0,1.2)
     e (5.4,6.6), com Porta-Paletes/Rack C no meio."""
     from warehouse import layout as layout_mod
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7,
                   niveis=3, corredor_m=1.2)
     pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
                   niveis=4, corredor_m=3.0)
@@ -869,7 +869,7 @@ def test_nao_forca_mistura_quando_piora_o_perimetro():
     se genuinamente reduzir o perímetro (nunca agrava; ver
     test_teto_com_multiplas_tipologias_nao_agrava_quando_nao_viola)."""
     from warehouse import layout as layout_mod
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7,
                   niveis=3, corredor_m=1.2)
     pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
                   niveis=4, corredor_m=3.0)
@@ -891,7 +891,7 @@ def test_teto_com_multiplas_tipologias_nao_agrava_quando_nao_viola():
     só tipologia (test_largura_max_acima_do_otimo_nao_muda_nada), agora com
     várias: um teto acima do ótimo livre não pode piorar o resultado."""
     from warehouse import layout as layout_mod
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7,
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7,
                   niveis=3, corredor_m=1.2)
     pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8,
                   niveis=4, corredor_m=3.0)
@@ -926,7 +926,7 @@ def test_sem_envelope_mantem_comportamento():
 # módulo). O stock que subiria espalha-se por mais posições ao lado.
 
 def test_limite_modulos_por_substring_do_nome():
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
     pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.1, alt_nivel_m=1.8, niveis=4)
     lim = {"prateleira": 2}
     # 10 m / 2.10 m de prumo = 4 módulos; travado a 2
@@ -939,20 +939,20 @@ def test_limite_modulos_por_substring_do_nome():
 def test_limite_modulos_nao_inventa_capacidade():
     """O limite só pode REDUZIR: se a altura já só permite 1 módulo, um teto de
     2 não passa a permitir 2."""
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
     assert racking.blocos_empilhados(pl, 2.5, {"prateleira": 2}) == 1   # 2.5/2.1 = 1
     # sem altura definida continua a ser 1 módulo, com ou sem teto
     assert racking.blocos_empilhados(pl, 0.0, {"prateleira": 2}) == 1
 
 
 def test_sem_limite_mantem_comportamento():
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
     for lim in (None, {}):
         assert racking.blocos_empilhados(pl, 10.0, lim) == 4
 
 
 def test_limite_modulos_case_insensitive():
-    r = RackType("PRATELEIRA LEVE 1.83", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
+    r = RackType("PRATELEIRA LEVE 1.8", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
     assert racking.blocos_empilhados(r, 10.0, {"Prateleira": 2}) == 2
 
 
@@ -1034,14 +1034,14 @@ def test_blocos_empilhados_soma_alturas_heterogeneas():
 def test_racktype_sem_alturas_niveis_mantem_comportamento_antigo():
     """Guarda de regressão: sem alturas_niveis_m, os helpers novos e
     rack_capacity/blocos_empilhados reduzem exatamente ao cálculo de sempre."""
-    r = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.8, niveis=3,
+    r = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.8, niveis=3,
                 aceita=[LoadType.L, LoadType.XS])
     assert r.alturas_niveis_m == ()
     for n in range(r.niveis):
         assert racking.altura_nivel(r, n) == 0.8
     assert racking.altura_ate_niveis(r, r.niveis) == 0.8 * 3
     cap_l = racking.rack_capacity(r, _box_l())
-    # por_nivel(L) em 1.83x0.6 = floor(1.83/0.55)*floor(0.6/0.9)=3*0=0 ou floor(1.83/0.9)*floor(0.6/0.55)=2*1=2
+    # por_nivel(L) em 1.8x0.6 = floor(1.8/0.55)*floor(0.6/0.9)=3*0=0 ou floor(1.8/0.9)*floor(0.6/0.55)=2*1=2
     assert cap_l == 2 * 3  # todos os 3 níveis compatíveis (0.68 <= 0.8)
     assert racking.blocos_empilhados(r, altura_armazem_m=10.0) == 4  # 10/2.4 = 4, como sempre
 
@@ -1166,7 +1166,7 @@ def test_max_modulos_por_tipologia_usa_as_chaves_do_dict():
     """max_modulos_por_tipologia é um dict (chave = substring, valor = teto) --
     o aviso tem de olhar para as CHAVES, não tentar tratar o dict como tuple."""
     from warehouse.config import Config
-    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
+    pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7, niveis=3)
     cfg = Config(oversize_racks=(), oversize_par_racks=(),
                  max_modulos_por_tipologia={"tipologia inexistente": 2},
                  empilhamento_por_nivel=(), picking_manual_racks=())
@@ -1436,7 +1436,7 @@ def test_load_rack_types_le_alturas_niveis_m(tmp_path):
     ws.append(["Nome", "Larg_m", "Prof_m", "Alt_Nivel_m", "Niveis", "Aceita",
               "Footprint_m2", "Corredor_m", "Alturas_Niveis_m"])
     ws.append(["Flow Rack", 1.22, 1.22, 0.8, 3, "L, XS", None, 1.2, "0.8,0.3,0.3"])
-    ws.append(["Prateleira Leve", 1.83, 0.6, 0.8, 3, "S, M, L, XS", None, 1.2, None])
+    ws.append(["Prateleira Leve", 1.8, 0.6, 0.8, 3, "S, M, L, XS", None, 1.2, None])
     wb.save(path)
 
     racks = io_excel.load_rack_types(path)
