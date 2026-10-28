@@ -81,7 +81,7 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     if n == 0:
         return [], 0.0, 0.0, []
 
-    larg, prof = rack.larg_m, rack.prof_m
+    larg, prof = rack.larg_total_m, rack.prof_m   # larg_total = vão + pilar
     corredor = _corredor_m(rack)
     # Tipologias sintéticas de par emparelhado (racking.com_par_oversize) já
     # TÊM prof_m = profundidade do par -- não se emparelham de novo, senão a
@@ -191,8 +191,8 @@ def _candidatos_decomposicao(rack: RackType, posicoes: list[PosicaoChao],
     if n == 0:
         return []
     k_max = None
-    if largura_max_m > 0 and rack.larg_m > 0:
-        k_max = max(int(largura_max_m / rack.larg_m + 1e-9), 1)
+    if largura_max_m > 0 and rack.larg_total_m > 0:
+        k_max = max(int(largura_max_m / rack.larg_total_m + 1e-9), 1)
     candidatos_k = {1, n}
     if k_max is not None:
         candidatos_k = {k for k in candidatos_k if k <= k_max}
@@ -275,7 +275,7 @@ def _fiadas_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     n = len(posicoes)
     if n == 0:
         return []
-    larg, prof = rack.larg_m, rack.prof_m
+    larg, prof = rack.larg_total_m, rack.prof_m   # larg_total = vão + pilar
     corredor = _corredor_m(rack)
     par_incluido = rack.profundidade_inclui_par
     prof_dupla = prof if par_incluido else 2 * prof
@@ -621,9 +621,9 @@ def gerar_racks_fantasma(espacos_livres: list[EspacoLivre],
     fantasma: list[PosicaoLayout] = []
     for espaco in espacos_livres:
         rack = rack_types.get(espaco.rack_nome)
-        if rack is None or rack.larg_m <= 0:
+        if rack is None or rack.larg_total_m <= 0:
             continue
-        k_extra = int(espaco.comp_m / rack.larg_m + 1e-9)
+        k_extra = int(espaco.comp_m / rack.larg_total_m + 1e-9)
         if k_extra <= 0:
             continue
         max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, empilhamento_por_nivel)
@@ -634,9 +634,9 @@ def gerar_racks_fantasma(espacos_livres: list[EspacoLivre],
                 pos.blocos.append(_abrir_bloco(rack, b, altura_picking_m, niveis_ov))
             fantasma.append(PosicaoLayout(
                 posicao=pos,
-                x_m=round(espaco.x_m + i * rack.larg_m, 4),
+                x_m=round(espaco.x_m + i * rack.larg_total_m, 4),
                 y_m=round(espaco.y_m, 4),
-                largura_m=rack.larg_m, profundidade_m=espaco.larg_m,
+                largura_m=rack.larg_total_m, profundidade_m=espaco.larg_m,
                 fila_idx=espaco.fila_idx, lado=espaco.lado,
             ))
     return fantasma
@@ -687,8 +687,8 @@ def gerar_fila_manual(rack: RackType, n: int, dupla: bool,
                     pos.blocos.append(_abrir_bloco(rack, b, 0.0, niveis_ov))
             resultado.append(PosicaoLayout(
                 posicao=pos,
-                x_m=round(i * rack.larg_m, 4), y_m=round(y_lado, 4),
-                largura_m=rack.larg_m, profundidade_m=rack.prof_m,
+                x_m=round(i * rack.larg_total_m, 4), y_m=round(y_lado, 4),
+                largura_m=rack.larg_total_m, profundidade_m=rack.prof_m,
                 fila_idx=0, lado=lado,
             ))
     return resultado

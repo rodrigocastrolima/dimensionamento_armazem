@@ -41,6 +41,7 @@ _CLIENT_FIELD_CONVERTERS = {
     "max_modulos_por_tipologia": dict,
     "empilhamento_por_nivel": tuple,
     "picking_manual_racks": tuple,
+    "pilar_rack_m": dict,
 }
 
 
@@ -442,6 +443,20 @@ class Config:
     # de `max_modulos_por_tipologia`/`oversize_racks`. Vazio = nenhuma
     # garantia de contiguidade (comportamento anterior).
     picking_manual_racks: tuple = ("prateleira",)
+
+    # Largura (m) de UM pilar por tipologia de rack. A `Larg_m` da folha
+    # «Racks» é o vão LIVRE entre pilares (a capacidade usa-a tal e qual); o
+    # pilar só entra no ESPAÇO NO CHÃO: cada módulo passa a ocupar
+    # `Larg_m + pilar` no layout, na sandbox (filas manuais) e na área, para o
+    # armazém simulado espelhar o comprimento real das filas.
+    #
+    # Chave = substring do nome da tipologia (case-insensitive; a primeira que
+    # casar ganha); valor = largura do pilar em metros. Aplicado em
+    # data_access.load_rack_types (vale para Excel e Supabase). Vazio ou
+    # tipologia não listada = sem pilar (comportamento anterior). Ex.: SIA usa
+    # {"porta-paletes": 0.09} (montante típico de 80-100 mm); a Prateleira
+    # Leve (1.80 m) não está lá porque se assume que a medida já é total.
+    pilar_rack_m: dict = field(default_factory=dict)
 
     # ------------------------------------------------------------ multi-cliente
     @classmethod

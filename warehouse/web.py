@@ -95,6 +95,9 @@ def get_racks():
             "alt_nivel_m": r.alt_nivel_m, "niveis": r.niveis,
             "aceita": [lt.value for lt in r.aceita],
             "footprint_m2": r.footprint_m2, "corredor_m": r.corredor_m,
+            # largura de CHÃO de um módulo (vão + pilar): a sandbox desenha as
+            # filas manuais com esta, não com larg_m (vão livre, p/ capacidade)
+            "pilar_m": r.pilar_m, "larg_total_m": r.larg_total_m,
         }
         for r in racks
     ]
@@ -814,7 +817,7 @@ def render_layout(body: ArrangeRequest):
                         nivel["caixas"] = [dict(c, alt_m=min(c["alt_m"], alt_max))
                                            for c in caixas_exemplo]
 
-        cont_w = n * rack.larg_m
+        cont_w = n * rack.larg_total_m
         cont_h = rack.prof_m * (2 if dupla else 1)
         _colocar_bloco_manual(itens_json, float(b.get("x", 0.0)), float(b.get("y", 0.0)),
                               b.get("rot", 0), cont_w, cont_h)

@@ -227,6 +227,25 @@ Como funciona («a própria rack é a superfície», sem palete nem caixa):
 Cuidado ao ler os resultados: um item colocado é um **stack**, não uma peça —
 contar `len(caixas)` dá 16, mas `sum(pecas_nesta_caixa)` dá as 35 reais.
 
+## Decisão fechada: pilar do porta-paletes só conta no espaço de chão
+`Larg_m` da folha «Racks» (2.7 no porta-paletes) é o **vão livre entre pilares**
+— evidência: 3 paletes de 0.8 m = 2.4 m deixam 0.3 m de folgas, e 2.7 m é a
+travessa standard. Os pilares não estavam contados em lado nenhum (passo entre
+módulos = `larg_m`, footprint = 3.24 m²).
+
+`Config.pilar_rack_m` (`{"porta-paletes": 0.09}` no `sia.json`; chave = substring
+do nome) preenche `RackType.pilar_m` em `data_access.load_rack_types` (Excel e
+Supabase). Efeito, só no **chão**: `RackType.larg_total_m` (= vão + pilar) é o
+passo no layout (`layout.py`, fila manual, racks fantasma), a largura da fila
+manual na sandbox (`index.html`, via `larg_total_m` de `/api/racks`) e a área
+(`area_chao_m2`: 3.24 → 3.348 m²; um `Footprint_m2` explícito também leva os
+pilares). A **capacidade** (`racking.py`) continua a usar `larg_m` — somar o
+pilar ao vão inflacionava paletes/caixas.
+- **0.09 m é uma estimativa** (montante típico 80–100 mm): confirmar com a rack real.
+- Conta-se 1 pilar por módulo; o pilar de fecho de cada fila (+1 por fila) não.
+- A Prateleira Leve (1.80 m) está **fora**: assume-se que a medida já é total.
+- Fica por modelar o espaço entre costas das filas duplas (hoje `2 × prof`).
+
 ## Decisão fechada: máximo de módulos empilhados
 `Config.max_modulos_por_tipologia` trava quantos **módulos** — racks inteiros
 uns por cima dos outros na mesma posição de chão — uma tipologia pode empilhar.

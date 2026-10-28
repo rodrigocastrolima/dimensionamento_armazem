@@ -2699,7 +2699,7 @@ function inicializarCanvas() {
       // que lhe deu origem (fila de N posições numeradas).
       if (isRackManual) {
         const tipo = rackTypesCache.find(r => r.nome === b.rack_tipo);
-        const larg = tipo ? tipo.larg_m : (b.w / Math.max(b.n, 1));
+        const larg = tipo ? (tipo.larg_total_m ?? tipo.larg_m) : (b.w / Math.max(b.n, 1));
         const prof = tipo ? tipo.prof_m : (b.dupla ? b.h / 2 : b.h);
         let num = 1;
         const lados = b.dupla ? [0, prof] : [0];
@@ -3131,7 +3131,7 @@ function inicializarCanvas() {
     if (!tipo) { alert("Sem tipologias de rack carregadas ainda -- espera um instante e tenta outra vez."); return; }
     const n = Math.max(parseInt(document.getElementById("rack-manual-n").value) || 1, 1);
     const dupla = document.getElementById("rack-manual-dupla").checked;
-    const w = n * tipo.larg_m;
+    const w = n * (tipo.larg_total_m ?? tipo.larg_m);   // vão + pilar: comprimento real da fila
     const h = tipo.prof_m * (dupla ? 2 : 1);
     const id = `rack_manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nome = `${tipo.nome} (fila ${_filaManualSeq})`;

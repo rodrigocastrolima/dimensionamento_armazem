@@ -9,10 +9,9 @@ from .config import Config
 
 
 def rack_footprint_m2(rack: RackType) -> float:
-    """Área ocupada por um rack (larg_m x prof_m). Usa rack.footprint_m2 se != 0."""
-    if rack.footprint_m2:
-        return rack.footprint_m2
-    return rack.larg_m * rack.prof_m
+    """Área ocupada por um rack: (larg_m + pilar_m) x prof_m, ou rack.footprint_m2
+    (+ pilares) se != 0 -- ver RackType.area_chao_m2."""
+    return rack.area_chao_m2
 
 
 def melhor_pilha_chao(comp_m: float, larg_m: float, alt_m: float, altura_override: str,

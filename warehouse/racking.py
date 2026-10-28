@@ -234,6 +234,7 @@ def com_par_oversize(rack_types: list[RackType], cfg: Config) -> list[RackType]:
         aceita=[*base.aceita, LoadType.OVERSIZE], corredor_m=cfg.oversize_par_corredor_m,
         profundidade_inclui_par=True,
         alturas_niveis_m=base.alturas_niveis_m,
+        pilar_m=base.pilar_m,
     )
     return [*rack_types, sintetico]
 
@@ -275,7 +276,7 @@ def carrinho_cabe_na_rack_oversize(rack_types: list[RackType], cfg: Config,
 
 
 def _rack_footprint_m2(rack: RackType) -> float:
-    return rack.footprint_m2 if rack.footprint_m2 else rack.larg_m * rack.prof_m
+    return rack.area_chao_m2
 
 
 def limite_modulos(rack: RackType, max_por_tipologia: dict | None) -> int | None:
@@ -312,6 +313,7 @@ _CAMPOS_SUBSTRING_RACK = {
     "max_modulos_por_tipologia": lambda cfg: tuple(cfg.max_modulos_por_tipologia),
     "empilhamento_por_nivel": lambda cfg: cfg.empilhamento_por_nivel,
     "picking_manual_racks": lambda cfg: cfg.picking_manual_racks,
+    "pilar_rack_m": lambda cfg: tuple(cfg.pilar_rack_m),
 }
 
 

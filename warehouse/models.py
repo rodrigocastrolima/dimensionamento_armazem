@@ -188,6 +188,28 @@ class RackType:
     # continua a assumir alt_nivel_m uniforme -- a colocação real respeita
     # cada nível em _empacotar_nivel.
     alturas_niveis_m: tuple[float, ...] = ()
+    # Largura de UM pilar (montante) do porta-paletes. `larg_m` é o vão LIVRE
+    # entre pilares (o que a capacidade usa para arrumar paletes/caixas); o
+    # pilar só conta para o ESPAÇO NO CHÃO: cada módulo ocupa `larg_total_m`
+    # no layout/sandbox e na área. 0 = sem pilar (comportamento de sempre).
+    # Não vem da folha «Racks»: preenche-se em data_access.load_rack_types a
+    # partir de Config.pilar_rack_m (por substring do nome da tipologia).
+    pilar_m: float = 0.0
+
+    @property
+    def larg_total_m(self) -> float:
+        """Largura de chão de um módulo: vão livre + 1 pilar (cada módulo leva
+        o pilar partilhado com o vizinho; o pilar de fecho de cada fila, um por
+        fila, não é contado)."""
+        return self.larg_m + self.pilar_m
+
+    @property
+    def area_chao_m2(self) -> float:
+        """Área de chão de um módulo, com pilar. `footprint_m2` (se != 0) é um
+        override do módulo SEM pilar -- os pilares somam-se em largura."""
+        if self.footprint_m2:
+            return self.footprint_m2 * (self.larg_total_m / self.larg_m) if self.larg_m else self.footprint_m2
+        return self.larg_total_m * self.prof_m
 
 
 # --------------------------- OUTPUT ---------------------------

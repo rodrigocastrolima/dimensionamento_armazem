@@ -44,5 +44,8 @@
   "oversize_par_racks": ["porta-paletes"],
   "max_modulos_por_tipologia": {},
   "empilhamento_por_nivel": ["porta-paletes"],
-  "picking_manual_racks": ["prateleira"]
+  "picking_manual_racks": ["prateleira"],
+
+  "_comment_pilar_rack_m": "Largura (m) de 1 pilar por tipologia (substring do nome). Larg_m da folha Racks e o vao LIVRE; o pilar soma-se so no espaco de chao (layout, sandbox, area). Ajustar ao montante real (80-100 mm tipico). Prateleira Leve fora: 1.80 m ja e a medida total.",
+  "pilar_rack_m": {"porta-paletes": 0.09}
 }

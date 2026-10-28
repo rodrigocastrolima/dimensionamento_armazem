@@ -14,5 +14,6 @@
   "oversize_par_racks": [],
   "max_modulos_por_tipologia": {},
   "empilhamento_por_nivel": [],
-  "picking_manual_racks": []
+  "picking_manual_racks": [],
+  "pilar_rack_m": {}
 }

@@ -275,6 +275,7 @@ Excel.
 | `altura_armazem_m` | 0 | pé-direito p/ empilhar módulos (0 = desligado) |
 | `altura_picking_m` | 0 | teto da zona de picking (0 = desligado) |
 | `margem_estrutural_pct` | 0 | paredes/pilares sobre a área útil |
+| `pilar_rack_m` | `{}` (SIA: porta-paletes 0.09) | largura de 1 pilar por tipologia; soma-se à `Larg_m` só no espaço de chão (layout, sandbox, área), não na capacidade |
 
 **Onde mexer para mudar resultados:** dimensões de caixas e corredores →
 Excel («Caixas», «Racks»); alturas de picking/armazém → UI web ou CLI
