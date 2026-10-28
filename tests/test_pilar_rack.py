@@ -98,3 +98,26 @@ def test_largura_max_conta_o_pilar_de_fecho():
     # 3 módulos = 3*2.79 + 0.09 = 8.46 m: cabe em 8.46, não em 8.40
     wl = layout_mod.gerar_layout(_posicoes(r, 6), {r.nome: r}, largura_max_m=8.46)
     assert wl.largura_total_m <= 8.46 + 1e-6
+
+
+def test_fiadas_encostadas_da_mesma_tipologia_partilham_o_pilar():
+    """Só o lado solto leva pilar sozinho: duas fiadas da mesma tipologia lado a
+    lado medem (kA+kB) x total + pilar, não kA x total + kB x total + 2 pilares."""
+    r = _pp(pilar_m=0.09)
+    chunk = lambda x0, k: {                                        # noqa: E731
+        "nome": r.nome, "pilar": 0.09, "largura": k * 2.79 + 0.09, "profundidade": 1.2,
+        "corredor_transicao": 3.0, "corredores": [],
+        "posicoes": [layout_mod.PosicaoLayout(posicao=PosicaoChao(rack_nome=r.nome, indice=i),
+                                              x_m=i * 2.79, y_m=0.0, largura_m=2.79,
+                                              profundidade_m=1.2, fila_idx=0, lado="frente")
+                     for i in range(k)]}
+    a, b = chunk(0, 2), chunk(0, 3)
+    assert abs(layout_mod._largura_prateleira([a, b]) - (5 * 2.79 + 0.09)) < 1e-9
+    pos, _, _, largura, _ = layout_mod._empacotar_tipologias([a, b], 5 * 2.79 + 0.09, 0.0)
+    xs = sorted(round(p.x_m, 4) for p in pos)
+    assert xs == [0.0, 2.79, 5.58, 8.37, 11.16]                  # sem folga entre as duas
+    assert abs(largura - (5 * 2.79 + 0.09)) < 1e-6
+    assert abs(sum(layout_mod._fechos_pilar_m2(pos, {r.nome: r}).values()) - 0.09 * 1.2) < 1e-9
+    # tipologias DIFERENTES não partilham pilar
+    c = dict(b, nome="Outra")
+    assert abs(layout_mod._largura_prateleira([a, c]) - (a["largura"] + c["largura"])) < 1e-9

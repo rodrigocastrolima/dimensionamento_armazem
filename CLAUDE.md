@@ -250,8 +250,10 @@ pilar ao vão inflacionava paletes/caixas.
   área (`WarehouseLayout.fechos_pilar_m2` → `area.floor_area`; sem isso o
   envolvente contava-o como corredor). SIA, dados reais: bloco 10.8 → 11.2 m,
   racks 96.1 → 99.4 m².
-- Duas fiadas lado a lado no shelf packing têm cada uma o seu fecho (tratadas como
-  filas separadas); se fossem uma fila contínua partilhariam um — sobrestima 1 pilar.
+- **Fiadas encostadas partilham o pilar** (`layout._partilha_pilar`): duas fiadas
+  CONSECUTIVAS da mesma tipologia na mesma prateleira do shelf packing encostam-se
+  e a junção tem 1 pilar só — o de 9 cm sozinho existe apenas no lado SOLTO da
+  fila. Tipologias diferentes não partilham. (Antes contava-se 1 fecho por fiada.)
 - A Prateleira Leve (1.80 m) está **fora**: assume-se que a medida já é total.
 - Fica por modelar o espaço entre costas das filas duplas (hoje `2 × prof`).
 

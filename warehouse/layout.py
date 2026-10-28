@@ -162,7 +162,7 @@ def _decompor_em_fiadas(rack: RackType, posicoes_locais: list[PosicaoLayout],
         rebasadas = [dataclasses.replace(pl, y_m=round(pl.y_m - y_base, 4),
                                         fila_idx=fila_idx + offset_fila_idx) for pl in grupo]
         itens.append({
-            "nome": rack.nome, "largura": largura_fiada,
+            "nome": rack.nome, "largura": largura_fiada, "pilar": rack.pilar_m,
             "profundidade": profundidade_fiada, "corredor_transicao": _corredor_m(rack),
             "posicoes": rebasadas, "corredores": [],
         })
@@ -304,6 +304,25 @@ def _fiadas_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     return itens
 
 
+def _partilha_pilar(ant: dict | None, chunk: dict) -> bool:
+    """Duas fiadas CONSECUTIVAS da mesma tipologia (com pilar) numa prateleira
+    ficam encostadas e partilham o pilar de junção: o pilar de fecho só existe
+    no lado solto da fila, nunca entre módulos vizinhos."""
+    pilar = chunk.get("pilar", 0.0)
+    return (ant is not None and pilar > 0 and ant["nome"] == chunk["nome"]
+            and abs(ant.get("pilar", 0.0) - pilar) < 1e-9)
+
+
+def _largura_prateleira(grupo: list[dict]) -> float:
+    """Largura ocupada por uma prateleira, descontando o pilar partilhado em
+    cada junção entre fiadas consecutivas da mesma tipologia."""
+    total, ant = 0.0, None
+    for c in grupo:
+        total += c["largura"] - (c["pilar"] if _partilha_pilar(ant, c) else 0.0)
+        ant = c
+    return total
+
+
 def _empacotar_por_shelf(chunks: list[dict], largura_alvo: float) -> list[list[dict]]:
     """Agrupa as fiadas de todas as tipologias (ver _fiadas_tipologia) em
     'prateleiras': ordena por profundidade decrescente e vai enchendo uma
@@ -324,9 +343,10 @@ def _empacotar_por_shelf(chunks: list[dict], largura_alvo: float) -> list[list[d
     largura_usada: list[float] = []
     for chunk in ordenados:
         for i, usada in enumerate(largura_usada):
-            if usada + chunk["largura"] <= largura_alvo + 1e-6:
+            efetiva = chunk["largura"] - (chunk["pilar"] if _partilha_pilar(prateleiras[i][-1], chunk) else 0.0)
+            if usada + efetiva <= largura_alvo + 1e-6:
                 prateleiras[i].append(chunk)
-                largura_usada[i] += chunk["largura"]
+                largura_usada[i] += efetiva
                 break
         else:
             prateleiras.append([chunk])
@@ -341,7 +361,7 @@ def _medir_empacotamento(chunks: list[dict], largura_alvo: float) -> tuple[float
     comparar candidatos); a materialização final em _empacotar_tipologias
     recalcula a transição exata por par de prateleiras adjacentes."""
     prateleiras = _empacotar_por_shelf(chunks, largura_alvo)
-    largura = max(sum(c["largura"] for c in p) for p in prateleiras)
+    largura = max(_largura_prateleira(p) for p in prateleiras)
     profundidade = sum(max(c["profundidade"] for c in p) for p in prateleiras)
     if len(prateleiras) > 1:
         maior_corredor = max(c["corredor_transicao"] for grupo in prateleiras for c in grupo)
@@ -382,6 +402,13 @@ def _largura_alvo_shelf(chunks: list[dict], largura_max_m: float = 0.0) -> float
         for c in ordenados:
             acumulado += c["largura"]
             candidatos.add(acumulado)
+
+    pilar_max = max((c.get("pilar", 0.0) for c in chunks), default=0.0)
+    if pilar_max > 0 and len(chunks) <= 12:
+        # com pilar partilhado, o limiar em que cabe mais uma fiada baixa 1 pilar
+        # por junção: acrescenta esses limiares (sem pilar nada muda)
+        candidatos |= {c - m * pilar_max for c in list(candidatos)
+                       for m in range(1, min(len(chunks), 4)) if c - m * pilar_max > 0}
 
     melhor_alvo = max(larguras_individuais)
     melhor_perimetro, melhor_area = float("inf"), float("inf")
@@ -426,7 +453,7 @@ def _bloco_tipologia_unico(rack: RackType, posicoes: list[PosicaoChao],
             corredores_bloco.append(Corredor(x_m=0.0, y_m=round(y, 4),
                                              comp_m=round(largura, 4), larg_m=round(corredor, 4)))
             y += corredor
-    return {"nome": rack.nome, "largura": largura, "profundidade": y,
+    return {"nome": rack.nome, "largura": largura, "pilar": rack.pilar_m, "profundidade": y,
            "corredor_transicao": corredor, "posicoes": posicoes_bloco, "corredores": corredores_bloco}
 
 
@@ -451,8 +478,12 @@ def _empacotar_tipologias(chunks: list[dict], largura_alvo: float, y0: float
 
     for i, grupo in enumerate(prateleiras):
         x = 0.0
+        ant = None
         prof_shelf = max(c["profundidade"] for c in grupo)
         for chunk in grupo:
+            if _partilha_pilar(ant, chunk):
+                x -= chunk["pilar"]      # encosta ao módulo anterior: pilar de junção único
+            ant = chunk
             for pl in chunk["posicoes"]:
                 resultado.append(dataclasses.replace(
                     pl, x_m=round(pl.x_m + x, 4), y_m=round(pl.y_m + y_cursor, 4)))
