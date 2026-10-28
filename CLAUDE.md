@@ -588,7 +588,9 @@ folga → **1,61 / 1,61 / 0,81 m** (carga máx. 1,466 / 1,466 / 0,666).
   `Alturas_Niveis_m` = `1.61,1.61,0.81`, «Aceita» só **`PALLET, MEIA`**: não há
   caixas nos porta-paletes. A emparelhada (`com_par_oversize`) herda aceita +
   OVERSIZE e as alturas.
-- **Prateleira Leve**: 1,83 × 0,60 m (a versão anterior tinha 1,80 por engano),
+- **Prateleira Leve**: 1,80 × 0,60 m (2026-10-28: volta a 1,80 por decisão do
+  utilizador; o 1,83 tinha sido posto como «correção» do 1,80; backup
+  `dados/master_data_classificado_v3.xlsx.pre-prateleira-1-8m.bak`),
   **um módulo de 6 níveis** de 0,70 m (prumo 4,2 m) por posição de chão —
   `blocos_empilhados` = floor(4,6 / 4,2) = 1. Não são "2 módulos de 3 níveis".
 - O loader lê `Alturas_Niveis_m` por cabeçalho e rebenta se a contagem não bater
