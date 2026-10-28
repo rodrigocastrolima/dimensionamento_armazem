@@ -19,7 +19,8 @@ from rectpack import newPacker, PackingMode
 from .models import (RackType, BoxType, LoadType, CaixaEspecial,
                      BoxAssignment, RackRequirement, Article,
                      PosicaoChao, BlocoRack, NivelRack, CaixaColocada)
-from .boxing import capacidade_manual, capacidade_reportada, carrinhos_fisicos, eixos_possiveis
+from .boxing import (altura_real_unidade, capacidade_manual, capacidade_reportada,
+                     carrinhos_fisicos, eixos_possiveis)
 from .config import Config
 
 
@@ -40,6 +41,20 @@ def altura_ate_niveis(rack: RackType, n: int) -> float:
     if rack.alturas_niveis_m:
         return sum(rack.alturas_niveis_m[:n])
     return rack.alt_nivel_m * n
+
+
+def cotas_fisicas_niveis(rack: RackType, n_niveis: int, cfg: Config) -> tuple[list[float], float]:
+    """(cota da base de cada um dos `n_niveis` níveis, altura do módulo) FÍSICAS,
+    só para desenhar (3D). Com `alturas_niveis_m` (alturas úteis) o passo de
+    cada nível é útil + folga de manuseio + viga (Config.folga_manuseio_m /
+    viga_m): 1.61 + 0.10 + 0.09 = 1.80 -> vigas a 0 / 1.8 / 3.6 m. Sem elas
+    (uniforme), o passo é `alt_nivel_m`, como sempre."""
+    if rack.alturas_niveis_m:
+        passos = [altura_nivel(rack, n) + cfg.folga_manuseio_m + cfg.viga_m for n in range(n_niveis)]
+    else:
+        passos = [rack.alt_nivel_m] * n_niveis
+    bases = [round(sum(passos[:n]), 4) for n in range(n_niveis)]
+    return bases, round(sum(passos), 4)
 
 
 def rack_capacity(rack: RackType, box: BoxType) -> int:
@@ -108,8 +123,12 @@ def _oversize_plano_altura(rack: RackType, art: Article,
         if por_plano <= 0:
             continue                      # não assenta no nível nesta orientação
 
-        # empilhamento em altura, dentro do nível
-        util = max(rack.alt_nivel_m - folga_altura_m, 0.0)
+        # empilhamento em altura, dentro do nível. Com alturas_niveis_m a
+        # altura do nível já é ÚTIL (folga de manuseio descontada na folha
+        # «Racks»), por isso não se desconta a folga OVERSIZE uma 2.ª vez --
+        # senão o SIDE BODY (1.582 m de pé) não cabia nos 1.61 m.
+        folga = 0.0 if rack.alturas_niveis_m else folga_altura_m
+        util = max(rack.alt_nivel_m - folga, 0.0)
         if vertical > util:
             continue                      # a própria peça, de pé nesta orientação, não cabe no nível
         por_altura = max(math.floor(util / vertical), 1)
@@ -382,6 +401,16 @@ def niveis_efetivos(rack: RackType, altura_armazem_m: float,
         return rack.niveis
     if not _nome_bate(rack, empilhamento_por_nivel):
         return rack.niveis
+    if rack.alturas_niveis_m:
+        # alturas heterogéneas: conta os níveis que cabem em altura acumulada
+        # (ex.: 1.8 + 1.8 + 1.0 cabem em 4.6 m), não floor(pé-direito / maior nível)
+        cabem, acumulado = 0, 0.0
+        for n in range(rack.niveis):
+            acumulado += altura_nivel(rack, n)
+            if acumulado > altura_armazem_m + 1e-9:
+                break
+            cabem += 1
+        return min(max(cabem, 1), rack.niveis)
     cabem = max(math.floor(altura_armazem_m / rack.alt_nivel_m), 1)
     return min(cabem, rack.niveis)
 
@@ -973,6 +1002,16 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             if box is None:
                 continue
             comp_dim, larg_dim, alt_dim = box.ext_comp_m, box.ext_larg_m, box.ext_alt_m
+            if a.load_type in (LoadType.PALLET, LoadType.MEIA) and art is not None:
+                # Altura REAL (deck + carga das peças que lá vão), não a nominal
+                # de uma palete cheia: uma palete baixa cabe num nível mais baixo
+                # (_empacotar_nivel testa a altura nível a nível). O filtro de
+                # tipologias (candidatos_por_tipo/rack_capacity) e o
+                # boxes_per_stack continuam com a nominal.
+                pecas_unidade = capacidade_reportada(
+                    a.load_type, a.pecas_por_unidade, a.sku, _cfg,
+                    manual=capacidade_manual(art, a.load_type))
+                alt_dim = altura_real_unidade(art, box, pecas_unidade, _cfg)
             boxes_per_stack = boxes_per_stack_per_type.get(a.load_type, 1)
 
         # modo picking desligado (altura_picking_m <= 0): nenhum nível é de
@@ -1015,17 +1054,23 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             ))
             boxes_allocated += boxes_in_stack
 
-    # first-fit-decreasing por área (footprint exterior); sort estável
-    # preserva a ordem i=0,1,2.. dentro do mesmo SKU (mesma área).
-    itens.sort(key=lambda it: it.comp_m * it.larg_m, reverse=True)
+    # first-fit-decreasing por área (footprint exterior) e, na mesma área, as
+    # mais ALTAS primeiro: as paletes altas ocupam os níveis onde só elas cabem
+    # e as baixas enchem depois o nível de cima, em vez de lhes roubarem os
+    # lugares de baixo (sem isto o resultado oscilava ±1-2 módulos só com a
+    # ordem dos SKUs). Sort estável: preserva a ordem i=0,1,2.. dentro do
+    # mesmo SKU (mesma área e altura).
+    itens.sort(key=lambda it: (it.comp_m * it.larg_m, it.alt_m), reverse=True)
 
     posicoes_por_tipologia: dict[str, list[PosicaoChao]] = {r.nome: [] for r in rack_types}
     sku_posicao: dict[str, tuple[str, int]] = {}   # sku -> (rack_nome, indice) com picking
     avisos_picking: set[str] = set()
+    nao_colocados: dict[str, int] = {}   # sku -> unidades que não couberam em lado nenhum
 
     for item in itens:
         candidatos = candidatos_por_tipo.get(item.load_type, [])
         if not candidatos:
+            nao_colocados[item.sku] = nao_colocados.get(item.sku, 0) + item.num_boxes_in_stack
             continue
 
         if item.load_type == LoadType.OVERSIZE2:
@@ -1143,14 +1188,23 @@ def allocate_to_racks(assignments: list[BoxAssignment],
             if colocado:
                 avisos_picking.add(item.sku)
 
-        # item não cabe em nada compatível (caixa maior que qualquer rack
-        # compatível) -- fica de fora; não deveria acontecer com dados reais.
+        # item não cabe em nada compatível (caixa/stack maior que qualquer
+        # nível compatível) -- fica de fora, mas nunca em silêncio (aviso abaixo).
+        if not colocado:
+            nao_colocados[item.sku] = nao_colocados.get(item.sku, 0) + item.num_boxes_in_stack
 
     avisos: list[str] = []
     if avisos_picking:
         avisos.append(
             f"{len(avisos_picking)} SKU(s) sem zona de picking disponivel "
             f"(capacidade de picking esgotada) -- caixa alocada em reserva.")
+        print(f"AVISO: {avisos[-1]}")
+    if nao_colocados:
+        lista = ", ".join(f"{sku} ({n})" for sku, n in list(nao_colocados.items())[:8])
+        avisos.append(
+            f"{sum(nao_colocados.values())} unidade(s) de {len(nao_colocados)} SKU(s) NAO "
+            f"colocadas -- não cabem em nenhum nível das tipologias compatíveis: {lista}"
+            + (" ..." if len(nao_colocados) > 8 else ""))
         print(f"AVISO: {avisos[-1]}")
 
     resultado: list[PosicaoChao] = []
@@ -1205,8 +1259,13 @@ def resumo_ocupacao(posicoes: list[PosicaoChao], rack_by_name: dict) -> dict:
 
     Só olha para o que existe: não conta racks fantasma (preview) nem filas
     sandbox (o front end acrescenta essas ao denominador, ver
-    capacidade_por_posicao)."""
+    capacidade_por_posicao).
+
+    `por_nivel` (por tipologia): para cada índice de nível dentro do módulo
+    (1 = base), quantos níveis desses existem, quantos têm carga e quantas
+    unidades lá estão (`num_boxes_in_stack`; num OVERSIZE são peças)."""
     por_tipologia: dict[str, dict] = {}
+    por_nivel: dict[str, dict[int, dict]] = {}
     for pos in posicoes:
         rack = rack_by_name.get(pos.rack_nome)
         if rack is None:
@@ -1223,14 +1282,20 @@ def resumo_ocupacao(posicoes: list[PosicaoChao], rack_by_name: dict) -> dict:
         tem_caixa = False
         for bloco in pos.blocos:
             for nivel in bloco.niveis:
+                n = por_nivel.setdefault(pos.rack_nome, {}).setdefault(nivel.nivel_idx, {
+                    "nivel": nivel.nivel_idx + 1, "niveis": 0, "niveis_ocupados": 0,
+                    "unidades_carga": 0})
+                n["niveis"] += 1
                 t["niveis"] += 1
                 t["area_total_m2"] += area_nivel
                 t["volume_total_m3"] += area_nivel * rack.alt_nivel_m
                 if nivel.caixas:
                     t["niveis_ocupados"] += 1
+                    n["niveis_ocupados"] += 1
                     tem_caixa = True
                 for c in nivel.caixas:
                     t["unidades_carga"] += c.num_boxes_in_stack
+                    n["unidades_carga"] += c.num_boxes_in_stack
                     t["area_usada_m2"] += c.comp_m * c.larg_m
                     t["volume_usado_m3"] += c.comp_m * c.larg_m * c.alt_m
         if tem_caixa:
@@ -1244,6 +1309,8 @@ def resumo_ocupacao(posicoes: list[PosicaoChao], rack_by_name: dict) -> dict:
         for k, v in t.items():
             if k != "rack_nome":
                 total[k] += v
+    for nome, t in por_tipologia.items():
+        t["por_nivel"] = [por_nivel[nome][i] for i in sorted(por_nivel.get(nome, {}))]
 
     def _arredonda(d: dict) -> dict:
         return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in d.items()}

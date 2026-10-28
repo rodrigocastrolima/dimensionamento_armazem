@@ -420,6 +420,9 @@
       <button class="btn-ghost" id="btn-limpar-props" title="Apaga TODOS os objetos colocados e esquece-os (não afeta racks nem zonas)">Limpar</button>
       <span id="props-count" class="dica" style="margin:0 0 7px 2px"></span>
     </div>
+    <label style="display:flex; gap:6px; align-items:center; cursor:pointer; font-size:12px; padding-bottom:6px;" title="Mostra/esconde o nome flutuante por cima de cada equipamento das zonas">
+      <input type="checkbox" id="chk-etiquetas" checked> Etiquetas dos equipamentos
+    </label>
     <span class="grow"></span>
     <div style="display:flex; gap:14px; align-items:flex-end; padding-bottom:6px; font-size:12px; color:var(--text-dim);">
       <!-- Controlos de racks fantasma e de operadores: ESCONDIDOS nesta fase,
@@ -884,6 +887,10 @@ function initViewer() {
     armario: criarArmario,
     pessoa: criarPessoa,
   };
+  document.getElementById("chk-etiquetas").addEventListener("change", (ev) => {
+    mostrarEtiquetas = ev.target.checked;
+    scene.traverse(o => { if (o.userData.isEtiqueta) o.visible = mostrarEtiquetas; });
+  });
   document.getElementById("btn-add-prop").addEventListener("click", () => {
     const tipo = document.getElementById("prop-tipo").value;
     const f = PROP_FACTORIES[tipo];
@@ -1380,6 +1387,14 @@ function criarPalete(comp, prof) {
   return g;
 }
 
+// Cota da base do nível `idx` dentro do módulo. O backend manda as cotas
+// FÍSICAS (cotas_niveis_m: passo = altura útil + folga + viga, ex. vigas a
+// 0 / 1.8 / 3.6 m no porta-paletes); sem elas, níveis uniformes como sempre.
+function cotaNivel(r, idx) {
+  if (r.cotas_niveis_m && idx < r.cotas_niveis_m.length) return r.cotas_niveis_m[idx];
+  return idx * r.altura_m / r.niveis;
+}
+
 function criarEstruturaRack(grupo, r, baseY, altModulo, mats) {
   // mats: override opcional {prumo, viga, prateleira} -- usado pelas racks
   // fantasma (MATS_FANTASMA) para desenhar a MESMA estrutura com um material
@@ -1387,7 +1402,6 @@ function criarEstruturaRack(grupo, r, baseY, altModulo, mats) {
   const matPrumo = mats ? mats.prumo : MAT_PRUMO;
   const matViga = mats ? mats.viga : MAT_VIGA;
   const matPrateleira = mats ? mats.prateleira : MAT_PRATELEIRA;
-  const nivAlt = altModulo / r.niveis;
   // prumos verticais (pares frente/trás, a cada ~1.4 m de largura)
   const nSec = Math.max(1, Math.round(r.larg_m / 1.4));
   for (let i = 0; i <= nSec; i++) {
@@ -1402,7 +1416,7 @@ function criarEstruturaRack(grupo, r, baseY, altModulo, mats) {
   }
   // por nível: 2 vigas laranja + prateleira
   for (let nvl = 0; nvl < r.niveis; nvl++) {
-    const y = baseY + nvl * nivAlt;
+    const y = baseY + cotaNivel(r, nvl);
     const deck = new THREE.Mesh(geoCaixa(r.larg_m, 0.035, r.prof_m), matPrateleira);
     deck.position.set(r.x + r.larg_m / 2, y + 0.0175, r.y + r.prof_m / 2);
     deck.userData.posicao = r;
@@ -1789,6 +1803,376 @@ function desenharObstaculos(obstaculosLayout) {
   }
 }
 
+// ------------------------------- equipamentos das zonas (só 3D)
+// As zonas da folha «Zonas» que são EQUIPAMENTO (QR rack, workstations,
+// estantes...) ganham um modelo procedural por cima da placa colorida do
+// chão, esticado às cotas da própria zona (larg_m x prof_m). A ALTURA vive
+// aqui (`alt` em MODELOS_EQUIPAMENTO), não no master data -- decisão do
+// utilizador: o Excel fica como está. Um modelo PARAMÉTRICO por família.
+// Referencial local: x ao longo de larg_m, z ao longo de prof_m, origem no
+// centro da footprint, no chão; frente = +z. O grupo da zona já vem
+// centrado e rodado (desenharZonas), por isso o modelo não roda sozinho.
+// Zonas sem modelo (receção, esperas, repacking...) continuam só placa.
+const MAT_EQ_METAL = new THREE.MeshStandardMaterial({ color: 0x4f5862, roughness: 0.5, metalness: 0.35 });
+const MAT_EQ_METAL_CLARO = new THREE.MeshStandardMaterial({ color: 0xaab3bc, roughness: 0.45, metalness: 0.3 });
+const MAT_EQ_ESCURO = new THREE.MeshStandardMaterial({ color: 0x2a2d31, roughness: 0.7, metalness: 0.3 });
+const MAT_EQ_TAMPO = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.8 });
+const MAT_EQ_VIDRO = new THREE.MeshStandardMaterial({
+  color: 0xbfe3f2, roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.22, depthWrite: false });
+const MAT_EQ_ECRA = new THREE.MeshStandardMaterial({ color: 0x0f2740, emissive: 0x2d7fd0, emissiveIntensity: 0.55, roughness: 0.3 });
+const MAT_EQ_BRANCO = new THREE.MeshStandardMaterial({ color: 0xeef0f2, roughness: 0.5, metalness: 0.1 });
+const MAT_EQ_CARTAO = new THREE.MeshStandardMaterial({ color: 0xc8a26b, roughness: 0.9 });
+const MAT_EQ_BIN = new THREE.MeshStandardMaterial({ color: 0x2f6fb3, roughness: 0.7 });
+const MAT_EQ_LARANJA = new THREE.MeshStandardMaterial({ color: 0xf07c1e, roughness: 0.5 });
+const MAT_EQ_VERMELHO = new THREE.MeshStandardMaterial({ color: 0xc62828, roughness: 0.5 });
+const MAT_EQ_AZUL = new THREE.MeshStandardMaterial({ color: 0x1f5fa8, roughness: 0.5 });
+const MAT_EQ_LED = new THREE.MeshBasicMaterial({ color: 0x33ff77 });
+
+function _bx(g, w, h, d, mat, x, y, z) {
+  const m = new THREE.Mesh(geoCaixa(Math.max(w, 0.005), Math.max(h, 0.005), Math.max(d, 0.005)), mat);
+  m.position.set(x, y, z);
+  g.add(m);
+  return m;
+}
+function _cil(g, r, h, mat, x, y, z, eixo) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 16), mat);
+  if (eixo === "x") m.rotation.z = Math.PI / 2;
+  if (eixo === "z") m.rotation.x = Math.PI / 2;
+  m.position.set(x, y, z);
+  g.add(m);
+  return m;
+}
+// Rodízio (garfo + roda), assente no chão; topo a ~0,13 m.
+function _rodizio(g, x, z) {
+  _bx(g, 0.07, 0.02, 0.07, MAT_EQ_ESCURO, x, 0.125, z);
+  _bx(g, 0.012, 0.07, 0.05, MAT_EQ_METAL_CLARO, x - 0.025, 0.085, z);
+  _bx(g, 0.012, 0.07, 0.05, MAT_EQ_METAL_CLARO, x + 0.025, 0.085, z);
+  _cil(g, 0.05, 0.035, MAT_RODA, x, 0.05, z, "x");
+}
+// Pseudo-aleatório determinístico (mulberry32): o recheio das estantes não
+// muda a cada redesenho da cena.
+function _rng(seed) {
+  return () => {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function _seedTexto(s) { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) | 0; return h; }
+
+// Mesa base: tampo à altura hT, 4 pernas, prateleira baixa opcional.
+function _mesaBase(g, W, P, hT, comPrateleira = true) {
+  _bx(g, W, 0.04, P, MAT_EQ_TAMPO, 0, hT - 0.02, 0);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1])
+    _bx(g, 0.05, hT - 0.04, 0.05, MAT_EQ_METAL, sx * (W / 2 - 0.05), (hT - 0.04) / 2, sz * (P / 2 - 0.05));
+  if (comPrateleira) _bx(g, W - 0.12, 0.025, P - 0.12, MAT_EQ_METAL, 0, 0.18, 0);
+}
+function _monitor(g, x, yTampo, z, larg = 0.55) {
+  _bx(g, 0.2, 0.015, 0.16, MAT_EQ_ESCURO, x, yTampo + 0.008, z);       // base
+  _bx(g, 0.04, 0.3, 0.03, MAT_EQ_ESCURO, x, yTampo + 0.16, z - 0.03);   // haste
+  _bx(g, larg, larg * 0.6, 0.03, MAT_EQ_ESCURO, x, yTampo + 0.2 + larg * 0.3, z);
+  _bx(g, larg * 0.93, larg * 0.53, 0.005, MAT_EQ_ECRA, x, yTampo + 0.2 + larg * 0.3, z + 0.017);
+}
+
+// QR RACK (quality): armário de VIDRO -- caixilho metálico, painéis de vidro
+// em todas as faces, prateleiras com peças-amostra e placa «QR» no topo.
+function criarArmarioVidroQR(W, P, H, nome) {
+  const g = new THREE.Group();
+  const t = 0.035;
+  _bx(g, W, 0.08, P, MAT_EQ_METAL, 0, 0.04, 0);                       // rodapé
+  _bx(g, W, 0.05, P, MAT_EQ_METAL, 0, H - 0.025, 0);                  // tampo
+  for (const sx of [-1, 1]) for (const sz of [-1, 1])
+    _bx(g, t, H - 0.13, t, MAT_EQ_METAL, sx * (W / 2 - t / 2), 0.08 + (H - 0.13) / 2, sz * (P / 2 - t / 2));
+  const hv = H - 0.13, yv = 0.08 + hv / 2;
+  _bx(g, W - 2 * t, hv, 0.006, MAT_EQ_VIDRO, 0, yv, P / 2 - 0.01);   // frente
+  _bx(g, W - 2 * t, hv, 0.006, MAT_EQ_VIDRO, 0, yv, -P / 2 + 0.01);  // fundo
+  for (const sx of [-1, 1]) _bx(g, 0.006, hv, P - 2 * t, MAT_EQ_VIDRO, sx * (W / 2 - 0.01), yv, 0);
+  _bx(g, 0.012, hv, 0.02, MAT_EQ_METAL, 0, yv, P / 2 - 0.005);          // junta das 2 portas
+  for (const sx of [-1, 1]) _bx(g, 0.02, 0.22, 0.03, MAT_EQ_METAL_CLARO, sx * 0.05, H * 0.5, P / 2 + 0.01);
+  const nNiv = Math.max(2, Math.round((H - 0.3) / 0.4));
+  const rnd = _rng(_seedTexto(nome));
+  for (let i = 1; i <= nNiv; i++) {
+    const y = 0.08 + (hv * i) / (nNiv + 1);
+    _bx(g, W - 2 * t - 0.02, 0.012, P - 2 * t - 0.02, MAT_EQ_VIDRO, 0, y, 0);
+    for (const sz of [-1, 1])                                             // perfis da prateleira (o vidro sozinho não se vê)
+      _bx(g, W - 2 * t, 0.025, 0.02, MAT_EQ_METAL_CLARO, 0, y - 0.006, sz * (P / 2 - t - 0.01));
+    for (const sx of [-1, 1])
+      _bx(g, 0.02, 0.025, P - 2 * t, MAT_EQ_METAL_CLARO, sx * (W / 2 - t - 0.01), y - 0.006, 0);
+    let x = -W / 2 + t + 0.06;
+    while (x < W / 2 - t - 0.12) {                                        // peças-amostra
+      const w = 0.08 + rnd() * 0.12, h = 0.05 + rnd() * 0.15;
+      const mat = [MAT_EQ_METAL_CLARO, MAT_EQ_ESCURO, MAT_EQ_LARANJA, MAT_EQ_AZUL][Math.floor(rnd() * 4)];
+      _bx(g, w, h, 0.1 + rnd() * 0.15, mat, x + w / 2, y + 0.006 + h / 2, (rnd() - 0.5) * (P * 0.4));
+      x += w + 0.05 + rnd() * 0.06;
+    }
+  }
+  const placa = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.55, 0.12), new THREE.MeshBasicMaterial({
+    map: _canvasTex((ctx, w, h) => {
+      ctx.fillStyle = "#1f5fa8"; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = "#fff"; ctx.font = "bold 44px system-ui, sans-serif";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText("QUALITY", w / 2, h / 2 + 2);
+    }, 256, 56) }));
+  placa.position.set(0, H - 0.11, P / 2 + 0.004);
+  g.add(placa);
+  return g;
+}
+
+// Workstation de inspeção: bancada, monitor, teclado, scanner de mão e
+// candeeiro de braço.
+function criarWorkstation(W, P, H) {
+  const g = new THREE.Group();
+  _mesaBase(g, W, P, H);
+  _monitor(g, -W * 0.15, H, -P / 2 + 0.18);
+  _bx(g, 0.45, 0.02, 0.15, MAT_EQ_ESCURO, -W * 0.15, H + 0.01, -P / 2 + 0.42);   // teclado
+  _bx(g, 0.06, 0.04, 0.16, MAT_EQ_LARANJA, W * 0.12, H + 0.02, -P / 2 + 0.4);    // scanner de mão
+  _bx(g, 0.04, 0.12, 0.04, MAT_EQ_ESCURO, W * 0.12, H + 0.06, -P / 2 + 0.3);
+  _cil(g, 0.012, 0.6, MAT_EQ_METAL_CLARO, W / 2 - 0.15, H + 0.3, -P / 2 + 0.1);  // candeeiro
+  const braco = _bx(g, 0.02, 0.02, 0.45, MAT_EQ_METAL_CLARO, W / 2 - 0.15, H + 0.6, -P / 2 + 0.3);
+  braco.rotation.x = -0.25;
+  _bx(g, 0.18, 0.04, 0.12, MAT_EQ_BRANCO, W / 2 - 0.15, H + 0.52, -P / 2 + 0.5);
+  _bx(g, W * 0.3, 0.12, P * 0.4, MAT_EQ_CARTAO, W * 0.3, H + 0.06, 0.05);         // peça em inspeção (caixa)
+  return g;
+}
+
+// Test bench: bancada com montante traseiro de instrumentos (ecrãs e
+// equipamentos de medida numa prateleira) e um equipamento em teste.
+function criarTestBench(W, P, H) {
+  const g = new THREE.Group();
+  _mesaBase(g, W, P, H);
+  const hM = 0.75;                                                     // montante acima do tampo
+  for (const sx of [-1, 1]) _bx(g, 0.05, hM, 0.05, MAT_EQ_METAL, sx * (W / 2 - 0.05), H + hM / 2, -P / 2 + 0.05);
+  _bx(g, W - 0.1, 0.03, 0.3, MAT_EQ_METAL, 0, H + 0.45, -P / 2 + 0.17);           // prateleira de instrumentos
+  _bx(g, W - 0.1, 0.04, 0.06, MAT_EQ_METAL, 0, H + hM, -P / 2 + 0.05);
+  const nInst = Math.max(2, Math.floor((W - 0.2) / 0.45));
+  for (let i = 0; i < nInst; i++) {
+    const x = -W / 2 + 0.1 + (i + 0.5) * (W - 0.2) / nInst;
+    _bx(g, 0.36, 0.18, 0.26, MAT_EQ_BRANCO, x, H + 0.465 + 0.09, -P / 2 + 0.17);   // instrumento
+    _bx(g, 0.16, 0.1, 0.005, MAT_EQ_ECRA, x - 0.07, H + 0.465 + 0.1, -P / 2 + 0.303);
+    for (let k = 0; k < 3; k++) _bx(g, 0.02, 0.02, 0.01, MAT_EQ_LED, x + 0.06 + k * 0.035, H + 0.5, -P / 2 + 0.303);
+  }
+  _bx(g, 0.5, 0.3, 0.35, MAT_EQ_ESCURO, W * 0.18, H + 0.15, P * 0.08);           // equipamento em teste
+  _cil(g, 0.01, 0.6, MAT_EQ_VERMELHO, W * 0.02, H + 0.012, P * 0.05, "x");        // cabos de teste
+  _cil(g, 0.01, 0.6, MAT_EQ_ESCURO, W * 0.02, H + 0.012, P * 0.12, "x");
+  _monitor(g, -W * 0.3, H, -P / 2 + 0.45, 0.45);
+  return g;
+}
+
+// Mesa da impressora de etiquetas: impressora com rolo de etiquetas, PC por
+// baixo, monitor pequeno e scanner.
+function criarMesaImpressora(W, P, H) {
+  const g = new THREE.Group();
+  _mesaBase(g, W, P, H, false);
+  _bx(g, 0.26, 0.24, 0.32, MAT_EQ_BRANCO, -W * 0.22, H + 0.12, -0.05);            // impressora
+  _bx(g, 0.26, 0.04, 0.32, MAT_EQ_AZUL, -W * 0.22, H + 0.26, -0.05);
+  _bx(g, 0.1, 0.004, 0.09, MAT_EQ_BRANCO, -W * 0.22, H + 0.08, 0.15);             // etiqueta a sair
+  _cil(g, 0.06, 0.1, MAT_EQ_BRANCO, -W * 0.22, H + 0.06, -0.3, "x");              // rolo de reserva
+  _monitor(g, W * 0.18, H, -P / 2 + 0.15, 0.42);
+  _bx(g, 0.06, 0.04, 0.16, MAT_EQ_LARANJA, W * 0.3, H + 0.02, P / 2 - 0.15);      // scanner
+  _bx(g, 0.2, 0.42, 0.42, MAT_EQ_ESCURO, W / 2 - 0.15, 0.21, -P / 2 + 0.25);       // PC (torre) por baixo
+  _bx(g, 0.02, 0.02, 0.005, MAT_EQ_LED, W / 2 - 0.1, 0.38, -P / 2 + 0.04 + 0.42);
+  return g;
+}
+
+// Estante metálica de prateleiras (MS + tools): montantes, prateleiras e
+// recheio de caixas de cartão e bins azuis.
+function criarEstanteEq(W, P, H, nome) {
+  const g = new THREE.Group();
+  const nSec = Math.max(1, Math.round(W / 1.0));
+  for (let i = 0; i <= nSec; i++) {
+    const x = Math.min(Math.max(-W / 2 + (W * i) / nSec, -W / 2 + 0.025), W / 2 - 0.025);
+    for (const sz of [-1, 1]) _bx(g, 0.04, H, 0.04, MAT_EQ_AZUL, x, H / 2, sz * (P / 2 - 0.02));
+  }
+  const nNiv = Math.max(3, Math.round(H / 0.4));
+  const rnd = _rng(_seedTexto(nome));
+  for (let i = 0; i < nNiv; i++) {
+    const y = 0.1 + (i * (H - 0.15)) / (nNiv - 1);
+    _bx(g, W, 0.025, P, MAT_EQ_METAL_CLARO, 0, y, 0);
+    if (i === nNiv - 1) break;
+    const hLivre = (H - 0.15) / (nNiv - 1) - 0.06;
+    let x = -W / 2 + 0.05;
+    while (x < W / 2 - 0.2) {
+      const bin = rnd() < 0.45;
+      const w = bin ? 0.3 : 0.25 + rnd() * 0.2;
+      const h = Math.min(hLivre, bin ? 0.15 : 0.15 + rnd() * 0.15);
+      if (x + w > W / 2 - 0.05) break;
+      if (rnd() < 0.82) _bx(g, w * 0.95, h, P * (bin ? 0.85 : 0.6 + rnd() * 0.3), bin ? MAT_EQ_BIN : MAT_EQ_CARTAO, x + w / 2, y + 0.0125 + h / 2, 0);
+      x += w + 0.03;
+    }
+  }
+  return g;
+}
+
+// Pack under test: bateria (pack plano) sobre suporte baixo, com ligadores
+// e cabos de alta tensão laranja e sinalética de perigo.
+function criarTestPack(W, P, H) {
+  const g = new THREE.Group();
+  const hS = Math.max(H * 0.45, 0.15);                                 // suporte
+  for (const sx of [-1, 1]) for (const sz of [-1, 1])
+    _bx(g, 0.06, hS, 0.06, MAT_EQ_METAL, sx * (W / 2 - 0.05), hS / 2, sz * (P / 2 - 0.05));
+  _bx(g, W, 0.05, P, MAT_EQ_METAL, 0, hS, 0);
+  const hP = Math.max(H - hS - 0.025, 0.1);
+  _bx(g, W * 0.9, hP, P * 0.88, MAT_EQ_ESCURO, 0, hS + 0.025 + hP / 2, 0);         // pack
+  _bx(g, W * 0.9, 0.01, P * 0.88, MAT_EQ_AZUL, 0, hS + 0.025 + hP + 0.005, 0);
+  for (const sx of [-1, 1]) _bx(g, 0.1, 0.06, 0.08, MAT_EQ_LARANJA, sx * 0.12, hS + 0.025 + hP + 0.04, P * 0.3);   // ligadores HV
+  for (const sx of [-1, 1]) {
+    const cabo = _cil(g, 0.018, P * 0.5, MAT_EQ_LARANJA, sx * 0.12, hS + 0.025 + hP + 0.05, P * 0.3 + P * 0.25, "z");
+    cabo.rotation.x = Math.PI / 2 + 0.5;
+  }
+  const aviso = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.14), new THREE.MeshBasicMaterial({
+    transparent: true, map: _canvasTex((ctx, w, h) => {
+      ctx.fillStyle = "#f2c200"; ctx.beginPath(); ctx.moveTo(w / 2, 4); ctx.lineTo(w - 4, h - 4); ctx.lineTo(4, h - 4); ctx.closePath(); ctx.fill();
+      ctx.lineWidth = 6; ctx.strokeStyle = "#111"; ctx.stroke();
+      ctx.fillStyle = "#111"; ctx.font = "bold 70px system-ui"; ctx.textAlign = "center"; ctx.fillText("⚡", w / 2, h - 18);
+    }, 128, 112) }));
+  aviso.position.set(0, hS + 0.025 + hP / 2, P * 0.44 + 0.002);
+  g.add(aviso);
+  return g;
+}
+
+// HVAC load stand: máquina de carga de A/C -- armário com rodas, painel
+// inclinado com 2 manómetros (baixa azul / alta vermelha) e ecrã, pega de
+// empurrar e mangueiras enroladas de lado.
+function criarHvac(W, P, H) {
+  const g = new THREE.Group();
+  const wc = Math.min(W * 0.75, 0.62), pc = Math.min(P * 0.75, 0.55);
+  const hc = H - 0.25;
+  _bx(g, wc, hc, pc, MAT_EQ_BRANCO, 0, 0.13 + hc / 2, 0);
+  _bx(g, wc + 0.01, 0.1, pc + 0.01, MAT_EQ_AZUL, 0, 0.13 + hc * 0.35, 0);           // faixa
+  const painel = _bx(g, wc * 0.95, 0.3, 0.05, MAT_EQ_ESCURO, 0, 0.13 + hc + 0.1, pc / 2 - 0.08);
+  painel.rotation.x = -0.6;
+  for (const [sx, mat] of [[-1, MAT_EQ_AZUL], [1, MAT_EQ_VERMELHO]]) {
+    const m = _cil(g, 0.065, 0.03, mat, sx * wc * 0.24, 0.13 + hc + 0.12, pc / 2 - 0.05, "z");
+    m.rotation.x = Math.PI / 2 - 0.6;
+    const f = _cil(g, 0.055, 0.032, MAT_EQ_BRANCO, sx * wc * 0.24, 0.13 + hc + 0.12, pc / 2 - 0.045, "z");
+    f.rotation.x = Math.PI / 2 - 0.6;
+  }
+  _bx(g, 0.14, 0.06, 0.01, MAT_EQ_ECRA, 0, 0.13 + hc + 0.03, pc / 2 + 0.005);
+  _cil(g, 0.015, wc, MAT_EQ_METAL_CLARO, 0, H + 0.02, -pc / 2 + 0.02, "x");          // pega
+  for (const sx of [-1, 1]) _bx(g, 0.025, 0.3, 0.025, MAT_EQ_METAL_CLARO, sx * (wc / 2 - 0.02), H - 0.13, -pc / 2 + 0.02);
+  for (const sx of [-1, 1]) _cil(g, 0.09, 0.05, MAT_RODA, sx * (wc / 2 + 0.03), 0.09, -pc / 2 + 0.1, "x");   // rodas traseiras
+  for (const sx of [-1, 1]) _rodizio(g, sx * (wc / 2 - 0.08), pc / 2 - 0.08);
+  for (const [dz, mat] of [[-0.08, MAT_EQ_AZUL], [0.08, MAT_EQ_VERMELHO]]) {      // mangueiras enroladas
+    const anel = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.012, 8, 24), mat);
+    anel.rotation.y = Math.PI / 2;
+    anel.position.set(wc / 2 + 0.02, 0.13 + hc * 0.6, dz);
+    g.add(anel);
+  }
+  return g;
+}
+
+// Comboio logístico de europaletes (ZONA DE ESPERA): rebocador elétrico
+// (chassis amarelo, banco, volante, arco de proteção, pirilampo) + tantos
+// reboques de plataforma quantos couberem no comprimento da zona (máx. 5),
+// cada um com uma europalete carregada de caixas filmadas. Frente = +x;
+// o comboio fica centrado na zona.
+const MAT_EQ_REBOCADOR = new THREE.MeshStandardMaterial({ color: 0xf2b705, roughness: 0.45, metalness: 0.35 });
+const MAT_EQ_FILME = new THREE.MeshStandardMaterial({
+  color: 0xe8f1f5, roughness: 0.2, transparent: true, opacity: 0.28, depthWrite: false });
+const MAT_EQ_PIRILAMPO = new THREE.MeshStandardMaterial({ color: 0xff8a1e, emissive: 0xff7a10, emissiveIntensity: 0.9 });
+function _rodaComboio(g, x, z, r = 0.14, larg = 0.08) {
+  _cil(g, r, larg, MAT_RODA, x, r, z, "z");
+  _cil(g, r * 0.5, larg + 0.01, MAT_EQ_METAL_CLARO, x, r, z, "z");
+}
+function criarComboioEuropaletes(W, P, H, nome) {
+  const g = new THREE.Group();
+  const LT = 1.7, LR = 1.4, GAP = 0.45;              // rebocador, reboque, engate
+  const n = Math.max(1, Math.min(5, Math.floor((W - LT - 0.2) / (LR + GAP))));
+  const L = LT + n * (LR + GAP);
+  const xFrente = L / 2;
+  const larg = Math.min(0.95, P * 0.9);
+
+  // ---- rebocador (x de xFrente - LT a xFrente)
+  const xt = xFrente - LT / 2;
+  _bx(g, LT, 0.35, larg, MAT_EQ_REBOCADOR, xt, 0.32, 0);                  // chassis
+  _bx(g, 0.55, 0.45, larg * 0.95, MAT_EQ_REBOCADOR, xFrente - 0.3, 0.72, 0); // capô (frente)
+  _bx(g, 0.45, 0.08, larg * 0.6, MAT_EQ_ESCURO, xt - 0.15, 0.55, 0);      // banco
+  _bx(g, 0.08, 0.45, larg * 0.6, MAT_EQ_ESCURO, xt - 0.4, 0.77, 0);       // encosto
+  const coluna = _bx(g, 0.05, 0.4, 0.05, MAT_EQ_ESCURO, xFrente - 0.62, 1.05, 0);
+  coluna.rotation.z = 0.35;
+  _cil(g, 0.15, 0.03, MAT_EQ_ESCURO, xFrente - 0.68, 1.25, 0);           // volante
+  const hTejadilho = Math.max(Math.min(H, 2.1), 1.9);
+  for (const sx of [xt - 0.55, xFrente - 0.45]) for (const sz of [-1, 1])  // arco de proteção
+    _bx(g, 0.05, hTejadilho - 0.5, 0.05, MAT_EQ_ESCURO, sx, 0.5 + (hTejadilho - 0.5) / 2, sz * (larg / 2 - 0.05));
+  _bx(g, 1.05, 0.05, larg, MAT_EQ_ESCURO, xt + 0.05, hTejadilho, 0);
+  _cil(g, 0.06, 0.12, MAT_EQ_PIRILAMPO, xt - 0.3, hTejadilho + 0.08, 0); // pirilampo
+  _rodaComboio(g, xFrente - 0.3, 0, 0.17, 0.12);                          // roda dianteira (triciclo)
+  for (const sz of [-1, 1]) _rodaComboio(g, xt - 0.5, sz * (larg / 2 - 0.02), 0.18, 0.12);
+  _bx(g, 0.25, 0.06, 0.08, MAT_EQ_METAL, xFrente - LT - 0.12, 0.3, 0);    // engate traseiro
+
+  // ---- reboques com europalete
+  const rnd = _rng(_seedTexto(nome));
+  for (let i = 0; i < n; i++) {
+    const xr = xFrente - LT - GAP - LR / 2 - i * (LR + GAP);
+    _bx(g, GAP + 0.1, 0.05, 0.06, MAT_EQ_METAL, xr + LR / 2 + GAP / 2, 0.3, 0);   // barra de reboque
+    _bx(g, LR, 0.06, larg, MAT_EQ_METAL, xr, 0.33, 0);                              // plataforma
+    for (const sz of [-1, 1]) _bx(g, LR, 0.08, 0.04, MAT_EQ_REBOCADOR, xr, 0.4, sz * (larg / 2 - 0.02));  // guardas laterais
+    _bx(g, 0.04, 0.5, larg, MAT_EQ_METAL, xr + LR / 2 - 0.02, 0.6, 0);             // batente da frente
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) _rodaComboio(g, xr + sx * (LR / 2 - 0.2), sz * (larg / 2 - 0.08), 0.13, 0.07);
+    const pal = criarPalete(1.2, 0.8);
+    pal.position.set(xr, 0.36, 0);
+    g.add(pal);
+    const hCarga = 0.5 + rnd() * 0.6, yBase = 0.36 + 0.12;                         // caixas + filme
+    const nx = 3, nz = 2, nAlt = Math.max(1, Math.round(hCarga / 0.3));
+    for (let a = 0; a < nAlt; a++) for (let ix = 0; ix < nx; ix++) for (let iz = 0; iz < nz; iz++) {
+      if (a === nAlt - 1 && rnd() < 0.25) continue;
+      _bx(g, 0.38, 0.28, 0.38, MAT_EQ_CARTAO, xr - 0.4 + ix * 0.4, yBase + 0.14 + a * 0.3, -0.2 + iz * 0.4);
+    }
+    _bx(g, 1.22, nAlt * 0.3, 0.82, MAT_EQ_FILME, xr, yBase + nAlt * 0.15, 0);
+  }
+  return g;
+}
+
+// Zona -> modelo: regras por palavra-chave no NOME da zona (sem acentos,
+// minúsculas); a 1.ª que bate ganha. `alt` = altura usada (não há
+// Altura_m no master data -- fica aqui, por decisão do utilizador).
+const _semAcentos = s => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const MODELOS_EQUIPAMENTO = [
+  { re: /qr rack/, nome: "Armário de vidro (QR / quality)", alt: 2.0, criar: criarArmarioVidroQR },
+  { re: /workstation/, nome: "Workstation de inspeção", alt: 0.9, criar: criarWorkstation },
+  { re: /test bench/, nome: "Test bench", alt: 0.9, criar: criarTestBench },
+  { re: /mesa impressora/, nome: "Mesa com impressora de etiquetas", alt: 0.75, criar: criarMesaImpressora },
+  { re: /\bestante\b/, nome: "Estante de prateleiras", alt: 2.0, criar: criarEstanteEq },
+  { re: /pack under test|test pack/, nome: "Pack em teste (bateria)", alt: 0.5, criar: criarTestPack },
+  { re: /hvac/, nome: "Máquina de carga HVAC", alt: 1.05, criar: criarHvac },
+  { re: /zona de espera/, nome: "Comboio logístico de europaletes", alt: 2.0, criar: criarComboioEuropaletes },
+];
+function modeloEquipamento(nomeZona) {
+  const n = _semAcentos(nomeZona || "");
+  return MODELOS_EQUIPAMENTO.find(m => m.re.test(n)) || null;
+}
+
+// Etiqueta flutuante (sprite: vira-se sempre para a câmara) com o nome do
+// equipamento, quebrada em linhas -- o nome também está no painel ao clicar.
+let mostrarEtiquetas = true;
+function etiquetaSprite(texto, corCss) {
+  const linhas = [];
+  for (const p of texto.split(/\s+/)) {
+    const ult = linhas[linhas.length - 1];
+    if (ult && (ult + " " + p).length <= 22) linhas[linhas.length - 1] = ult + " " + p;
+    else linhas.push(p);
+  }
+  const fs = 34, padX = 18, padY = 12, lh = fs * 1.18;
+  const medir = document.createElement("canvas").getContext("2d");
+  medir.font = `600 ${fs}px system-ui, sans-serif`;
+  const larg = Math.ceil(Math.max(...linhas.map(l => medir.measureText(l).width)) + padX * 2 + 10);
+  const alt = Math.ceil(linhas.length * lh + padY * 2);
+  const tex = _canvasTex((ctx, w, h) => {
+    ctx.fillStyle = "rgba(255,255,255,0.93)";
+    ctx.beginPath(); ctx.roundRect(3, 3, w - 6, h - 6, 14); ctx.fill();
+    ctx.lineWidth = 6; ctx.strokeStyle = corCss; ctx.stroke();
+    ctx.fillStyle = "#1a1a1a"; ctx.font = `600 ${fs}px system-ui, sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    linhas.forEach((l, i) => ctx.fillText(l, w / 2, padY + lh * (i + 0.5)));
+  }, larg, alt);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthWrite: false }));
+  const escala = 0.0042;   // m por pixel do canvas: texto de ~14 cm de altura
+  sp.scale.set(larg * escala, alt * escala, 1);
+  sp.userData.isEtiqueta = true;
+  sp.visible = mostrarEtiquetas;
+  return sp;
+}
+
 function desenharZonas(zonasLayout) {
   // zonas como marcação pintada no pavimento: preenchimento translúcido,
   // contorno sólido e nome estampado (stencil), como tinta industrial.
@@ -1830,6 +2214,28 @@ function desenharZonas(zonasLayout) {
     placa.position.y = 0.03;
     placa.userData.zona = z;
     grupo.add(placa);
+
+    // Equipamento: modelo às cotas da zona por cima da placa (que fica como
+    // footprint colorida) + etiqueta com o nome. O grupo já está rodado.
+    const modelo = modeloEquipamento(z.nome);
+    if (modelo) {
+      const H = modelo.alt;
+      const obj = modelo.criar(z.larg_m, z.prof_m, H, z.nome);
+      obj.traverse(o => {
+        if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.userData.zona = z; }
+      });
+      grupo.add(obj);
+      grupo.userData.modeloObj = obj;
+      z._modelo3d = modelo.nome;
+      z._altura3d = H;
+      const sp = etiquetaSprite(z.nome.replace(/\s*\(.*?\)\s*/g, " ").trim(), cor);
+      // acima do ponto MAIS ALTO do modelo (monitores, instrumentos e
+      // candeeiros passam da altura nominal H do tampo)
+      const topo = new THREE.Box3().setFromObject(obj).max.y;
+      sp.position.y = topo + 0.2 + sp.scale.y / 2;
+      sp.userData.zona = z;
+      grupo.add(sp);
+    }
 
     scene.add(grupo);
   }
@@ -1984,13 +2390,13 @@ function desenharLayout(layout) {
     grupo.userData.isRackGroup = true;
 
     const altModulo = r.altura_m;
-    const altNivel = r.altura_m / r.niveis;
 
     for (const bloco of r.blocos) {
       const baseModulo = bloco.bloco_idx * altModulo;
       criarEstruturaRack(grupo, r, baseModulo, altModulo);
       for (const nivel of bloco.niveis) {
-        const baseY = baseModulo + nivel.nivel_idx * altNivel;
+        const baseY = baseModulo + cotaNivel(r, nivel.nivel_idx);
+        const altNivel = cotaNivel(r, nivel.nivel_idx + 1) - cotaNivel(r, nivel.nivel_idx);
         desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY);
       }
     }
@@ -2014,12 +2420,12 @@ function desenharLayoutFantasma(layoutFantasma) {
     grupo.visible = visivel;
 
     const altModulo = r.altura_m;
-    const altNivel = r.altura_m / r.niveis;
     for (const bloco of r.blocos) {
       const baseModulo = bloco.bloco_idx * altModulo;
       criarEstruturaRack(grupo, r, baseModulo, altModulo, MATS_FANTASMA);
       for (const nivel of bloco.niveis) {
-        const baseY = baseModulo + nivel.nivel_idx * altNivel;
+        const baseY = baseModulo + cotaNivel(r, nivel.nivel_idx);
+        const altNivel = cotaNivel(r, nivel.nivel_idx + 1) - cotaNivel(r, nivel.nivel_idx);
         desenharCaixasDoNivel(grupo, r, nivel, altNivel, baseY);
       }
     }
@@ -2099,6 +2505,8 @@ function mostrarPainelZona(zona) {
   let html = `<h4>Zona — ${zona.nome}</h4>`;
   html += `<p><b>Categoria:</b> ${zona.categoria}<br>`;
   html += `<b>Área:</b> ${zona.area_m2.toFixed(2)} m²</p>`;
+  if (zona._modelo3d)
+    html += `<p><b>Equipamento 3D:</b> ${zona._modelo3d}<br><b>Cotas:</b> ${zona.larg_m.toFixed(2)} × ${zona.prof_m.toFixed(2)} × ${zona._altura3d.toFixed(2)} m <span style="color:#999">(altura do simulador)</span></p>`;
   if (zona.justificacao) html += `<p style="color:#999">${zona.justificacao}</p>`;
   painel.innerHTML = html;
 }
@@ -2503,6 +2911,17 @@ function inicializarCanvas() {
     html += `<span>Área de prateleira</span><b>${pct(o.areaUsada, o.area).toFixed(1)}%</b>`;
     html += `<span>Volume</span><b>${pct(o.volumeUsado, o.volume).toFixed(1)}%</b>`;
     html += `</div>`;
+    // Unidades por nível (1 = base) de cada tipologia, só dos racks reais
+    // (racking.resumo_ocupacao.por_nivel).
+    const porNivel = (lastGerarData.ocupacao.por_tipologia || []).filter(t => (t.por_nivel || []).length);
+    if (porNivel.length) {
+      html += `<div class="ocup-linhas" style="margin-top:6px">`;
+      for (const t of porNivel) {
+        const niv = t.por_nivel.map(n => `N${n.nivel}: ${n.unidades_carga}`).join(" · ");
+        html += `<span>${t.rack_nome}</span><b>${niv}</b>`;
+      }
+      html += `</div><div style="font-size:11px;color:#999">unidades por nível (N1 = base)</div>`;
+    }
     if (o.sbFilas) {
       html += `<div class="ocup-sandbox">+ ${o.sbFilas} fila${o.sbFilas === 1 ? "" : "s"} sandbox: `
             + `${o.sbPosicoes} posições, ${o.sbNiveis} níveis vazios (já contados acima)`;

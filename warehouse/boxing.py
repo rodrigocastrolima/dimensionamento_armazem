@@ -105,11 +105,11 @@ def eixos_possiveis(altura_override: str) -> range | tuple[int, ...]:
     return range(3) if eixo is None else (eixo,)
 
 
-def _pecas_no_envelope(article: Article, box: BoxType, iv: int,
-                       dims: tuple[float, float, float], fator_empilhamento: float,
-                       fill_factor: float, tolerancia_lateral_m: float = 0.0) -> int:
-    """Peças no envelope 3D com `dims[iv]` como cota vertical e as outras duas
-    no plano.
+def _plano_e_camadas(article: Article, box: BoxType, iv: int,
+                     dims: tuple[float, float, float], fator_empilhamento: float,
+                     fill_factor: float, tolerancia_lateral_m: float = 0.0) -> tuple[int, int]:
+    """(peças por plano, nº máximo de camadas) no envelope 3D com `dims[iv]`
+    como cota vertical e as outras duas no plano. (0, 0) se não couber.
 
     Por eixo (vertical OU do plano, o mesmo teste para os 3): se for o eixo
     de aninhagem do artigo (`Article.eixo_aninhagem`), usa `pecas_no_eixo`
@@ -133,7 +133,7 @@ def _pecas_no_envelope(article: Article, box: BoxType, iv: int,
     n_altura = (pecas_no_eixo(Da, vert, True, fator_empilhamento) if iv == eixo_a
                else pieces_in_stack(Da, vert, article.empilhamento))
     if n_altura == 0:
-        return 0
+        return 0, 0
 
     an_a, an_b = ja == eixo_a, jb == eixo_a
     op1 = (pecas_no_eixo(Dc, a, an_a, fator_empilhamento) *
@@ -142,8 +142,17 @@ def _pecas_no_envelope(article: Article, box: BoxType, iv: int,
            pecas_no_eixo(Dl, a, an_a, fator_empilhamento)) if b <= Dc and a <= Dl else 0
     por_plano_teorico = max(op1, op2)
     if por_plano_teorico == 0:
-        return 0
-    por_plano = max(math.floor(por_plano_teorico * fill_factor), 1)
+        return 0, 0
+    return max(math.floor(por_plano_teorico * fill_factor), 1), n_altura
+
+
+def _pecas_no_envelope(article: Article, box: BoxType, iv: int,
+                       dims: tuple[float, float, float], fator_empilhamento: float,
+                       fill_factor: float, tolerancia_lateral_m: float = 0.0) -> int:
+    """Peças no envelope 3D com `dims[iv]` como cota vertical (plano x
+    camadas, ver `_plano_e_camadas`)."""
+    por_plano, n_altura = _plano_e_camadas(article, box, iv, dims, fator_empilhamento,
+                                           fill_factor, tolerancia_lateral_m)
     return por_plano * n_altura
 
 
@@ -179,6 +188,47 @@ def pieces_per_box(article: Article, box: BoxType,
         por_peso = por_geometria  # peso desconhecido: não cortar
 
     return min(por_geometria, por_peso)
+
+
+def altura_real_unidade(article: Article, box: BoxType, pecas: int, cfg: Config) -> float:
+    """Altura REAL de uma unidade de carga com `pecas` peças lá dentro: deck
+    (`ext_alt_m - int_alt_m`) + altura da carga. Usada para PALLET/MEIA, cuja
+    altura nominal do catálogo (`ext_alt_m`) é a de uma palete CHEIA até ao
+    topo -- uma palete com pouca carga cabe num nível mais baixo.
+
+    Mesma geometria de `pieces_per_box` (`_plano_e_camadas`, com
+    fill_factor_plano e a tolerância lateral da palete). Orientação: a que
+    leva mais peças no total (corte por peso incluído); em empate, a que dá a
+    carga mais baixa. Camadas = ceil(peças / peças_por_plano), no máximo as
+    que cabem no envelope. Altura da carga = camadas x cota vertical, ou, se a
+    cota vertical for o eixo de aninhagem, cota x (1 + (camadas - 1) x
+    fator_empilhamento) -- o menor dos dois, como o `max` de `pecas_no_eixo`.
+    Sem encaixe possível (não devia acontecer numa unidade já escolhida)
+    devolve a altura nominal."""
+    tol = cfg.pallet_tolerancia_lateral_m if box.nome in _TIPOS_COM_TOLERANCIA_PALETE else 0.0
+    deck = max(box.ext_alt_m - box.int_alt_m, 0.0)
+    dims = (article.comp_m, article.larg_m, article.alt_m)
+    eixo_a = eixo_forcado(article.eixo_aninhagem)
+    por_peso = math.floor(box.peso_max_kg / article.peso_kg) if article.peso_kg > 0 else None
+
+    melhor: tuple[tuple[int, float], float] | None = None   # ((-total, carga), carga)
+    for iv in eixos_possiveis(article.altura_override):
+        por_plano, max_camadas = _plano_e_camadas(article, box, iv, dims, cfg.fator_empilhamento,
+                                                  cfg.fill_factor_plano, tol)
+        if por_plano == 0:
+            continue
+        total = por_plano * max_camadas if por_peso is None else min(por_plano * max_camadas, por_peso)
+        camadas = min(max(math.ceil(pecas / por_plano), 1), max_camadas)
+        carga = camadas * dims[iv]
+        if iv == eixo_a:
+            carga = min(carga, dims[iv] * (1 + (camadas - 1) * cfg.fator_empilhamento))
+        chave = (-total, carga)
+        if melhor is None or chave < melhor[0]:
+            melhor = (chave, carga)
+
+    if melhor is None:
+        return box.ext_alt_m
+    return round(deck + melhor[1], 6)
 
 
 def capacidade_manual(article: Article, load_type: LoadType) -> bool:
@@ -516,10 +566,19 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
             fator_limitante="N/A (armazenagem OVERSIZE)", criterio=criterio,
         )
 
+    # Altura real da unidade (só PALLET/MEIA), com as peças que lá vão de facto
+    # -- a capacidade prática, a mesma de «Peças nesta caixa» no racking.
+    box = catalogo_idx.get(load_type)
+    altura_real = None
+    if box is not None and load_type in _TIPOS_COM_TOLERANCIA_PALETE:
+        pecas = capacidade_reportada(load_type, assignment.pecas_por_unidade, article.sku, cfg,
+                                     manual=capacidade_manual(article, load_type))
+        altura_real = altura_real_unidade(article, box, pecas, cfg)
+    base["altura_real_unidade_m"] = altura_real
+
     # Caixa forçada COM quantidade manual: não há geometria a reconstruir (o
     # motor pode até dizer que não cabe nenhuma -- é por isso que é manual).
     if capacidade_manual(article, load_type):
-        box = catalogo_idx.get(load_type)
         return BoxJustificacao(
             **base, orientacao_usada="Manual (CAIXA_FORCADA)",
             caixa_int_comp_m=box.int_comp_m if box else None,
@@ -541,7 +600,6 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
     # Caixa normal (XS/S/M/L/MEIA/PALLET): reconstrói a orientação vencedora
     # com a MESMA fórmula de pieces_per_box/_pecas_no_envelope, desta vez
     # guardando o detalhe em vez de só o total.
-    box = catalogo_idx.get(load_type)
     if box is None:
         return BoxJustificacao(
             **base, orientacao_usada="-", caixa_int_comp_m=None, caixa_int_larg_m=None,

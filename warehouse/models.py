@@ -180,11 +180,13 @@ class RackType:
     # alt_nivel_m passa a ser só um valor de REFERÊNCIA (max(alturas_niveis_m),
     # ver io_excel.load_rack_types) -- o motor de capacidade usa sempre
     # racking.altura_nivel/altura_ate_niveis, nunca alt_nivel_m diretamente.
-    # Só suportado no caminho de bordo de linha (racking.rack_capacity,
-    # _empacotar_nivel, _abrir_bloco, blocos_empilhados, allocate_to_racks) --
-    # deliberadamente NÃO no wide-span/OVERSIZE nem no empilhamento de
-    # módulos inteiros do armazém (niveis_efetivos), que continuam a assumir
-    # alt_nivel_m uniforme.
+    # No armazém (Rack Porta-Paletes, SIA) são alturas ÚTEIS: deck + carga =
+    # passo - viga - folga de manuseio (o passo físico, para o 3D, é
+    # racking.cotas_fisicas_niveis). Suportado em rack_capacity, _empacotar_nivel,
+    # _abrir_bloco, blocos_empilhados, niveis_efetivos e allocate_to_racks; a
+    # estimativa de OVERSIZE (_oversize_plano_altura/rack_capacity_oversize)
+    # continua a assumir alt_nivel_m uniforme -- a colocação real respeita
+    # cada nível em _empacotar_nivel.
     alturas_niveis_m: tuple[float, ...] = ()
 
 
@@ -243,6 +245,9 @@ class BoxJustificacao:
     stock_max_un: int
     num_unidades: int
     criterio: str                    # explicação textual do cálculo/critério aplicado
+    # Só PALLET/MEIA: deck + carga real (boxing.altura_real_unidade), a altura
+    # com que a unidade vai para o racking -- não a nominal do catálogo.
+    altura_real_unidade_m: float | None = None
 
 
 @dataclass

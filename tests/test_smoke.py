@@ -52,6 +52,137 @@ def test_picking_nivel_pelo_topo():
     assert [n.eh_picking for n in bl.niveis] == [True, True, False]
 
 
+def test_niveis_efetivos_com_alturas_heterogeneas_conta_altura_acumulada():
+    """Porta-paletes de 3 níveis com o último a 1.0 m (4.6 - 2 x 1.8): num
+    pé-direito de 4.6 m cabem os 3, não floor(4.6 / 1.8) = 2."""
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.8, niveis=3,
+                  alturas_niveis_m=(1.8, 1.8, 1.0))
+    por_nivel = ("porta-paletes",)
+    assert racking.niveis_efetivos(pp, 4.6, por_nivel) == 3
+    assert racking.niveis_efetivos(pp, 4.5, por_nivel) == 2     # 3.º nível já não cabe
+    assert racking.niveis_efetivos(pp, 1.0, por_nivel) == 1     # nunca menos de 1
+
+
+def _pp_161():
+    """Porta-paletes SIA (2026-10-27): passo 1.8 m, viga 0.09, folga 0.10 ->
+    alturas úteis 1.61 / 1.61 / 0.81 (4.6 - 2 x 1.8 - 0.09 - 0.10)."""
+    return RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.61, niveis=3,
+                    aceita=[LoadType.PALLET, LoadType.MEIA], alturas_niveis_m=(1.61, 1.61, 0.81))
+
+
+def _palete_161():
+    from warehouse.models import BoxType
+    return BoxType(nome=LoadType.PALLET, int_comp_m=1.2, int_larg_m=0.8, int_alt_m=1.466,
+                   ext_comp_m=1.2, ext_larg_m=0.8, ext_alt_m=1.61, peso_max_kg=1000.0)
+
+
+def test_niveis_efetivos_niveis_uteis_de_1_61():
+    """1.61 + 1.61 + 0.81 = 4.03 <= 4.6 -> 3 níveis; floor(4.6 / 1.61) dava 2."""
+    pp = _pp_161()
+    assert racking.niveis_efetivos(pp, 4.6, ("porta-paletes",)) == 3
+    assert racking.niveis_efetivos(pp, 4.0, ("porta-paletes",)) == 2
+
+
+def test_cotas_fisicas_niveis_voltam_ao_passo():
+    """O 3D desenha as vigas no passo físico (útil + folga + viga), não na
+    altura útil acumulada (que as punha a 1.61 / 3.22 m)."""
+    from warehouse.config import Config
+    assert racking.cotas_fisicas_niveis(_pp_161(), 3, Config()) == ([0, 1.8, 3.6], 4.6)
+    pl = RackType("Prateleira Leve", larg_m=1.83, prof_m=0.6, alt_nivel_m=0.7, niveis=6)
+    assert racking.cotas_fisicas_niveis(pl, 6, Config()) == ([0, 0.7, 1.4, 2.1, 2.8, 3.5], 4.2)
+
+
+def test_altura_real_unidade_conta_so_as_camadas_precisas():
+    """Palete 1.2 x 0.8 (+0.10 por lado = 1.4 x 1.0), deck 1.61 - 1.466 = 0.144.
+    Peça 0.5 x 0.5 x 0.2 de pé (z): 2 x 2 = 4 no plano x 0.8 = 3/plano, 7
+    camadas no máximo (floor(1.466 / 0.2))."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    from warehouse.models import Article, Empilhamento
+    base = dict(sku="P", descricao="", comp_m=0.5, larg_m=0.5, alt_m=0.2, peso_kg=0.0,
+                stock_max_un=10, pecas_por_carro=1, altura_override="z",
+                empilhamento=Empilhamento.EMPILHAVEL)
+    cfg = Config()
+    pal = _palete_161()
+    art = Article(**base)
+    assert boxing.altura_real_unidade(art, pal, 7, cfg) == 0.744     # ceil(7/3)=3 camadas
+    assert boxing.altura_real_unidade(art, pal, 21, cfg) == 1.544    # cheia: 7 camadas
+    assert boxing.altura_real_unidade(art, pal, 500, cfg) == 1.544   # nunca acima do máximo
+    # aninhada na vertical: 0.2 x (1 + 2 x 0.3) = 0.32 de carga para 3 camadas
+    aninha = Article(**{**base, "eixo_aninhagem": "z"})
+    assert boxing.altura_real_unidade(aninha, pal, 7, cfg) == 0.464
+
+
+def test_altura_real_unidade_escolhe_a_orientacao_com_mais_pecas():
+    """Peça 0.4 x 0.4 x 0.2, orientação livre: de pé (0.4 na vertical) leva 36
+    (12/plano x 3), deitada (0.2) leva 28 (4/plano x 7) -- fica a de 36 mesmo
+    sendo cada camada mais alta: 10 peças = 1 camada de 0.4 m."""
+    from warehouse import boxing
+    from warehouse.config import Config
+    from warehouse.models import Article, Empilhamento
+    art = Article(sku="P", descricao="", comp_m=0.4, larg_m=0.4, alt_m=0.2, peso_kg=0.0,
+                  stock_max_un=10, pecas_por_carro=1, empilhamento=Empilhamento.EMPILHAVEL)
+    assert boxing.pieces_per_box(art, _palete_161(), 0.3, 0.8, 0.10) == 36
+    assert boxing.altura_real_unidade(art, _palete_161(), 10, Config()) == 0.544
+
+
+def _artigo_palete(sku, alt_m):
+    """Uma peça por palete (1.3 x 0.9 de pé, não empilhável): altura real =
+    0.144 + alt_m."""
+    from warehouse.models import Article, Empilhamento
+    return Article(sku=sku, descricao="", comp_m=1.3, larg_m=0.9, alt_m=alt_m, peso_kg=0.0,
+                   stock_max_un=1, pecas_por_carro=1, altura_override="z",
+                   empilhamento=Empilhamento.NAO_EMPILHAVEL)
+
+
+def test_paletes_baixas_vao_para_o_3o_nivel_e_as_altas_primeiro():
+    """3 paletes baixas (0.644 m) e 6 altas (1.544 m), com as baixas PRIMEIRO na
+    lista. Cabem 3 paletes por nível. As altas ocupam os níveis 1 e 2 e as
+    baixas o 3.º (0.81 m): 1 só módulo. Pela altura nominal (1.61) as baixas
+    nunca entravam no 3.º nível; pela ordem dos SKUs roubavam o nível 1 às
+    altas e abria-se um 2.º módulo."""
+    from warehouse.config import Config
+    from warehouse.models import BoxAssignment
+    pp = _pp_161()
+    arts = [_artigo_palete("BAIXA", 0.5), _artigo_palete("ALTA", 1.4)]
+    asg = [BoxAssignment("BAIXA", LoadType.PALLET, 1, 3), BoxAssignment("ALTA", LoadType.PALLET, 1, 6)]
+    pos, avisos = racking.allocate_to_racks(asg, [], [pp], {LoadType.PALLET: _palete_161()}, arts,
+                                            0.0, 4.6, Config())
+    assert avisos == []
+    assert len(pos) == 1
+    niveis = pos[0].blocos[0].niveis
+    assert [sorted(c.sku for c in n.caixas) for n in niveis] == [["ALTA"] * 3, ["ALTA"] * 3, ["BAIXA"] * 3]
+    assert {c.alt_m for c in niveis[2].caixas} == {0.644}
+
+
+def test_stock_que_nao_cabe_em_nivel_nenhum_da_aviso():
+    """Antes, um item sem nível compatível era descartado sem aviso."""
+    from warehouse.config import Config
+    from warehouse.models import BoxAssignment
+    baixo = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.0, niveis=2,
+                     aceita=[LoadType.PALLET])
+    pos, avisos = racking.allocate_to_racks(
+        [BoxAssignment("ALTA", LoadType.PALLET, 1, 2)], [], [baixo],
+        {LoadType.PALLET: _palete_161()}, [_artigo_palete("ALTA", 1.4)], 0.0, 4.6, Config())
+    assert pos == []
+    assert len(avisos) == 1 and "ALTA (2)" in avisos[0] and "NAO" in avisos[0]
+
+
+def test_oversize_nao_desconta_folga_em_niveis_uteis():
+    """SIDE BODY (1.582 m de pé, ALTURA_OVERRIDE='x') num nível útil de 1.61 m:
+    a folga de manuseio já está nos 1.61, não se desconta a OVERSIZE (0.05)
+    outra vez. Num nível uniforme de 1.61 a folga continua a aplicar-se."""
+    from warehouse.models import Article, Empilhamento
+    peca = Article(sku="SB", descricao="", comp_m=1.5817, larg_m=0.2483, alt_m=1.2828,
+                   peso_kg=0.0, stock_max_un=10, pecas_por_carro=1, altura_override="x",
+                   empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    emp = RackType("Rack Porta-Paletes (emparelhada)", larg_m=2.7, prof_m=2.4, alt_nivel_m=1.61,
+                   niveis=3, alturas_niveis_m=(1.61, 1.61, 0.81), profundidade_inclui_par=True)
+    assert racking._oversize_plano_altura(emp, peca, 1000.0, 0.05)[:2] == (18, 1)
+    uniforme = RackType("Wide", larg_m=2.7, prof_m=2.4, alt_nivel_m=1.61, niveis=3)
+    assert racking._oversize_plano_altura(uniforme, peca, 1000.0, 0.05)[:2] == (0, 0)
+
+
 def test_sem_modulo_fantasma_picking():
     """Bug da altura: uma caixa de picking que não cabe não deve deixar um
     módulo empilhado vazio agarrado à posição (módulos empilhados não têm

@@ -199,6 +199,15 @@ class Config:
     # do Excel já são o total).
     altura_armazem_m: float = 0.0
 
+    # Cotas físicas do porta-paletes. «Alturas_Niveis_m» da folha «Racks» são
+    # alturas ÚTEIS (deck + carga) = passo - viga - folga de manuseio; o motor
+    # só usa essas. Estes dois valores servem para voltar ao PASSO físico
+    # (passo = útil + folga + viga) e desenhar as vigas no 3D onde estão de
+    # facto (racking.cotas_fisicas_niveis). Só se aplicam às tipologias com
+    # Alturas_Niveis_m; nas uniformes (Prateleira Leve) Alt_nivel_m já é o passo.
+    viga_m: float = 0.09
+    folga_manuseio_m: float = 0.10
+
     # Tolerância lateral ao encaixar peças em PALLET/MEIA: soma-se aos DOIS lados
     # de cada cota do plano (Comprimento e Largura), tanto no cálculo principal
     # de peças-por-unidade (boxing._pecas_no_envelope) como na decisão OVERSIZE
@@ -261,6 +270,8 @@ class Config:
 
     # Folga de manuseio descontada à altura do nível, ao empilhar peças pousadas
     # (é preciso espaço para as mãos/equipamento entre a peça de cima e a viga).
+    # Não se aplica às tipologias com «Alturas_Niveis_m»: essas alturas já são
+    # úteis, com a folga descontada na folha (ver racking._oversize_plano_altura).
     oversize_folga_altura_m: float = 0.05
 
     # --- OVERSIZE2: "caixas especiais" (equipamento de transporte dedicado) --

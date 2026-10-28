@@ -38,6 +38,11 @@ racks e a área de chão necessária.
 `RackType.alt_nivel_m` é a **altura útil POR NÍVEL** (não o total do prumo). O
 teste vertical em `rack_capacity` compara a altura exterior da caixa com
 `alt_nivel_m`. Total do prumo = `alt_nivel_m × niveis`.
+Com «Alturas_Niveis_m» (alturas heterogéneas) o motor usa
+`racking.altura_nivel`/`altura_ate_niveis` e `alt_nivel_m` é só o máximo, de
+referência. No Rack Porta-Paletes essas alturas são ÚTEIS (deck + carga,
+passo − viga − folga); o passo físico só serve para o 3D
+(`racking.cotas_fisicas_niveis`). Ver "níveis de 1,8 m" abaixo.
 
 ## Fronteira INPUT vs OUTPUT
 - INPUT : geometria do artigo (m), `Peças_por_carro`, `Stock_máx_un` (só
@@ -223,9 +228,12 @@ Cuidado ao ler os resultados: um item colocado é um **stack**, não uma peça �
 contar `len(caixas)` dá 16, mas `sum(pecas_nesta_caixa)` dá as 35 reais.
 
 ## Decisão fechada: máximo de módulos empilhados
-`Config.max_modulos_por_tipologia` (default `{"prateleira": 2}`) trava quantos
-**módulos** — racks inteiros uns por cima dos outros na mesma posição de chão —
-uma tipologia pode empilhar. Chave = substring do nome (case-insensitive).
+`Config.max_modulos_por_tipologia` trava quantos **módulos** — racks inteiros
+uns por cima dos outros na mesma posição de chão — uma tipologia pode empilhar.
+Chave = substring do nome (case-insensitive). **Por omissão é vazio `{}`** (e
+também no `sia.json`): decisão de usar sempre o máximo de altura disponível.
+O `{"prateleira": 2}` descrito abaixo era o default antigo; o mecanismo
+continua disponível para voltar a travar uma tipologia.
 
 **Não confundir com `RackType.niveis`**, que são as prateleiras DENTRO de um
 módulo (input da folha «Racks», não se mexe). São dois eixos verticais distintos:
@@ -564,6 +572,90 @@ Não reintroduzir PALLET a competir livremente para a SIA sem confirmar de
 novo com o cliente — a mudança é deliberada, o algoritmo em si não mudou de
 opinião sobre o que minimiza chão (continua documentado acima, `Regra de
 escolha de caixa`).
+
+## Decisão fechada: níveis de 1,8 m com pé-direito útil de 4,6 m (SIA, 2026-10-27)
+Substitui a versão do mesmo dia com `1.8,1.8,1.0` e caixas no porta-paletes.
+
+**Parâmetros**: pé-direito útil 4,6 m (já sem a folga dos sprinklers, não se
+desconta mais nada). Porta-paletes com passo de 1,8 m e 3 níveis (vigas a
+0 / 1,8 / 3,6 m), viga 0,09 m, folga de manuseio 0,10 m em todos os níveis, deck
+da palete 0,144 m (Ext_Alt − Int_Alt). Convenção: abertura = passo − viga
+(também no topo: 4,6 − 2×1,8 − 0,09); altura útil (deck + carga) = abertura −
+folga → **1,61 / 1,61 / 0,81 m** (carga máx. 1,466 / 1,466 / 0,666).
+
+**Folha «Racks»** (backup `dados/master_data_classificado_v3.xlsx.pre-niveis-1-61m.bak`):
+- **Rack Porta-Paletes**: Níveis 3, `Alt_nivel_m` 1.61 (= máximo, referência),
+  `Alturas_Niveis_m` = `1.61,1.61,0.81`, «Aceita» só **`PALLET, MEIA`**: não há
+  caixas nos porta-paletes. A emparelhada (`com_par_oversize`) herda aceita +
+  OVERSIZE e as alturas.
+- **Prateleira Leve**: 1,83 × 0,60 m (a versão anterior tinha 1,80 por engano),
+  **um módulo de 6 níveis** de 0,70 m (prumo 4,2 m) por posição de chão —
+  `blocos_empilhados` = floor(4,6 / 4,2) = 1. Não são "2 módulos de 3 níveis".
+- O loader lê `Alturas_Niveis_m` por cabeçalho e rebenta se a contagem não bater
+  com Níveis (`io_excel.load_rack_types`).
+
+**Folha «Caixas»**: PALLET e MEIA com `Int_Alt_m` 1.466 e `Ext_Alt_m` 1.61 (eram
+1,5 / 1,644; Volume acompanha). Uma palete cheia de 1,644 m deixa de caber em
+qualquer nível — aceite. Mexe no Passo 0: menos peças por palete.
+
+**Altura REAL da palete/meia** (`boxing.altura_real_unidade`): deck + carga das
+peças que lá vão — a capacidade prática (`capacidade_reportada`, a de «peças
+nesta caixa»), orientação de `pieces_per_box` (mais peças; empate → carga mais
+baixa), `fill_factor_plano` + tolerância lateral, camadas = ceil(peças /
+peças_por_plano) até ao máximo, altura = camadas × cota (eixo de aninhagem
+vertical: cota × (1 + (camadas − 1) × fator)). `allocate_to_racks` põe-na no
+`_ItemParaColocar.alt_m`, e `_empacotar_nivel` aceita paletes baixas no 3.º
+nível. O filtro de tipologias (`rack_capacity`) e o `boxes_per_stack` continuam
+com a nominal. Folha Validação: «Altura real da unidade (m)» e «Cabe no 3.º
+nível (≤ 0,81)». Pesos: nenhum SKU de palete/meia tem peso; as alturas são
+majorantes, não se inventa peso.
+
+**Ordem de colocação**: área decrescente e, na mesma área, as mais ALTAS
+primeiro (sort estável). As altas ficam com os níveis 1 e 2 e as baixas enchem o
+3.º. Medido: 12 ordens aleatórias dos SKUs dão sempre o mesmo nº de módulos.
+
+**`niveis_efetivos`** com `alturas_niveis_m` conta a soma acumulada das alturas
+úteis: 1,61 + 1,61 + 0,81 = 4,03 ≤ 4,6 → 3 níveis (floor(4,6 / 1,61) dava 2).
+
+**OVERSIZE na emparelhada**: a estimativa (`_oversize_plano_altura`,
+`rack_capacity_oversize`) assume `alt_nivel_m` uniforme (1,61). A colocação real
+respeita cada nível (`_empacotar_nivel`): verificado, nenhum stack fica num
+nível mais baixo do que ele. **Sem 2.ª folga** (decisão do utilizador): nas
+tipologias com `Alturas_Niveis_m` não se desconta `oversize_folga_altura_m`
+(0,05), porque a folga já está nos 1,61. Sem isto, os SIDE BODY LH/RH (1,582 m
+de pé, `ALTURA_OVERRIDE` = x, 20 peças) ficavam fora do dimensionamento.
+
+**Stock nunca some em silêncio**: `allocate_to_racks` dá aviso com SKU e nº de
+unidades de qualquer item que não caiba em nenhum nível compatível (antes era
+descartado sem aviso).
+
+**Saídas**: `resumo_ocupacao` traz `por_nivel` por tipologia (unidades por
+nível, também na UI e na folha «Ocupação por nível»). 3D: `_serializar_layout`
+manda `cotas_niveis_m` + `altura_m` FÍSICOS (`racking.cotas_fisicas_niveis`:
+passo = útil + `Config.folga_manuseio_m` + `Config.viga_m`): vigas a 1,8 e 3,6 m,
+prateleira com 6 níveis de 0,7 m.
+
+O pé-direito (`altura_armazem_m = 4.6`) **não vem do Excel nem do JSON do
+cliente**: passa-se no formulário da UI ou em `--altura 4.6`.
+
+**Medido** (altura 4,6, 10 carros, sem picking):
+
+| | `sia.json` (herda a linha, palete último recurso) | motor da linha (`unidade_da_linha` e `pallet_ultimo_recurso` a False) |
+|---|---|---|
+| Rack Porta-Paletes | 16 módulos | 19 |
+| Emparelhada | 4 | 4 |
+| Prateleira Leve | 17 módulos de 6 níveis, todos cheios | 12 (67 níveis com caixas: 11 cheios + 1 com 1 nível) |
+| Caixas na prateleira | 108 L, 423 XS, 221 S, 124 M | 84 L, 233 XS, 52 S, 52 M |
+| Paletes + meias | 206 un / 37 SKUs | 218 un / 59 SKUs |
+| Cabem no 3.º nível | 113 un / 14 SKUs | 125 un / 21 SKUs |
+| Autonomia (vs 1,5 / 1,644) | só WHEEL RIM 11,2 → 10,0 | 4 SKUs (COLUMN BOTTOM COVER 72 → 63, SINGLE MOTOR CN MOTOR 45 → 42, WHEEL RIM 11,2 → 10,0, WHEEL PLASTIC COVER 33 → 32); nenhum muda de tipo; mínimo 10 carros |
+
+A referência externa de 2026-10-27 (20 + 4 porta-paletes, 12 prateleiras, 212 un
+/ 57 SKUs) foi feita com o motor da linha: bate com a coluna da direita, a menos
+de 1 módulo de porta-paletes e 2 SKUs / 6 un de palete (master data diferente).
+Área bruta com o `sia.json`: 416,5 → **442,4 m²**. Os racks descem de 106,9 para
+96,4 m², mas o bloco passa de 16,2 × 13,2 para 10,8 × 22,2 m: as caixas saíram do
+porta-paletes, e a prateleira (antes vazia) tem agora fiadas e corredores próprios.
 
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.

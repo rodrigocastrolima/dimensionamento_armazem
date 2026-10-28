@@ -96,7 +96,8 @@ def run(cfg: Config, articles: list[Article] | None = None) -> area.ResumoAreaTo
 
     slots = io_excel.flatten_posicoes_para_detalhe(posicoes)
     io_excel.write_results(cfg.output, assignments, requirements, dim, slots, avisos, wl,
-                           zonas, resumo, articles, justificacoes, autonomia_resultados)
+                           zonas, resumo, articles, justificacoes, autonomia_resultados,
+                           rack_types, racking.resumo_ocupacao(posicoes, rack_by_name))
     print(f"Area de racks: {dim.area_racks_m2:,.1f} m2")
     print(f"Layout fisico: {wl.largura_total_m:,.1f} x {wl.profundidade_total_m:,.1f} m "
          f"= {wl.area_total_m2:,.1f} m2 (corredores: {wl.area_corredores_m2:,.1f} m2)")

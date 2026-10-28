@@ -62,6 +62,20 @@ def test_volume_nao_multiplica_pelo_stack():
     assert t["unidades_carga"] == 4         # o stack conta 4 unidades de carga
 
 
+def test_ocupacao_por_nivel_conta_unidades_de_cada_nivel():
+    """Unidades por nível (1 = base) de cada tipologia -- é o que diz quantas
+    paletes ficaram no 3.º nível do porta-paletes."""
+    r = _rack()
+    p1 = _posicao(r, [[_caixa(1.0, 1.0, 0.5, stack=2), _caixa(1.0, 1.0, 0.5)], []])
+    p2 = _posicao(r, [[_caixa(1.0, 1.0, 0.5)], [_caixa(1.0, 1.0, 0.5, stack=3)]])
+    t = racking.resumo_ocupacao([p1, p2], {"A": r})["por_tipologia"][0]
+    assert t["por_nivel"] == [
+        {"nivel": 1, "niveis": 2, "niveis_ocupados": 2, "unidades_carga": 4},
+        {"nivel": 2, "niveis": 2, "niveis_ocupados": 1, "unidades_carga": 3},
+    ]
+    assert t["unidades_carga"] == 7
+
+
 def test_tipologia_desconhecida_e_ignorada_sem_rebentar():
     r = _rack()
     orfa = _posicao(RackType("Z", larg_m=1.0, prof_m=1.0, alt_nivel_m=1.0, niveis=1), [[]])

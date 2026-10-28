@@ -138,12 +138,16 @@ def _serializar_layout(posicoes: list, rack_by_name):
         # de facto o limite -- senão a estrutura desenhava sempre a altura
         # cheia do catálogo, mesmo com menos níveis lá dentro.
         niveis_reais = len(pos.blocos[0].niveis) if pos.blocos and pos.blocos[0].niveis else rack.niveis
+        # Cotas FÍSICAS (passo, não altura útil): com Alturas_Niveis_m o 3D
+        # desenhava as vigas a 1.61/3.22 m em vez de 1.8/3.6 m.
+        cotas_niveis, altura_modulo = racking.cotas_fisicas_niveis(rack, niveis_reais, cfg)
         layout.append({
             "rack_nome": pos.rack_nome,
             "indice": pos.indice,
             "x": pl.x_m, "y": pl.y_m,
             "larg_m": pl.largura_m, "prof_m": pl.profundidade_m,
-            "altura_m": rack.alt_nivel_m * niveis_reais,
+            "altura_m": altura_modulo,
+            "cotas_niveis_m": cotas_niveis,
             "niveis": niveis_reais,
             "blocos_empilhados": pos.num_blocos,
             "load_types": load_types,
@@ -415,7 +419,8 @@ def gerar(body: GerarRequest):
             local_cfg.output, assignments, requirements, dim,
             io_excel.flatten_posicoes_para_detalhe(posicoes), avisos,
             warehouse_layout, zonas, resumo, articles, justificacoes,
-            autonomia_resultados)
+            autonomia_resultados, rack_types,
+            racking.resumo_ocupacao(posicoes, rack_by_name))
         resultados_escrito = True
     except OSError as e:
         avisos = avisos + [
@@ -803,7 +808,11 @@ def render_layout(body: ArrangeRequest):
                     continue
                 for bloco in item["blocos"]:
                     for nivel in bloco["niveis"]:
-                        nivel["caixas"] = [dict(c) for c in caixas_exemplo]
+                        # com alturas heterogéneas, cada nível leva caixas da
+                        # sua altura (o 3.º nível do porta-paletes só 0.81 m)
+                        alt_max = max(racking.altura_nivel(rack, nivel["nivel_idx"]) - 0.05, 0.05)
+                        nivel["caixas"] = [dict(c, alt_m=min(c["alt_m"], alt_max))
+                                           for c in caixas_exemplo]
 
         cont_w = n * rack.larg_m
         cont_h = rack.prof_m * (2 if dupla else 1)

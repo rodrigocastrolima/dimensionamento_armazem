@@ -630,12 +630,17 @@ def write_results(path: Path,
                   resumo_area=None,
                   articles: list[Article] | None = None,
                   justificacoes: list | None = None,
-                  autonomia_resultados: list | None = None) -> None:
+                  autonomia_resultados: list | None = None,
+                  rack_types: list[RackType] | None = None,
+                  ocupacao: dict | None = None) -> None:
     """Escreve resultados.xlsx com sheets: Lógica, Resumo, Detalhe, Autonomia
-    (se articles for dado), Validação (se justificacoes for dado) e Avisos
-    (se houver)."""
+    (se articles for dado), Validação (se justificacoes for dado), Ocupação
+    por nível (se ocupacao -- racking.resumo_ocupacao -- for dado) e Avisos
+    (se houver). `rack_types` dá o nível mais baixo onde pode ir uma palete,
+    para a coluna «Cabe no N.º nível» da Validação."""
     from openpyxl.styles import Font, PatternFill, Alignment
     from openpyxl.utils import get_column_letter
+    from .racking import altura_nivel
 
     wb = openpyxl.Workbook()
 
@@ -672,6 +677,7 @@ def write_results(path: Path,
     texto(ws_log, "Cada tipo de carga escolhe, entre os racks compatíveis, o de menor m² por unidade", 19)
     texto(ws_log, "(footprint do rack / capacidade) — não é 'o 1º rack da tabela que aceita'.", 20)
     texto(ws_log, "Capacidade do rack (S/M/L/PALLET): envelope 2D por nível × nº de níveis.", 21)
+    texto(ws_log, "PALLET/MEIA entram no nível com a altura REAL (deck + carga das peças), não a do catálogo.", 22)
     texto(ws_log, "Compatibilidade carga ↔ rack via campo 'Aceita' da sheet Racks.", 23)
     texto(ws_log, "Se um tipo de carga não tiver nenhum rack compatível viável, fica registado na sheet", 24)
     texto(ws_log, "'Avisos' (se existir) em vez de ser silenciosamente excluído do resultado.", 25)
@@ -845,6 +851,18 @@ def write_results(path: Path,
     # é por SKU, não por posição, por isso 1 linha por SKU (como a
     # Autonomia) em vez de repetir o mesmo cálculo em cada rack ocupado.
     if justificacoes:
+        # Nível mais baixo onde pode ir uma palete/meia (ex.: 3.º nível do
+        # porta-paletes, 0,81 m útil) -- é contra ele que se lê a altura real.
+        niveis_palete = [(altura_nivel(r, n), n) for r in (rack_types or [])
+                         if not r.profundidade_inclui_par
+                         and (LoadType.PALLET in r.aceita or LoadType.MEIA in r.aceita)
+                         for n in range(r.niveis)]
+        nivel_baixo = min(niveis_palete) if niveis_palete else None
+        if nivel_baixo:
+            h_txt = f"{nivel_baixo[0]:.2f}".replace(".", ",")
+            col_cabe = f"Cabe no {nivel_baixo[1] + 1}.º nível (≤ {h_txt})"
+        else:
+            col_cabe = "Cabe no nível mais baixo"
         ws_val = wb.create_sheet("Validação")
         hdr_row(ws_val, [
             "SKU", "Descrição", "Tipo de carga",
@@ -852,10 +870,14 @@ def write_results(path: Path,
             "Orientação usada", "Caixa int. Comp_m", "Caixa int. Larg_m", "Caixa int. Alt_m",
             "Peças/plano (teórico)", "Peças/plano (aplicado)", "Peças/altura",
             "Peças/peso", "Fator limitante", "Peças/unidade (final)",
-            "Stock usado (un)", "Nº de unidades", "Critério aplicado",
+            "Stock usado (un)", "Nº de unidades",
+            "Altura real da unidade (m)", col_cabe, "Critério aplicado",
         ])
         ws_val.freeze_panes = "A2"
         for j in justificacoes:
+            alt_real = j.altura_real_unidade_m
+            cabe = ("-" if alt_real is None or nivel_baixo is None
+                    else "Sim" if alt_real <= nivel_baixo[0] + 1e-9 else "Não")
             ws_val.append([
                 j.sku, j.descricao,
                 j.load_type.value if hasattr(j.load_type, "value") else j.load_type,
@@ -869,11 +891,29 @@ def write_results(path: Path,
                 j.pecas_por_altura if j.pecas_por_altura is not None else "-",
                 j.pecas_por_peso if j.pecas_por_peso is not None else "-",
                 j.fator_limitante, j.pecas_por_unidade, j.stock_max_un, j.num_unidades,
+                round(alt_real, 3) if alt_real is not None else "-", cabe,
                 j.criterio,
             ])
-        larguras = [22, 30, 14, 10, 10, 10, 10, 26, 16, 16, 16, 18, 18, 14, 12, 26, 18, 16, 14, 90]
+        larguras = [22, 30, 14, 10, 10, 10, 10, 26, 16, 16, 16, 18, 18, 14, 12, 26, 18, 16, 14,
+                    18, 22, 90]
         for i, w in enumerate(larguras, 1):
             ws_val.column_dimensions[get_column_letter(i)].width = w
+
+    # ------------------------------------------------------ Ocupação por nível
+    # Unidades de carga por nível (1 = base) de cada tipologia -- ex.: quantas
+    # paletes ficaram no 3.º nível do porta-paletes. Num OVERSIZE a unidade é
+    # a peça (num_boxes_in_stack), como no resto da ocupação.
+    if ocupacao and ocupacao.get("por_tipologia"):
+        ws_ocp = wb.create_sheet("Ocupação por nível")
+        hdr_row(ws_ocp, ["Tipologia", "Nível", "Níveis (posições × módulos)",
+                         "Níveis com carga", "Unidades de carga"])
+        ws_ocp.freeze_panes = "A2"
+        for t in ocupacao["por_tipologia"]:
+            for n in t.get("por_nivel", []):
+                ws_ocp.append([t["rack_nome"], n["nivel"], n["niveis"],
+                               n["niveis_ocupados"], n["unidades_carga"]])
+        for i, w in enumerate([34, 8, 26, 18, 18], 1):
+            ws_ocp.column_dimensions[get_column_letter(i)].width = w
 
     # ------------------------------------------------------------------ Avisos
     if avisos:
