@@ -254,7 +254,7 @@
     <table id="tabela-racks">
       <thead>
         <tr>
-          <th>Nome</th><th>Larg (m)</th><th>Prof (m)</th><th>Alt/nível (m)</th>
+          <th>Nome</th><th title="vão livre entre pilares (+ pilar = largura de chão)">Larg (m)</th><th>Prof (m)</th><th>Alt/nível (m)</th>
           <th>Níveis</th><th>Aceita (S,M,L,PALLET)</th>
           <th>Corredor (m)</th>
         </tr>
@@ -611,7 +611,7 @@ async function carregarRacks() {
   tbody.innerHTML = racks.map(r => `
     <tr>
       <td>${r.nome}</td>
-      <td>${r.larg_m}</td><td>${r.prof_m}</td><td>${r.alt_nivel_m}</td>
+      <td>${r.larg_m}${r.pilar_m ? ` <small style="color:#888" title="vão livre + pilar = largura de chão de um módulo">+ ${r.pilar_m} pilar = <b>${r.larg_total_m.toFixed(2)}</b></small>` : ""}</td><td>${r.prof_m}</td><td>${r.alt_nivel_m}</td>
       <td>${r.niveis}</td><td>${r.aceita.join(', ')}</td>
       <td>${r.corredor_m}</td>
     </tr>
@@ -619,7 +619,7 @@ async function carregarRacks() {
   const sel = document.getElementById("rack-manual-tipo");
   if (sel) {
     sel.innerHTML = racks.map(r =>
-      `<option value="${r.nome}">${r.nome} (${r.larg_m}×${r.prof_m}m)</option>`).join("");
+      `<option value="${r.nome}">${r.nome} (${+(r.larg_total_m ?? r.larg_m).toFixed(2)}×${r.prof_m}m${r.pilar_m ? ", com pilar" : ""})</option>`).join("");
   }
 }
 
@@ -2637,6 +2637,16 @@ function inicializarCanvas() {
     svg.innerHTML = grid;
 
     canvasBlocks.forEach(b => {
+      // Fila manual: o tamanho do bloco vem SEMPRE da tipologia (n×(vão+pilar) +
+      // pilar de fecho). Um arranjo guardado antes do pilar trazia n×vão, e as
+      // células (já com pilar) saíam por fora do retângulo.
+      if (b.type === "rack_manual") {
+        const t = rackTypesCache.find(r => r.nome === b.rack_tipo);
+        if (t) {
+          b.w = b.n * (t.larg_total_m ?? t.larg_m) + (t.pilar_m ?? 0);
+          b.h = t.prof_m * (b.dupla ? 2 : 1);
+        }
+      }
       const x = b.x * PXM, y = b.y * PXM, w = b.w * PXM, h = b.h * PXM;
       const cx = x + w / 2, cy = y + h / 2;
       const isSel = b.id === selBlockId;
