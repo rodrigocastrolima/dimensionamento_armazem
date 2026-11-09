@@ -197,6 +197,52 @@
   /* ------------------------------------------------------ cabe no espaço? */
   .verdict { text-align: center; font-weight: 700; font-size: 24px; letter-spacing: .08em;
              border-radius: var(--r); padding: 12px 0; }
+
+  /* ------------------------------------------------ alocação & picking
+     Em cima: planta pequena (calor de todas as movimentações) | rack de frente.
+     Faixa de indicadores. Em baixo: o ano (um quadrado por dia) e o
+     cronograma do dia escolhido (armazém + comboio, horas de relógio). */
+  .aloc-topo { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px; }
+  .aloc-planta-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  #aloc-planta { width: 100%; height: 42vh; min-height: 300px; background: #fff;
+                 border: 1px solid var(--border); border-radius: var(--r-lg); display: block; }
+  #aloc-planta .rack { cursor: pointer; }
+  #aloc-planta .rack:hover { stroke: #111; }
+  #aloc-frente-card { height: calc(42vh + 26px); min-height: 326px; display: flex; flex-direction: column; }
+  #aloc-frente-corpo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 10px;
+                       flex: 1; min-height: 0; }
+  #aloc-frente { min-height: 0; overflow: hidden; }
+  #aloc-frente svg { width: 100%; height: 100%; display: block; background: #fff; border-radius: var(--r); }
+  #aloc-nivel-detalhe { overflow-y: auto; min-height: 0; }
+  #aloc-tooltip { position: fixed; pointer-events: none; z-index: 10; display: none; max-width: 340px;
+                  background: #0b0d11; color: var(--text); border: 1px solid var(--border-strong);
+                  border-radius: var(--r); padding: 7px 9px; font-size: 11.5px; line-height: 1.5; }
+  .aloc-escala { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-dim); }
+  .aloc-escala i { display: inline-block; width: 110px; height: 9px; border-radius: 3px;
+                   background: linear-gradient(90deg, #ffffff, #ffd966, #e06666); border: 1px solid var(--border-strong); }
+  .aloc-faixa { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+  .aloc-ind { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 9px 11px; }
+  .aloc-ind small { display: block; font-size: 10px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase;
+                    color: var(--text-faint); margin-bottom: 3px; }
+  .aloc-ind b { font-size: 16px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .aloc-ind span { display: block; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+  .aloc-badge { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+                letter-spacing: .04em; vertical-align: 2px; }
+  .aloc-badge.sim { background: rgba(34,197,94,.15); color: #4ade80; border: 1px solid rgba(34,197,94,.35); }
+  .aloc-badge.aceite { background: rgba(245,158,11,.15); color: #fbbf24; border: 1px solid rgba(245,158,11,.35); }
+  .aloc-badge.nao { background: rgba(239,68,68,.15); color: #f87171; border: 1px solid rgba(239,68,68,.35); }
+  .aloc-check { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--text-dim); cursor: pointer; }
+  #aloc-cal { display: grid; grid-auto-flow: column; grid-template-rows: repeat(5, 13px); gap: 2px; overflow-x: auto;
+              padding-bottom: 4px; }
+  #aloc-cal i { width: 13px; height: 13px; border-radius: 2px; cursor: pointer; display: block; }
+  #aloc-cal i.ok { background: #166534; } #aloc-cal i.aceite { background: #b45309; } #aloc-cal i.nao { background: #b91c1c; }
+  #aloc-cal i.sel { outline: 2px solid #fff; outline-offset: 1px; }
+  #aloc-cal i:hover { filter: brightness(1.3); }
+  #aloc-crono svg { width: 100%; display: block; }
+  #aloc-tarefas tbody tr { cursor: pointer; }
+  #aloc-tarefas tr.sel td { background: rgba(59,130,246,.14); }
+  #aloc-tarefas tr.picks td { background: var(--surface-2); padding: 4px 10px 8px 26px; }
+  #aloc-tarefas tr.atraso td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
   ::-webkit-scrollbar { width: 9px; height: 9px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 5px; }
@@ -213,6 +259,7 @@
     <button data-tab="zonas">Zonas</button>
     <button data-tab="arranjar">Arranjar Layout</button>
     <button data-tab="armazem">Armazém 3D</button>
+    <button data-tab="alocacao">Alocação &amp; Picking</button>
   </nav>
 </header>
 
@@ -464,6 +511,90 @@
   </div>
   <div class="legend" id="legenda"></div>
   <div id="resumo"></div>
+</section>
+
+
+<section id="alocacao" class="tab">
+  <!-- Aloca o stock às racks que estão AGORA no «Arranjar Layout» (bloco gerado e
+       filas manuais) -- não gera layout. Ver warehouse/alocacao.py e tempos.py. -->
+  <div class="page-head">
+    <div class="params">
+      <div class="field">
+        <label for="aloc-carros" title="Carros por dia (inteiro). 1 = o ritmo do livro do comboio, validado contra ele; mais é extrapolação.">Carros por dia</label>
+        <div class="input-unit"><input id="aloc-carros" type="number" step="1" min="1" value="1"><span>/dia</span></div>
+      </div>
+      <div class="field" style="min-width:220px">
+        <label for="aloc-modo">Mapa de calor</label>
+        <select id="aloc-modo">
+          <option value="movimentos">Movimentações (visitas/dia + percursos)</option>
+          <option value="minutos">Picking (min/dia)</option>
+          <option value="classe">Classe ABC</option>
+          <option value="ocupacao">Ocupação (planta)</option>
+        </select>
+      </div>
+      <div class="field" style="min-width:240px">
+        <label for="aloc-sku">Procurar SKU</label>
+        <input id="aloc-sku" type="search" list="aloc-skus" placeholder="código ou descrição">
+        <datalist id="aloc-skus"></datalist>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="action" id="btn-alocar">Alocar ao arranjo</button>
+      <button id="btn-guardar-estado" style="display:none" title="Aceita esta alocação, com as alterações à BOM, como o estado de referência: as próximas alocações partem dela.">Guardar como estado</button>
+      <span id="aloc-estado-modo" class="dica" style="margin:0"></span>
+      <span class="grow"></span>
+      <a class="link-dl" id="aloc-download" href="/api/download/alocacao" style="display:none" title="Localizações, por SKU, por posição, tempos e Gantt por dia">Excel da alocação</a>
+    </div>
+  </div>
+  <div id="aloc-estado" class="dica">Usa o arranjo do separador «Arranjar Layout» (bloco de racks e filas manuais) e os parâmetros de lá (altura, autonomia). Carrega em «Alocar ao arranjo».</div>
+
+  <div class="aloc-topo">
+    <div class="aloc-planta-wrap">
+      <svg id="aloc-planta"></svg>
+      <div class="legend" id="aloc-legenda" style="margin-top:0"></div>
+    </div>
+    <div class="card" id="aloc-frente-card">
+      <h3 id="aloc-frente-titulo">Vista de frente</h3>
+      <div id="aloc-frente-corpo">
+        <div id="aloc-frente"><div class="dica">Clica numa rack da planta.</div></div>
+        <div id="aloc-nivel-detalhe"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="aloc-faixa" id="aloc-faixa"></div>
+  <div id="aloc-avisos"></div>
+
+  <div class="card" style="margin-top:12px">
+    <h3>O ano — um quadrado por dia útil (colunas = semanas)</h3>
+    <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap">
+      <button id="aloc-dia-ant" title="Dia anterior">◀</button>
+      <div class="input-unit"><input id="aloc-dia" type="number" min="1" value="1" style="width:84px"><span>dia</span></div>
+      <button id="aloc-dia-seg" title="Dia seguinte">▶</button>
+      <button id="aloc-dia-pior">Pior dia</button>
+      <button id="aloc-dia-prox" title="Próximo dia que não encaixa">Próximo vermelho</button>
+      <span class="legend" style="margin:0">
+        <span><span class="swatch" style="background:#166534"></span>encaixa</span>
+        <span><span class="swatch" style="background:#b91c1c"></span>não encaixa (armazém ou comboio passam das 17:00, ou a reposição semanal não cabe)</span>
+        <span style="color:var(--text-faint)">ao escolher um dia, a planta mostra os caminhos desse dia; uma tarefa, só os dela</span>
+      </span>
+    </div>
+    <div id="aloc-cal"></div>
+  </div>
+
+  <div class="card" style="margin-top:12px">
+    <h3 id="aloc-crono-titulo">Cronograma do dia</h3>
+    <div id="aloc-crono-ind" class="aloc-faixa" style="margin:4px 0 8px 0"></div>
+    <div id="aloc-crono"><div class="dica">Escolhe um dia no ano.</div></div>
+    <div class="table-wrap" style="max-height:48vh; margin-top:10px">
+      <table id="aloc-tarefas">
+        <thead><tr><th>Início</th><th>Fim</th><th>Quem</th><th>Tarefa</th><th class="num">Picks</th>
+          <th class="num">Unidades</th><th>Nota</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  <div id="aloc-tooltip"></div>
 </section>
 
 <script type="importmap">
@@ -2573,6 +2704,33 @@ const PXM = 20; // pixels por metro
 const GRID = 0.25; // snap da grelha (m)
 const snap = v => Math.round(v / GRID) * GRID;
 let canvasBlocks = [];
+
+// Pedido do «Renderizar 3D» (e do separador «Alocação & Picking», alocacao.js):
+// os blocos do canvas + o Cubo + os parâmetros da página de layout. Uma função
+// só, para o 3D e a alocação verem SEMPRE o mesmo arranjo.
+function pedidoArranjo() {
+  const cuboComp = parseFloat(document.getElementById("hangar-comp")?.value) || 0;
+  const cuboLarg = parseFloat(document.getElementById("hangar-larg")?.value) || 0;
+  const blocksComCubo = canvasBlocks.concat(
+    cuboComp > 0 && cuboLarg > 0
+      ? [{ id: "cubo_ref", type: "cubo", nome: "Cubo", w: cuboComp, h: cuboLarg, x: 0, y: 0, rot: 0 }]
+      : []
+  );
+  return {
+    blocks: blocksComCubo,
+    altura_armazem_m: parseFloat(document.getElementById("altura-armazem").value) || 0,
+    altura_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
+    // MESMO envelope do "Gerar racks": o render recalcula o pipeline, e sem
+    // isto obtinha a forma livre e depois rodava-a com as dimensões do
+    // bloco do canvas -> fiadas cortadas a meio.
+    largura_max_m: parseFloat(document.getElementById("largura-max").value) || 0,
+    profundidade_max_m: parseFloat(document.getElementById("profundidade-max").value) || 0,
+    // Idem: TEM de ser o mesmo carros_alvo do "Gerar racks", ver nota no body.
+    carros_alvo: parseFloat(document.getElementById("carros-alvo").value) || 0,
+  };
+}
+window.pedidoArranjo = pedidoArranjo;
+window.temArranjo = () => canvasBlocks.some(b => b.type === "racking" || b.type === "rack_manual");
 let _semBlocoRacks = false;   // Carregar de um arranjo sem bloco de racks: «Gerar racks» não o repõe
 let selBlockId = null;
 let dragging = null;
@@ -3283,28 +3441,10 @@ function inicializarCanvas() {
       // Cubo (edifício real) como mais um "bloco" só para o backend o incluir
       // na normalização do arranjo (min_x/min_y) e devolver a sua posição já
       // alinhada com o resto -- nunca arrastável nem rodado, é referência fixa.
-      const cuboComp = parseFloat(document.getElementById("hangar-comp")?.value) || 0;
-      const cuboLarg = parseFloat(document.getElementById("hangar-larg")?.value) || 0;
-      const blocksComCubo = canvasBlocks.concat(
-        cuboComp > 0 && cuboLarg > 0
-          ? [{ id: "cubo_ref", type: "cubo", nome: "Cubo", w: cuboComp, h: cuboLarg, x: 0, y: 0, rot: 0 }]
-          : []
-      );
       const resp = await fetch(`${API}/render-layout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          blocks: blocksComCubo,
-          altura_armazem_m: parseFloat(document.getElementById("altura-armazem").value) || 0,
-          altura_picking_m: parseFloat(document.getElementById("altura-picking").value) || 0,
-          // MESMO envelope do "Gerar racks": o render recalcula o pipeline, e sem
-          // isto obtinha a forma livre e depois rodava-a com as dimensões do
-          // bloco do canvas -> fiadas cortadas a meio.
-          largura_max_m: parseFloat(document.getElementById("largura-max").value) || 0,
-          profundidade_max_m: parseFloat(document.getElementById("profundidade-max").value) || 0,
-          // Idem: TEM de ser o mesmo carros_alvo do "Gerar racks", ver nota no body.
-          carros_alvo: parseFloat(document.getElementById("carros-alvo").value) || 0,
-        }),
+        body: JSON.stringify(pedidoArranjo()),
       });
       const data = await resp.json();
 
@@ -3411,5 +3551,6 @@ carregarZonas();
 initViewer();
 inicializarCanvas();
 </script>
+<script type="module" src="./alocacao.js?v=2026-11-09d"></script>
 </body>
 </html>

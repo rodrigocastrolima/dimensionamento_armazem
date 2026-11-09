@@ -37,6 +37,17 @@ STATIC_DIR = Path(__file__).parent / "static"
 app = FastAPI(title="Simulador de Armazém")
 
 
+@app.middleware("http")
+async def _sem_cache_nos_estaticos(request, call_next):
+    """index.html/alocacao.js: o browser revalida sempre (ETag) -- sem isto,
+    depois de uma atualização o browser continuava a correr o alocacao.js
+    antigo até a cache heurística expirar (2026-11-09)."""
+    resp = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/healthz")
 def healthz():
     """Health check para deployment (load balancer / readiness probe --
@@ -267,6 +278,41 @@ def _caixas_especiais_do_armazem() -> dict:
         io_excel.load_caixas_especiais(cfg.master_data))
 
 
+def blocos_canvas_por_omissao(warehouse_layout, zonas) -> list:
+    """Os blocos do canvas tal como o «Gerar racks» os põe: o bloco de racks no
+    canto e as zonas numa grelha compacta (shelf-packing, várias linhas) à
+    direita -- com dezenas de zonas, uma coluna única ultrapassava a altura
+    visível do canvas. É também o arranjo de REFERÊNCIA da calibração dos
+    tempos (alocacao.calibracao_automatica): uma função só, para os dois
+    nunca divergirem."""
+    racking_w = warehouse_layout.largura_total_m
+    racking_h = warehouse_layout.profundidade_total_m
+    tem_chao = bool(warehouse_layout.pilhas_chao)
+    gap = 0.5
+    row_max_w = max(racking_w, 15.0)
+    zona_x, zona_y = [], []
+    cx = cy = row_h = 0.0
+    for z in zonas:
+        if cx > 0 and cx + z.comp_m > row_max_w:
+            cx = 0.0
+            cy += row_h + gap
+            row_h = 0.0
+        zona_x.append(round(racking_w + 2.0 + cx, 2))
+        zona_y.append(round(0.5 + cy, 2))
+        cx += z.comp_m + gap
+        row_h = max(row_h, z.larg_m)
+    return [
+        {"id": "racking_block", "type": "racking",
+         "nome": "Bloco de Racks + chao" if tem_chao else "Bloco de Racks",
+         "w": round(racking_w, 2), "h": round(racking_h, 2), "x": 0.5, "y": 0.5}
+    ] + [
+        {"id": z.id if hasattr(z, "id") else f"zone_{i}", "type": "zone", "nome": z.nome,
+         "categoria": z.categoria, "w": round(z.comp_m, 2), "h": round(z.larg_m, 2),
+         "x": zona_x[i], "y": zona_y[i]}
+        for i, z in enumerate(zonas)
+    ]
+
+
 @app.post("/api/gerar")
 def gerar(body: GerarRequest):
     # dataclasses.replace(cfg, ...) -- NÃO Config(...) -- porque `cfg` é o
@@ -453,24 +499,6 @@ def gerar(body: GerarRequest):
     racking_h = warehouse_layout.profundidade_total_m
     tem_chao = bool(warehouse_layout.pilhas_chao)
 
-    # Posições iniciais das zonas no canvas: grelha compacta (shelf-packing,
-    # várias linhas) à direita do bloco de racks, em vez de uma única coluna
-    # vertical -- com dezenas de zonas, uma coluna ultrapassa facilmente a
-    # altura visível do canvas e deixa a maioria impossível de ver/arrastar,
-    # ficando por defeito num arranjo muito mais comprido que o necessário.
-    _ZONA_GAP = 0.5
-    _row_max_w = max(racking_w, 15.0)
-    zona_x, zona_y = [], []
-    cx = cy = row_h = 0.0
-    for z in zonas:
-        if cx > 0 and cx + z.comp_m > _row_max_w:
-            cx = 0.0
-            cy += row_h + _ZONA_GAP
-            row_h = 0.0
-        zona_x.append(round(racking_w + 2.0 + cx, 2))
-        zona_y.append(round(0.5 + cy, 2))
-        cx += z.comp_m + _ZONA_GAP
-        row_h = max(row_h, z.larg_m)
 
     return {
         "area_racks_m2": round(dim.area_racks_m2, 2),
@@ -553,29 +581,7 @@ def gerar(body: GerarRequest):
             "x": 0.5,
             "y": 0.5,
         },
-        "blocks_for_canvas": [
-            {
-                "id": "racking_block",
-                "type": "racking",
-                "nome": "Bloco de Racks + chao" if tem_chao else "Bloco de Racks",
-                "w": round(racking_w, 2),
-                "h": round(racking_h, 2),
-                "x": 0.5,
-                "y": 0.5,
-            }
-        ] + [
-            {
-                "id": z.id if hasattr(z, 'id') else f"zone_{i}",
-                "type": "zone",
-                "nome": z.nome,
-                "categoria": z.categoria,
-                "w": round(z.comp_m, 2),
-                "h": round(z.larg_m, 2),
-                "x": zona_x[i],
-                "y": zona_y[i],
-            }
-            for i, z in enumerate(zonas)
-        ],
+        "blocks_for_canvas": blocos_canvas_por_omissao(warehouse_layout, zonas),
     }
 
 
@@ -725,6 +731,8 @@ def render_layout(body: ArrangeRequest):
         base_x, base_y = off_x, off_y
 
     for item in layout_json:
+        item["bloco_id"] = "racking"
+        item["bloco_nome"] = (bloco_racks or {}).get("nome") or "Bloco de racks"
         larg_orig, prof_orig = item["larg_m"], item["prof_m"]
         if rot_racks:
             # roda as caixas dentro de cada nível (frame do footprint do rack)
@@ -799,6 +807,8 @@ def render_layout(body: ArrangeRequest):
             rack, n, dupla, local_cfg.altura_armazem_m, local_cfg.max_modulos_por_tipologia, pool,
             local_cfg.empilhamento_por_nivel)
         itens_json = _serializar_layout(posicoes_locais, rack_by_name)
+        for item in itens_json:   # de que bloco do canvas vem (alocação: id estável da posição)
+            item["bloco_id"], item["bloco_nome"] = b.get("id") or nome_bloco, nome_bloco
 
         # Posições que não vieram do pool real (ou o pool esgotou-se antes de
         # lá chegar) ficam com o aspeto de rack vazia -- enche-se com caixas
@@ -1010,6 +1020,77 @@ def render_layout(body: ArrangeRequest):
         "racks_manuais": racks_manuais_json,
         "avisos": avisos_obstaculos + avisos_manuais,
     }
+
+
+# ------------------------------------------------------------------- alocação
+class AlocacaoRequest(ArrangeRequest):
+    """O mesmo pedido do «Renderizar 3D» (blocos do canvas, pé-direito,
+    envelope, carros_alvo) + os parâmetros da alocação."""
+    carros_por_dia: int = 0          # 0 = Config.carros_por_dia
+    ponto_carga: list | None = None  # [x, y] no arranjo; omissão = zona com «comboio» no nome
+    # Incremental, estado e calibração dos tempos são AUTOMÁTICOS (alocacao.run);
+    # guardar o estado faz-se com /api/alocacao/guardar-estado, só quando há
+    # alterações à BOM ou à lógica.
+
+
+_ultima_alocacao: dict = {}     # a última alocação (para o cronograma de um dia, a pedido)
+
+
+@app.post("/api/alocacao")
+def alocacao_endpoint(body: AlocacaoRequest):
+    """Aloca o stock às racks que estão no arranjo AGORA (não gera layout) --
+    warehouse/alocacao.py. Grava também Config.output_alocacao (Excel)."""
+    from . import alocacao
+    if not str(cfg.pressupostos_picking):
+        raise HTTPException(status_code=422, detail="Config.pressupostos_picking vazio: indica o livro "
+                                                    "do comboio em dados/clients/<cliente>.json.")
+    try:
+        res, taxas = alocacao.run(cfg, body, None, body.carros_por_dia or None,
+                                  tuple(body.ponto_carga) if body.ponto_carga else None)
+    except PermissionError:
+        raise HTTPException(status_code=409, detail=f"Não consegui gravar {cfg.output_alocacao.name} "
+                                                    f"(aberto no Excel?). Fecha-o e repete.")
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    _ultima_alocacao["res"] = res
+    return alocacao.para_json(res, taxas)
+
+
+@app.post("/api/alocacao/guardar-estado")
+def alocacao_guardar_estado():
+    """Aceita a última alocação como o estado de referência -- só quando ela
+    traz alterações à BOM ou à lógica face ao estado guardado."""
+    from . import alocacao
+    res = _ultima_alocacao.get("res")
+    if res is None:
+        raise HTTPException(status_code=404, detail="Corre a alocação primeiro.")
+    if not res.estado.get("pode_guardar"):
+        raise HTTPException(status_code=409, detail="Nada para guardar: a BOM e a lógica são as do estado guardado.")
+    alocacao.guardar_estado(cfg.alocacao_estado, res)
+    res.estado.update(pode_guardar=False, guardado=True)
+    return {"ok": True, "estado": res.estado}
+
+
+@app.get("/api/alocacao/dia/{dia}")
+def alocacao_dia(dia: int):
+    """Cronograma de um dia da última alocação: tarefas do armazém e do
+    comboio com horas de relógio e os picks de cada preparação."""
+    from . import tempos
+    res = _ultima_alocacao.get("res")
+    if res is None or res.tempos is None:
+        raise HTTPException(status_code=404, detail="Corre a alocação primeiro.")
+    if not 1 <= dia <= res.tempos.dias:
+        raise HTTPException(status_code=422, detail=f"Dia fora do horizonte (1 a {res.tempos.dias}).")
+    return tempos.cronograma(res.tempos, dia)
+
+
+@app.get("/api/download/alocacao")
+def download_alocacao():
+    path = cfg.output_alocacao
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"{path.name} ainda não foi gerado -- corre a alocação primeiro.")
+    return FileResponse(path, filename=path.name,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ------------------------------------------------------------------- static

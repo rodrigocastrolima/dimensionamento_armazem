@@ -42,6 +42,8 @@ _CLIENT_FIELD_CONVERTERS = {
     "empilhamento_por_nivel": tuple,
     "picking_manual_racks": tuple,
     "pilar_rack_m": dict,
+    "pressupostos_picking": Path,
+    "output_procura": Path,
 }
 
 
@@ -68,6 +70,81 @@ class Config:
     # relatório de saída são eixos independentes.
     master_data: Path = Path("dados/master_data_classificado_v3.xlsx")
     output: Path = Path("dados/resultados.xlsx")
+
+    # Procura de picking (warehouse/procura.py): livro do comboio de onde vêm
+    # os pressupostos do abastecimento à linha (PFEP, «Consumo SKU», horário
+    # das voltas, regra do bulk) -- é o utilizador que os decide lá, aqui só
+    # se leem. Vazio = procura desligada. carros_por_dia: inteiro >= 1 (o
+    # horário de consumo é por carro); 1 = o do livro, validado contra ele.
+    pressupostos_picking: Path = Path("")
+    output_procura: Path = Path("dados/procura_picking.xlsx")
+    carros_por_dia: int = 1
+    # Horizonte da simulação (dias úteis) -- não é escolha do utilizador. O
+    # padrão de consumo não se repete na prática (cada referência tem o seu
+    # período, de 1 a 1600 dias; o m.m.c. dá ~4e16 dias), e os picos aparecem
+    # quando os períodos coincidem: com nível inicial 0 o 1.º é ao dia 31, que
+    # o livro (30 dias, limite das 300 linhas da «7b») não vê. 250 = 1 ano de
+    # operação. A validação contra o livro corre à parte com os 30 dias dele.
+    simulacao_dias: int = 250
+    # Consumíveis (SKUs sem PFEP): «semanal» = reposição à parte, fora do
+    # comboio, de consumiveis_periodo_dias em consumiveis_periodo_dias dias
+    # úteis (decisão do utilizador, 2026-11-05: "reposição semanal à parte por
+    # agora"); «voltas» = nas voltas de caixas/paletes e no bulk, como as
+    # referências do PFEP. 5 dias úteis = 1 semana (ASSUNÇÃO: 1 turno, 5 dias).
+    consumiveis_reposicao: str = "semanal"
+    consumiveis_periodo_dias: int = 5
+
+    # Tempos de picking (warehouse/tempos.py) -- também são o custo da alocação.
+    # Uma viagem por unidade (ida e volta), como o livro. Velocidades: ASSUNÇÃO
+    # (o livro não as tem; o manuseio é calibrado para a média bater com ele).
+    picking_velocidade_m_s: dict = field(default_factory=lambda: {
+        "a pé": 0.8, "order-picker": 1.5, "empilhador": 2.0})
+    # equipamento por tipologia (substring do nome); o resto vai a pé. As peças
+    # de carrinho e de kit vão sempre a pé.
+    picking_equipamento: dict = field(default_factory=lambda: {
+        "prateleira": "order-picker", "porta-paletes": "empilhador"})
+    # +30 s se o topo do nível passar de 1,6 m (zona de alcance): os 30 s são os
+    # do livro («Arm Picking + Preparação», linha 56).
+    picking_altura_limite_m: float = 1.6
+    picking_altura_extra_min: float = 0.5
+    picking_grelha_m: float = 0.25          # passo da grelha dos percursos
+    # passagem mínima para um operador com carro: uma fresta mais estreita entre
+    # racks/obstáculos não é caminho (tempos.construir_grelha, folga = metade)
+    picking_passagem_min_m: float = 0.8
+    # para onde vai o picking (o operador leva aí cada unidade): nome da zona
+    # (igual, sem maiúsculas; senão a 1.ª que o contenha). Pedido do utilizador
+    # (2026-11-05): a «ZONA DE ESPERA», não a zona do comboio.
+    picking_zona_destino: str = "ZONA DE ESPERA"
+    # voltas regulares no horário do livro TODOS os dias (regra do utilizador,
+    # 2026-11-05: o horário é calculado pelo livro para o pior dos 30 dias, o
+    # mais cedo possível; num dia mais pesado a volta sai atrasada). False =
+    # cada dia parte mal possa. A hora mínima do bulk (13:00) e a ordem «caixas
+    # primeiro» vêm do livro («Parâmetros» C104 e C106).
+    voltas_horario_do_livro: bool = True
+    tempos_calibracao: Path = Path("dados/tempos_calibracao.json")   # manuseio calibrado (referência)
+
+    # Alocação às racks do arranjo (warehouse/alocacao.py). Custo de um nível =
+    # minutos de uma visita (ida e volta + altura, tempos.custo_visita_min).
+    # Contiguidade: a unidade seguinte de um SKU fica numa posição onde ele já
+    # está (ou num módulo vizinho) se lá houver lugar até esta diferença de
+    # custo (min) face ao mais barato. 1,0 min (2026-11-05, com a zona de bulk):
+    # nas prateleiras a diferença máxima é ~0,8 min (+30 s de altura + andar),
+    # por isso um SKU fica sempre junto -- com 0,1 ficavam 5 SKUs partidos por
+    # módulos não vizinhos, por +0,3 min/dia de deslocação. 0 = só custo (espalha).
+    alocacao_tolerancia_contiguo_min: float = 1.0
+    # zona de bulk (decisão do utilizador, 2026-11-05): o que vai no bulk sai
+    # todos os dias e prepara-se de uma vez, num percurso -> arruma-se primeiro,
+    # junto ao destino do picking; depois as voltas, depois os consumíveis.
+    # False = só frequência × custo da visita (o bulk espalhava-se pelos níveis
+    # baixos de todos os módulos, porque subir acima de 1,6 m custa mais do que andar).
+    alocacao_zona_bulk: bool = True
+    # OVERSIZE em racks normais (decisão do utilizador, 2026-11-09): numa fila
+    # DUPLA de porta-paletes com corredor dos dois lados, o mesmo módulo da
+    # frente e de trás funciona como uma emparelhada (posição «frente+trás»).
+    alocacao_oversize_em_pares: bool = True
+    output_alocacao: Path = Path("dados/alocacao.xlsx")
+    alocacao_fixacoes: Path = Path("dados/alocacao_fixacoes.json")   # {sku: endereço}
+    alocacao_estado: Path = Path("dados/alocacao_estado.json")       # última alocação guardada
 
     # Passo 1 — escolha de caixa
     # NOTA: existiu aqui um `box_strategy` (enum BoxStrategy com FEWEST_BOXES /

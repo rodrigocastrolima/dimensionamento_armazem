@@ -848,57 +848,18 @@ def _tentar_colocar_em_posicao(pos: PosicaoChao, rack: RackType, item: _ItemPara
     return False
 
 
-def allocate_to_racks(assignments: list[BoxAssignment],
-                      requirements: list[RackRequirement],
-                      rack_types: list[RackType],
-                      catalogo: dict[LoadType, BoxType],
-                      articles: list[Article],
-                      altura_picking_m: float = 0.0,
-                      altura_armazem_m: float = 0.0,
-                      cfg: Config | None = None) -> tuple[list[PosicaoChao], list[str]]:
-    """Aloca todas as caixas de todos os tipos de carga, num packer 2D real
-    (rectpack) por nível, com mistura livre de tipos de carga no mesmo
-    nível/módulo/posição quando a tipologia de rack aceita esses tipos.
+def preparar_itens(assignments: list[BoxAssignment], rack_types: list[RackType],
+                   catalogo: dict[LoadType, BoxType], articles: list[Article],
+                   altura_picking_m: float, _cfg: Config) -> tuple[dict, list[_ItemParaColocar]]:
+    """Unidades a arrumar (stacks, com a altura REAL das paletes/meias) e as
+    tipologias compatíveis com cada tipo de carga, por footprint crescente.
 
-    Algoritmo:
-    1. Reúne todas as caixas individuais de todos os SKUs/tipos de carga.
-       Para cada SKU, marca a 1ª caixa como "precisa picking" (se o modo
-       picking estiver ativo) e o resto como overflow/reserva.
-    2. Ordena por área da caixa decrescente (first-fit-decreasing): caixas
-       maiores primeiro aproveitam melhor o espaço.
-    3. Para cada caixa: escolhe a(s) tipologia(s) de rack compatíveis com o
-       seu load_type (RackType.aceita). Tenta encaixar numa posição/nível já
-       aberto (zona de picking se for a 1ª do SKU, senão reserva,
-       preferindo a MESMA posição onde esse SKU já tem presença de picking);
-       só abre posição nova quando as existentes esgotaram os blocos
-       possíveis (altura_armazem_m).
-
-    Sem modo picking (altura_picking_m <= 0): todos os níveis contam como
-    reserva (eh_picking=False em todos) -- o algoritmo funciona igual, só
-    não há a obrigação da 1ª caixa ir a zona especial.
-
-    Devolve (posicoes, avisos): posicoes é a lista de PosicaoChao (uma por
-    posição de chão física, agrupadas por tipologia), cada uma com os seus
-    próprios blocos/níveis/caixas reais; avisos sinaliza SKUs cuja presença
-    em picking não foi possível garantir (capacidade de picking esgotada em
-    todas as tipologias compatíveis).
-    """
+    Extraído de `allocate_to_racks` (2026-11-05) sem mudar nada, para a
+    alocação ao arranjo (`warehouse/alocacao.py`) arrumar EXATAMENTE as mesmas
+    unidades que o dimensionamento -- mesma altura real, mesmo empilhamento de
+    caixas, mesmas peças por unidade. Devolve (candidatos_por_tipo, itens), com
+    os itens já em first-fit-decreasing (área, depois altura)."""
     article_idx = {a.sku: a for a in articles}
-    rack_by_name = {r.nome: r for r in rack_types}
-    # cfg é opcional nesta função: resolve-se uma vez aqui, em vez de a cada uso
-    _cfg = cfg if cfg is not None else Config()
-    max_modulos = _cfg.max_modulos_por_tipologia
-    # Tipologias de empilhamento NÍVEL A NÍVEL (ver blocos_empilhados/
-    # niveis_efetivos): o único módulo delas usa este nº de níveis em vez de
-    # rack.niveis -- calculado uma vez aqui (não muda durante a alocação,
-    # só depende da tipologia + pé-direito) e passado a _abrir_bloco em cada
-    # posição nova, para o packer nunca ver mais níveis do que os que cabem
-    # fisicamente (e por isso abrir mais posições em vez de perder stock).
-    niveis_ov_por_rack = {
-        r.nome: niveis_efetivos(r, altura_armazem_m, _cfg.empilhamento_por_nivel)
-        for r in rack_types
-    }
-
     candidatos_por_tipo: dict[LoadType, list[RackType]] = {}
     for lt in LoadType:
         compativeis = [r for r in rack_types if lt in r.aceita]
@@ -1063,6 +1024,62 @@ def allocate_to_racks(assignments: list[BoxAssignment],
     # ordem dos SKUs). Sort estável: preserva a ordem i=0,1,2.. dentro do
     # mesmo SKU (mesma área e altura).
     itens.sort(key=lambda it: (it.comp_m * it.larg_m, it.alt_m), reverse=True)
+    return candidatos_por_tipo, itens
+
+
+def allocate_to_racks(assignments: list[BoxAssignment],
+                      requirements: list[RackRequirement],
+                      rack_types: list[RackType],
+                      catalogo: dict[LoadType, BoxType],
+                      articles: list[Article],
+                      altura_picking_m: float = 0.0,
+                      altura_armazem_m: float = 0.0,
+                      cfg: Config | None = None) -> tuple[list[PosicaoChao], list[str]]:
+    """Aloca todas as caixas de todos os tipos de carga, num packer 2D real
+    (rectpack) por nível, com mistura livre de tipos de carga no mesmo
+    nível/módulo/posição quando a tipologia de rack aceita esses tipos.
+
+    Algoritmo:
+    1. Reúne todas as caixas individuais de todos os SKUs/tipos de carga.
+       Para cada SKU, marca a 1ª caixa como "precisa picking" (se o modo
+       picking estiver ativo) e o resto como overflow/reserva.
+    2. Ordena por área da caixa decrescente (first-fit-decreasing): caixas
+       maiores primeiro aproveitam melhor o espaço.
+    3. Para cada caixa: escolhe a(s) tipologia(s) de rack compatíveis com o
+       seu load_type (RackType.aceita). Tenta encaixar numa posição/nível já
+       aberto (zona de picking se for a 1ª do SKU, senão reserva,
+       preferindo a MESMA posição onde esse SKU já tem presença de picking);
+       só abre posição nova quando as existentes esgotaram os blocos
+       possíveis (altura_armazem_m).
+
+    Sem modo picking (altura_picking_m <= 0): todos os níveis contam como
+    reserva (eh_picking=False em todos) -- o algoritmo funciona igual, só
+    não há a obrigação da 1ª caixa ir a zona especial.
+
+    Devolve (posicoes, avisos): posicoes é a lista de PosicaoChao (uma por
+    posição de chão física, agrupadas por tipologia), cada uma com os seus
+    próprios blocos/níveis/caixas reais; avisos sinaliza SKUs cuja presença
+    em picking não foi possível garantir (capacidade de picking esgotada em
+    todas as tipologias compatíveis).
+    """
+    article_idx = {a.sku: a for a in articles}
+    rack_by_name = {r.nome: r for r in rack_types}
+    # cfg é opcional nesta função: resolve-se uma vez aqui, em vez de a cada uso
+    _cfg = cfg if cfg is not None else Config()
+    max_modulos = _cfg.max_modulos_por_tipologia
+    # Tipologias de empilhamento NÍVEL A NÍVEL (ver blocos_empilhados/
+    # niveis_efetivos): o único módulo delas usa este nº de níveis em vez de
+    # rack.niveis -- calculado uma vez aqui (não muda durante a alocação,
+    # só depende da tipologia + pé-direito) e passado a _abrir_bloco em cada
+    # posição nova, para o packer nunca ver mais níveis do que os que cabem
+    # fisicamente (e por isso abrir mais posições em vez de perder stock).
+    niveis_ov_por_rack = {
+        r.nome: niveis_efetivos(r, altura_armazem_m, _cfg.empilhamento_por_nivel)
+        for r in rack_types
+    }
+
+    candidatos_por_tipo, itens = preparar_itens(assignments, rack_types, catalogo, articles,
+                                                altura_picking_m, _cfg)
 
     posicoes_por_tipologia: dict[str, list[PosicaoChao]] = {r.nome: [] for r in rack_types}
     sku_posicao: dict[str, tuple[str, int]] = {}   # sku -> (rack_nome, indice) com picking

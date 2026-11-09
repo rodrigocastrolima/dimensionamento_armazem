@@ -13,6 +13,9 @@ dados/*.xls
 dados/*.csv
 dados/*.bak
 dados/cenarios/
+# alocação (warehouse/alocacao.py): estado e fixações têm SKUs reais
+dados/alocacao_*.json
+dados/tempos_calibracao.json
 !dados/clients/*.json
 # histórico (versões antigas do master data, estudos exploratórios) -- ver
 # dados/archive/README.md. O próprio manifesto fica versionado (é

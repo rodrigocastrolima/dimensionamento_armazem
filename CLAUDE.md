@@ -51,8 +51,13 @@ passo − viga − folga); o passo físico só serve para o 3D
   unidades, nº de racks, área.
 
 ## FORA de âmbito
-Slotting, COI/ABC, otimização de picking, desenho de níveis de rack (os racks já
-vêm com níveis e altura por nível definidos). Não reintroduzir.
+Desenho de níveis de rack (os racks já vêm com níveis e altura por nível
+definidos). Não reintroduzir.
+
+Slotting, COI/ABC e otimização de picking estiveram aqui até 2026-11-05 e foram
+**reabertos por pedido explícito** (alocar componentes a posições do arranjo e
+prever o picking). Ver "Procura de picking por ciclo de reposição" abaixo --
+o dimensionamento (Passos 0-3) continua sem saber nada de picking.
 
 ## Decisões já fechadas
 - PALLET é entrada do catálogo «Caixas» (não dataclass separado).
@@ -694,6 +699,712 @@ de 1 módulo de porta-paletes e 2 SKUs / 6 un de palete (master data diferente).
 Área bruta com o `sia.json`: 416,5 → **442,4 m²**. Os racks descem de 106,9 para
 96,4 m², mas o bloco passa de 16,2 × 13,2 para 10,8 × 22,2 m: as caixas saíram do
 porta-paletes, e a prateleira (antes vazia) tem agora fiadas e corredores próprios.
+
+## Decisão fechada: procura de picking por ciclo de reposição (`procura.py`, 2026-11-05)
+Pedido explícito: alocar as peças às racks do arranjo e dar uma previsão e um
+mapa de calor de picking, de acordo com o dimensionamento do livro do comboio
+(`comboio bulk + armazem 23-10.xlsx`, no repo `dimensionamento_linha`). Esta é
+a 1.ª fase: **que SKUs saem do armazém, em que ciclo, unidade e quantidade**.
+A alocação (fase 2), os tempos de picking (fase 3) e o separador na UI (fase
+4) estão nas secções seguintes.
+
+**Os pressupostos vêm do livro, não do código** (decisão do utilizador:
+"pega nos pressupostos de movimentações, tempos, etc. do excel"):
+`Config.pressupostos_picking` (no `sia.json`, caminho relativo à raiz do repo)
+aponta para o livro; `procura.carregar_pressupostos` lê só VALORES (o livro tem
+de estar gravado pelo Excel, com os cálculos em cache). PFEP e «Consumo SKU»
+por nome de cabeçalho; parâmetros por endereço, como nas fórmulas do livro
+(«Parâmetros» C10/C11/C49, «Cenário» C12/C13 e a secção 5, coluna F = partida
+usada; «Kits» C4).
+
+**Fórmulas reproduzidas** (folhas «Esvaziamentos», «Entregas caixas», «7b
+Voltas», «Bulk»): esvaziadas(t) = INT(dias completos × emb/dia + Σ embalagens
+dos consumos da ref. até à hora de t + nível inicial); caixas usam t − atraso
+de reposição (coluna BN do PFEP), paletes/carrinhos não; entregas = diferença
+entre voltas consecutivas do mesmo tipo; o bulk tira a ref. das voltas e
+entrega as embalagens de um dia no fim do dia. **Validado a 1 carro/dia
+(`validar_contra_excel`, também em `tests/test_procura.py` contra o livro
+real): 60/60 voltas de caixas e 60/60 de paletes iguais à «7b Voltas» por
+unidade, as mesmas 50 linhas no bulk, bulk por dia igual à folha «Bulk» nos
+30 dias.** Médias por volta: 10,07 caixas, 0,92 paletes e meias, 0,58
+carrinhos (= «Arm Picking + Preparação», secção A).
+
+**Respostas do utilizador às questões em aberto (2026-11-05):**
+- Os 219 SKUs sem PFEP são **consumíveis**: "temos de ver a autonomia e
+  assumir". Assumido (`procura.ASSUNCOES`): unidade = a do armazém, consumo
+  regular (peças/carro × carros/dia), caixa reposta na volta seguinte do seu
+  tipo, bulk pela mesma regra. A 1 carro/dia só 19 dos 219 têm alguma saída
+  em 30 dias (as caixas duram meses). **Supersedido**: desde a fase 3 vão por
+  omissão numa reposição semanal à parte (ver "tempos de picking" abaixo).
+- Velocidades/tempos: **parametrizáveis, por omissão os do Excel** (fase 3).
+- Posições **fixas** por SKU (fase 2).
+- Carros por dia: **parâmetro** (`Config.carros_por_dia`, `--carros`), por
+  omissão 1. Tem de ser inteiro: com N carros, cada carro demora tempo/dia ÷ N
+  e os consumos acontecem à mesma fração desse tempo (o dia de 1 carro
+  comprimido) -- EXTRAPOLAÇÃO, não validável contra o livro (que é de 1
+  carro/dia). O horário das voltas não muda com N.
+
+**Ligação ref. do PFEP -> SKU do armazém** (`mapa_skus`): o PFEP usa às vezes
+só o código (`BEN10.CDF005`). Primeiro nome igual, depois o código entre os
+SKUs que nenhuma ref. levou pelo nome inteiro (caso `SKT10.BGB003`, ver
+docstring). Nos dados de hoje: 226/226 refs ligadas, sem aviso. As unidades do
+PFEP batem com as do armazém (herdadas da linha) em 208 das 228 linhas; as 20
+diferenças são os 16 carrinhos (no armazém seguem o best-fit, ver "HERDA a
+unidade") e 4 paletes: `FCC101`/`FCC103` (Europalete de 1 no PFEP, OVERSIZE
+no armazém) e `BCF001` / `SKT10.BGB003_____CMS,FR RR` (Europalete de 50 / 138
+no PFEP, palete de 15 / 6 no armazém -- já divergiam do motor da linha antes;
+o pick sai com a unidade do PFEP, por isso a alocação tem de tratar estas duas
+como "várias paletes do armazém por entrega" ou o PFEP tem de ser corrigido).
+
+**Carrinhos e kits**: um carrinho entregue = 1 visita a cada referência do
+carrinho, com as peças dela (PFEP «Qtd por embalagem»); kit no bulk = 1 visita
+por referência, com «Unidades por kit». Kits nas voltas regulares não são
+modelados (dão aviso; hoje não há nenhum).
+
+Saída: `python -m warehouse.procura [--carros N] [--dias D] [--out x.xlsx]` ->
+`Config.output_procura` (`dados/procura_picking.xlsx`, ignorado pelo git):
+folhas Leia-me (parâmetros + assunções), Picks (cada saída), Por volta, Por SKU
+(visitas/unidades/peças por dia -- o que a alocação vai usar), Validação, Avisos.
+
+## Decisão fechada: alocação às racks do ARRANJO (`alocacao.py`, 2026-11-05)
+Fase 2 do pedido acima. **Aloca às racks que estão no canvas nesse momento**
+(bloco de racks gerado e/ou filas manuais do sandbox) -- pedido explícito:
+"vai alocar as peças às racks que estiverem no arranjo em determinado momento,
+não vai gerar um layout novo". Posições **fixas** por SKU (resposta do
+utilizador). As regras estão em `alocacao.REGRAS` (também vão para o Excel,
+folha Leia-me): mudar uma regra é mudar o código E esse texto.
+
+**Geometria = a do `/api/render-layout`**: `alocacao.run` chama-o com o MESMO
+pedido (`AlocacaoRequest` herda `ArrangeRequest`: pé-direito, envelope,
+`carros_alvo` mudam o bloco) e lê `layout` + `racks_manuais`, já rodados e
+normalizados -- as coordenadas batem com o 3D. O render passou a anotar cada
+posição com `bloco_id`/`bloco_nome` (chaves novas, o 3D ignora-as). Id da
+posição: `<bloco_id>|<lado>|<índice>` (filas manuais) ou
+`racking|<tipologia>|<índice>` (bloco gerado); endereço legível
+`<nome do bloco> frente/trás · M03 · N2`, com os módulos numerados ao longo
+do eixo comprido da fila. Ponto de carga = centro da zona com «comboio» no
+nome (hoje «Zona armazenamento comboio»), ou `ponto_carga` no pedido.
+
+**Mesmas unidades do dimensionamento**: `racking.preparar_itens` foi EXTRAÍDO
+de `allocate_to_racks` sem mudar nada (verificado: `resultados.xlsx` igual
+folha a folha, 124 testes iguais) -- unidade herdada da linha, stack de caixas,
+altura REAL das paletes/meias (o 3.º nível do porta-paletes, 0,81 m úteis, só
+leva o que lá cabe: no bloco dimensionado 62 unidades, a mais alta com 0,75 m).
+
+**Algoritmo em duas etapas, e porquê** (medido no bloco dimensionado, 32
+posições, prateleiras a 100 %):
+- Arrumar por frequência unidade a unidade (COI puro) fragmentava os níveis:
+  ficavam de fora 11 OVERSIZE + 2 M, que o dimensionamento arruma. Não usar.
+- **1.ª etapa = o packer do dimensionamento**, com as posições por distância
+  ao ponto de carga: tipologias por footprint crescente (a palete tenta o
+  porta-paletes antes do par emparelhado, o único sítio das OVERSIZE -- por
+  custo puro as paletes enchiam os pares e ficavam de fora 8 a 30 OVERSIZE),
+  posição a posição, níveis de baixo para cima, itens por área decrescente.
+  Como as posições vazias de uma tipologia são iguais, dá a MESMA arrumação do
+  dimensionamento: **0 por alocar no bloco dimensionado, stock de todos os SKUs
+  igual** (teste de integração).
+- **2.ª etapa = trocas que não tiram nada do arranjo**: (a1) posições
+  INTEIRAS entre posições iguais (mesma tipologia e nº de níveis), a de mais
+  visitas para a mais perto; (a2) dentro de cada posição, níveis com a mesma
+  altura útil, o de mais visitas em baixo; (b) unidades com a mesma forma
+  (tipo + footprint), a de mais visitas no slot mais barato onde caiba em
+  altura -- `_atribuir_por_altura` garante a viabilidade com uma condição de
+  contagem por classe de altura (Hall): sem ela, uma palete baixa muito
+  procurada roubava o nível 1 e as altas ficavam sem lugar (teste
+  `test_palete_alta_nunca_vai_para_o_nivel_de_081`).
+- Trocar níveis SOLTOS em vez de posições inteiras ganhava mais (14 % contra
+  13,5 %) mas partia os SKUs que ocupam vários níveis (57 SKUs em mais de 1
+  posição, até 6). Com posições inteiras + contiguidade: 22 SKUs em mais de 1
+  posição (só a 1.ª etapa: 45), custo ponderado −13,5 % (rot 0) / −17 % (rot 90)
+  face à 1.ª etapa; classe A a 23 m em média, C a 30 m.
+- **Contiguidade** (`Config.alocacao_tolerancia_contiguo_min`, 0,1 min; era
+  `..._m` = 5 m antes da fase 3): na troca por forma, a unidade seguinte de um
+  SKU fica numa posição onde ele já está se lá houver lugar até 0,1 min mais
+  caro -- sem isto as 10 paletes de `BCB001` ficavam em 3 posições de 2 filas.
+
+**Custo de um nível**: era |dx| + |dy| + base do nível × 2 m/m; desde a fase 3
+é `tempos.custo_visita_min` (minutos de uma visita: ida e volta pela grelha ÷
+velocidade do equipamento + 30 s acima de 1,6 m) -- ver a secção seguinte. Os
+números de 13,5 % / 22 SKUs acima foram medidos com o custo antigo. Frequência =
+`procura.taxas_por_sku` (em regime: visitas/dia = embalagens/dia limitadas ao
+nº de voltas desse ciclo; nunca a contagem dos 30 dias simulados, que perde os
+SKUs de autonomia longa). Classes ABC por visitas (80 / 95 %).
+
+**Fixações** (`Config.alocacao_fixacoes`, `dados/alocacao_fixacoes.json`,
+`{sku: endereço}`, ignorado pelo git): entram primeiro e a 2.ª etapa não as
+mexe; endereço inexistente ou que não leva tudo -> aviso. **Incremental**
+(`--incremental`/`incremental: true`, estado em `Config.alocacao_estado`,
+gravado com `--guardar`/`guardar: true`): guarda a geometria EXATA de cada
+unidade (posição, nível, x, y, comp, larg, nº de caixas) e repõe-na tal e qual
+se ainda couber -- só se perde o que deixou de caber. Guardar só posição +
+nível e voltar a empacotar mudava 50 SKUs sem nada ter mudado (um nível cheio
+não volta a fechar com outra ordem). Reaplicado sem mudanças: 0 SKUs mudam.
+
+Nada some em silêncio: `NaoAlocado` com motivo ("o arranjo não tem nenhuma
+rack que a aceite (…)", "sem espaço…"). Ex.: o arranjo antigo do sandbox
+(`Downloads/arranjo_layout.json`, sem par emparelhado) deixa as 46 OVERSIZE
+de fora com esse motivo.
+
+Saídas: `python -m warehouse.alocacao arranjo_layout.json --altura 4.6
+[--carros N] [--incremental] [--guardar]` ou `POST /api/alocacao` (resposta
+com posições, níveis e caixas para o heatmap e a vista de frente da fase 4)
+-> `Config.output_alocacao` (`dados/alocacao.xlsx`, `GET /api/download/
+alocacao`): Leia-me (parâmetros, custo ponderado, regras), Localizações (1
+linha por unidade), Por SKU, Por posição (visitas/dia com escala de cor),
+Não alocados, Avisos. Testes: `tests/test_alocacao.py`.
+
+## Decisão fechada: tempos de picking pela localização (`tempos.py`, 2026-11-05)
+Fase 3. Respostas do utilizador: **1 viagem por caixa** (como o livro),
+**calibrar ao livro**, velocidades por omissão 0,8 m/s a pé / 1,5 order-picker
+/ 2,0 empilhador (ASSUNÇÃO), **+30 s acima de 1,6 m** de topo de nível.
+
+`tempo de um pick = manuseio + 2 × percurso ÷ velocidade + extra de altura`:
+- **Percurso** = Dijkstra numa grelha de 0,25 m (`Config.picking_grelha_m`)
+  do arranjo -- racks e obstáculos são paredes (obstáculo rodado = AABB), zonas
+  são chão; 8 vizinhos sem cortar esquinas; chega-se a uma posição pelos LADOS
+  COMPRIDOS (nunca pela cabeceira). Posição fechada -> distância em planta +
+  aviso. Do ponto de carga (zona «comboio»). Mesma distância na alocação.
+- **Equipamento**: `Config.picking_equipamento` por substring da tipologia
+  (prateleira -> order-picker, porta-paletes -> empilhador); peças de
+  carrinho e de kit sempre a pé. Sem velocidade de elevação: os 30 s do livro
+  («Arm Picking», linha 56) já são o extra de altura (contaria duas vezes).
+- **Manuseio calibrado**: manuseio = tempo do livro − deslocação média de
+  REFERÊNCIA (só refs do PFEP, pesada pelos picks dos dias simulados), por
+  tipo (caixa 2,5 / palete 3 / 1.ª peça de carrinho 3 / kit 2). Grava-se SÓ a
+  deslocação de referência (`Config.tempos_calibracao`,
+  `dados/tempos_calibracao.json`, no .gitignore) -- se um tempo do livro mudar
+  o manuseio acompanha. **A calibração não se refaz sozinha**: o 1.º arranjo
+  corrido é a referência e os seguintes comparam-se com ele (`--calibrar` /
+  `calibrar: true` para mudar de referência). Calibrar a cada corrida apagava
+  a diferença entre arranjos (média sempre = livro). Medido: com a calibração
+  do bloco dimensionado (comboio encostado), pôr o comboio 30 m do outro lado
+  leva a sobra de 34 para −12 min.
+
+**Preparação por volta** = fórmulas do livro («7b Voltas» BB/BC, «Bulk» AB)
+com a parte de picking trocada: caixa `C84 − G56` (esvaziar + carregar) + o
+picking pela localização; palete `C89 − G70` + picking; carrinho `C90` +
+1.ª peça de cada ref. pela localização + peças a mais `C103`; carruagens
+`C87`/`C94`, fixo `C88`/`C95`; bulk com as viagens do livro (carruagens e fixo
+por viagem, kit `C92`). Carruagens: as da «7b» (com vazios) a 1 carro/dia;
+com outros carros/dia, só as cheias (aproximação, com aviso).
+
+**Gantt do armazém** (`tempos.gantt`) = regras da folha «Gantt»: pior volta de
+cada posição do dia nos dias simulados; 1 trem em avanço; margem
+preparação × (1/85 % − 1) em branco a seguir; a volta parte quando a
+preparação acaba; bulk depois da última regular (C102 = Não): paletes, margem
+(**se uma pausa de trabalho cair dentro dela, a pausa faz de margem** -- sem
+esta regra dava 51,9 em vez de 46,8), caixas, margem, 1.ª volta de amanhã +
+margem. **Validado a 1 carro/dia, 30 dias: 60/60 + 60/60 voltas = «7b» BB/BC,
+bulk 214,25 min/dia = «Bulk» AB nos 30 dias, sobra 46,76 min e 0 atrasadas =
+«Gantt» C7/C14** (com outro nº de dias o Gantt dá "não aplicável").
+
+**Resultado no bloco dimensionado** (comboio encostado, calibrado aí), com os
+consumíveis nas voltas: livro sobra 46,8 min; modelo 35,1 min e **1 volta
+atrasada 0,8 min (não encaixa)**; modelo sem consumíveis 44,6 min, encaixa.
+Quem tirava o arranjo do Gantt eram os **consumíveis** (o livro não os tem:
++1,8 min por volta de caixas em média), não a localização.
+
+**Decisão do utilizador (2026-11-05): consumíveis em reposição SEMANAL à
+parte, "por agora"** (`Config.consumiveis_reposicao = "semanal"`, `"voltas"`
+volta ao comportamento anterior; `Config.consumiveis_periodo_dias = 5`, 1
+semana de dias úteis, ASSUNÇÃO). Ciclo `procura.SEMANAL`: no início do dia
+1, 6, 11, … leva as caixas que esvaziaram desde a anterior; fora do comboio e
+do bulk; frequência = 1 visita por semana no máximo. Preparação de cada
+reposição (`tempos._prep_semanal`) = unidades × (esvaziar + picking pela
+localização) + lista e verificação de uma volta de caixas (C88), e **não entra
+no Gantt diário**: verifica-se se a pior (÷ 85 %) cabe na sobra do dia.
+Consumível que gaste mais de 1 unidade por semana -> aviso (o bordo de linha
+tem de aguentar a semana; hoje, a 1 carro/dia, nenhum). Resultado: Gantt do
+modelo 44,5 min de sobra, 0 atrasadas (**encaixa**); 5 reposições em 30 dias,
+média 19,4 min, pior 26,6 (31,3 com a margem) < 44,5 -> cabe. **Estes números
+são dos 30 dias do livro; com o horizonte de 1 ano (secção seguinte) mudam.**
+
+## Decisão fechada: horizonte de 1 ano, Gantt dia a dia, validação a 30 dias à parte (2026-11-05)
+O utilizador questionou "dias a simular" como parâmetro ("não faz grande
+sentido"). Tinha razão: era o «Parâmetros»!C49 do livro, cujo 30 é um limite
+técnico (300 linhas da «7b»), e o resultado dependia dele -- com nível inicial 0
+(as 228 linhas do PFEP) todas as caixas arrancam cheias e as referências com
+autonomias 2 / 2,5 / 3 / 5 / 10 / 15 / 20 / 30 carros esvaziam juntas no dia 31
+(1.ª volta de caixas com 32 caixas contra 11,7 de média; repete-se a 61, 121,
+181…). Não há "ciclo completo": cada referência repete-se no seu período (1 a
+1600 dias) e o m.m.c. dá ~4e16 dias.
+
+- **`Config.simulacao_dias = 250`** (1 ano de dias úteis), fora da UI e da
+  API (o campo «Dias a simular» e `dias` do `AlocacaoRequest` saíram; o
+  `--dias` das CLIs também). `alocacao.run(dias=...)` fica só para testes.
+- **Validação contra o livro numa corrida à parte com os 30 dias dele**
+  (`tempos.avaliar(..., res_proc_validacao)`; `procura.run` idem) -- continua
+  4/4 OK.
+- **Gantt dia a dia** (`tempos.gantt_por_dia`): o Gantt de CADA dia (as
+  preparações desse dia + a 1.ª volta do dia seguinte), além da pior volta de
+  cada posição do dia (como o livro, agora com "(pior: dia N)" no nome). A
+  reposição semanal compara-se com a sobra do PRÓPRIO dia. Saídas: folha
+  «Gantt por dia», bloco «Dia a dia» na folha «Tempos», `tempos.por_dia` e
+  `tempos.dias` na API, linha "Dias que não encaixam" no painel.
+
+**Medido (bloco dimensionado, 1 carro/dia, tempos do livro):**
+
+| | prep. média | caixas/dia | dias que não encaixam | pior sobra |
+|---|---|---|---|---|
+| 30 dias (livro) | 296,2 min (= «Comparação» D38) | 20,1 | 0 | 47,7 |
+| 250 dias | 304,7 | 23,5 (+17 %) | 71 (28 %) | 0,9 |
+| 250 dias, níveis iniciais desfasados (fração por linha, ângulo dourado) | 305,5 | 23,7 | 98 (39 %) | 40,9 |
+
+- **Os 30 dias do livro são o ARRANQUE, mais leve do que o regime**: as
+  caixas de autonomia longa ainda não esvaziaram (+17 % de caixas por dia em
+  regime). As médias do livro (10,07 caixas por volta, 296 min/dia) estão
+  por baixo.
+- **O que falha é SEMPRE a volta «Caixas 2»** (partida forçada aos 75 min,
+  «Cenário» E63; a preparação só começa quando a «Paletes 1» parte, aos 42 min
+  -> 33 min de janela). Atrasos pequenos: 58 dos 71 dias < 5 min, 4 dias ≥ 10
+  min. O fim do dia aguenta (pior sobra 0,9 min). Desfasar tira os picos (pior
+  sobra 40,9) mas espalha a carga e há MAIS dias com a «Caixas 2» atrasada --
+  não resolve; o horário das voltas é que é apertado. Por decidir pelo
+  utilizador.
+- Com os tempos pela localização (calibrados no bloco): 69 dias não encaixam,
+  pior dia 180. A **reposição semanal** em 1 ano: 49 reposições, média 39 min,
+  pior 128 min, não cabe na sobra do dia em 7 semanas -- os consumíveis também
+  arrancam todos cheios e esvaziam juntos ao fim de meses.
+
+Saída: folhas «Tempos» (Gantt livro / modelo / sem consumíveis, preparação
+média, calibração, validação, Gantt tarefa a tarefa, assunções) e «Tempos por
+volta» no `alocacao.xlsx`; «Por posição» ganha «Picking (min/dia)» com escala
+de cor; `/api/alocacao` devolve `tempos` e `picking_min_dia` por posição
+(`calibrar`, `dias` no pedido). Testes: `tests/test_tempos.py` + validação
+contra o livro no teste de integração de `tests/test_alocacao.py`.
+
+## Decisão fechada: separador «Alocação & Picking» (fase 4, 2026-11-05)
+Pedido explícito: "um separador novo, com todas as funcionalidades
+necessárias... carregar numa rack e ver a rack de frente e as peças em cada
+posição". Só apresentação -- todos os números vêm do `/api/alocacao`.
+
+- **Mesmo arranjo do 3D**: o corpo do pedido do «Renderizar 3D» passou para
+  uma função única, `pedidoArranjo()` (index.html, logo a seguir a
+  `canvasBlocks`: blocos do canvas + Cubo + altura/picking/envelope/
+  carros_alvo), usada pelo próprio render E exposta em `window` para o
+  separador -- os dois nunca divergem. `window.temArranjo()` diz se há racks.
+- **Código à parte**: `warehouse/static/alocacao.js` (módulo carregado no fim
+  do index.html), para não crescer mais o script principal (~3400 linhas). O
+  HTML da secção e o CSS (`.aloc-*`) estão no index.html.
+- **Planta**: SVG em metros (viewBox = envolvente de posições, zonas,
+  obstáculos, Cubo e ponto de carga), nas coordenadas do render
+  (`para_json` passou a devolver `planta`: zonas, obstáculos, Cubo). Mapa de
+  calor por posição: minutos de picking/dia (omissão), visitas/dia, classe ABC
+  (melhor classe presente) ou ocupação em planta; escala branco -> amarelo ->
+  vermelho igual à do Excel. Ponto de carga a azul. Pesquisa de SKU destaca as
+  posições e filtra a tabela.
+- **Vista de frente** (clique numa rack): níveis à escala nas cotas FÍSICAS
+  (`base_m`) com a altura útil tracejada (vê-se o 0,81 m do 3.º nível do
+  porta-paletes), caixas/paletes à largura (`comp_m`, ao longo do vão) e
+  altura reais, cor pela classe; as de trás (`y_m` > 5 % da profundidade)
+  mais claras e sem rótulo. Rótulo = código curto (sem BEN10./SKT10., até ao
+  1.º "_" ou espaço -- há SKUs sem «_____») cortado à largura. Por baixo, o
+  conteúdo por nível (SKU, unidade, nº, peças, classe, visitas/dia).
+- **Painéis**: Gantt (livro / modelo / sem consumíveis, sobra e
+  atrasadas, ENCAIXA/NÃO ENCAIXA), reposição semanal (CABE/NÃO CABE),
+  validação contra o livro, resumo (alocadas, por alocar com motivos, ABC,
+  deslocação ponderada), avisos; tabela de localizações (clique seleciona a
+  rack); link para o Excel. Parâmetros: carros/dia, dias, incremental,
+  guardar como estado, recalibrar. **Supersedido em parte** (painéis, tabela
+  de localizações, campo «dias») -- ver "ecrã reformulado" abaixo.
+
+Verificado no browser com o bloco gerado (altura 4,6): 1152 unidades em 32
+posições, nada por alocar, Gantt 46,8 / 44,5 min (encaixa), vista de frente de
+prateleira (6 níveis) e de porta-paletes (3.º nível só paletes baixas),
+pesquisa `BCB001` -> 10 paletes numa posição; «Armazém 3D» sem alteração (render
+200, 89,81 m²); consola sem erros. **A calibração dos tempos gravada no teste
+foi apagada**: o 1.º arranjo que o utilizador alocar passa a ser a referência.
+
+## Decisão fechada: ecrã reformulado -- calor de todas as movimentações, cronograma do dia (2026-11-05)
+Decisões do utilizador: **os atrasos da volta «Caixas 2» são aceites**; o ecrã
+passa a ser planta pequena (esquerda) + rack de frente e componentes (direita)
++ faixa de indicadores + **o ano e o cronograma do dia** em baixo, em vez da
+tabela de localizações ("já sai num Excel"). Para analisar os dias de rotura.
+
+- **Calor de todas as movimentações** (modo por omissão do mapa): o CHÃO com
+  as passagens/dia de todas as idas e voltas de picking
+  (`tempos.percursos`: cada visita a uma posição desce o gradiente da mesma
+  grelha dos tempos até ao ponto de carga, ×2; células de 0,5 m;
+  `planta.percursos` na API; cor pela raiz para o ponto de carga não esmagar o
+  resto) e as RACKS com visitas/dia de todos os ciclos (voltas, bulk,
+  reposição semanal). As zonas são chão: os percursos atravessam-nas na
+  diagonal se for mais curto (assunção da fase 3).
+- **O Gantt passou a ser calculado tarefa a tarefa** (`tempos._dia`: o
+  armazém E o comboio), e `gantt()` / `gantt_por_dia()` / `cronograma()`
+  usam essa função -- uma fonte só. Comboio: volta regular parte à hora
+  planeada ou quando a preparação acaba e dura o «t volta máx.» do livro
+  («Cenário» col. I); viagem do bulk parte quando está pronta (preparação do
+  modelo repartida pelas viagens na proporção da «Bulk» AB), o(s) posto(s)
+  acabaram («Bulk» F) e o comboio está livre, ou à hora forçada («Bulk» AE);
+  dollys (`«7c Relatório»` E29) no fim. **Bate com a folha «Gantt»** com os
+  tempos do livro: viagens 14:09 / 14:31 / 14:53 (atravessa a pausa, 15:24) /
+  15:25, comboio acaba 16:05, armazém acaba 16:03 (`fim_trabalho`, sem a
+  margem final; a sobra inclui-a, 46,76).
+- **Horas de relógio**: turno «Cenário» C53/D53, pausas G54:G56 (início em min
+  de trabalho) e E54:E56 (duração). Numa fronteira de pausa, uma tarefa que
+  começa aí começa depois, uma que acaba aí acaba antes (`_relogio(depois=)`);
+  as barras partem-se nas pausas (`_segmentos`).
+- **`GET /api/alocacao/dia/{dia}`** (a última alocação fica em
+  `web._ultima_alocacao`): tarefas do dia (armazém e comboio, horas, atraso,
+  nota) e os picks de cada preparação (SKU, unidade, nº, peças, posto,
+  endereços, tempo). Os picks do bulk vão para a viagem cujo posto bate
+  («Bulk» H); a 1.ª volta de hoje mostra os picks no comboio (foi preparada
+  ontem); «Preparar … de amanhã» mostra os do dia seguinte. A resposta do
+  POST deixou de levar todas as voltas (614 KB; estão no Excel).
+- **O ano**: um quadrado por dia útil (colunas = semanas): verde encaixa,
+  âmbar = só voltas atrasadas (aceites), vermelho = sobra < 0 ou a reposição
+  semanal não cabe (`por_dia.semanal_cabe`). Pior dia, próximo vermelho, ◀ ▶.
+  Ao alocar abre-se o pior dia e a posição com mais movimentações.
+- Exemplo lido no ecrã (bloco dimensionado): 9 dias vermelhos, 60 âmbar; o
+  pior, dia 180, rebenta por «Preparar Caixas 1 de amanhã» com 32 caixas --
+  amanhã é o dia 181, um dos picos periódicos (31, 61, 121, 181…).
+
+## Decisão fechada: incremental, estado e calibração AUTOMÁTICOS -- sem opções (2026-11-05)
+Pedido do utilizador: "as 3 opções não deviam ser opções". Saíram da UI, da API
+(`AlocacaoRequest`) e das CLIs `--incremental`/`--calibrar`; o que se dizia
+acima sobre elas (fase 2 e 3) fica supersedido por isto:
+
+- **Incremental = consequência**: `alocacao.assinatura_logica(cfg)` (hash de
+  `ALGORITMO_VERSAO` + os parâmetros que decidem onde fica cada coisa:
+  velocidades, equipamento, altura limite e extra, tolerância de
+  contiguidade, grelha, regra dos consumíveis -- NÃO os carros/dia nem a BOM,
+  que são entradas). Estado guardado com a mesma assinatura -> incremental;
+  sem estado -> de raiz E guarda-se sozinho; assinatura diferente (ou estado no
+  formato antigo) -> de raiz. **Quem mudar as regras de alocação no código
+  tem de subir `ALGORITMO_VERSAO`**, senão o incremental repõe arrumações
+  feitas com as regras antigas.
+- **Guardar estado só com alterações**: o estado (`versao: 2`) guarda a
+  geometria + a BOM (`impressao_bom`: sku -> unidade, peças/unidade, nº de
+  unidades, peças/carro) + a assinatura. `comparar_bom` dá novos / removidos /
+  alterados; `res.estado.pode_guardar` só quando há alterações à BOM ou a
+  lógica mudou. UI: botão «Guardar como estado» que só aparece aí
+  (`POST /api/alocacao/guardar-estado`, 409 se não houver nada); CLI
+  `--guardar` idem. Mudar o ARRANJO não oferece guardar (pedido: só a BOM):
+  as unidades cujas posições deixaram de existir voltam a arrumar-se, de forma
+  determinística, em cada corrida.
+- **Calibração automática no armazém dimensionado**
+  (`calibracao_automatica`): a referência deixou de ser "o 1.º arranjo
+  corrido" e passou a ser o bloco de racks + zonas como o «Gerar racks» os põe
+  (`web.blocos_canvas_por_omissao`, extraído de `/api/gerar` para os dois
+  usarem a mesma grelha de zonas). Reproduzível e igual para todos os
+  arranjos. Refaz-se sozinha quando muda alguma coisa de que depende (chave:
+  lógica, BOM, tempos do livro, racks, zonas, pé-direito/envelope/carros_alvo,
+  carros/dia) -- `tempos_calibracao.json` guarda a chave; senão lê-se
+  ("lida"/"refeita" em `res.estado.calibracao`). Custa uma alocação a mais só
+  quando se refaz.
+
+Verificado: API (sem estado -> de raiz + guardado; lógica mudada -> de raiz +
+pode guardar; guardar 200, outra vez 409; a seguir incremental, 0 mudanças,
+calibração lida) e browser (1.ª corrida de raiz / refeita, 2.ª incremental /
+lida, botão escondido). O estado do teste no browser foi apagado.
+
+## Decisão fechada: Zona de Espera, caminhos reais, mapa do dia, cronograma encadeado (D2, 2026-11-05)
+Pedido do utilizador (4 pontos), o que se dizia acima sobre o cronograma
+"à hora do livro" fica supersedido por isto:
+
+- **Destino do picking = Zona de Espera** (`Config.picking_zona_destino =
+  "ZONA DE ESPERA"`), não o comboio. `alocacao.ponto_de_carga` procura primeiro
+  o nome EXATO (strip/lower) e só depois por substring -- "espera" apanhava
+  "Espera para Armazenagem". Se a zona não existir no arranjo: aviso e cai na
+  zona do comboio. Entra em `assinatura_logica` (mudar o destino refaz de raiz).
+- **Caminhos não atravessam racks**: a grelha (`tempos.construir_grelha`) incha
+  cada obstáculo em `folga = picking_passagem_min_m / 2` (0,8 m -> 0,4 m), por
+  isso frestas mais estreitas que 0,8 m não são caminho; a descida do Dijkstra
+  não corta cantos. `tempos.rotas()` dá o calor fino do chão e uma polilinha
+  por posição (`planta.caminhos`). As zonas contam como chão pisável.
+- **Mapa do dia**: ao escolher um dia a planta passa a mostrar só os caminhos
+  desse dia (`cronograma.movimentos_dia`, espessura ~ nº de idas); ao abrir uma
+  tarefa, só os dela (`tarefa.movimentos`). A posição de cada pick sai de uma
+  atribuição FIFO unidade->posição (`ResultadoTempos.posicoes_pick`).
+  «Ver o ano» / «Ver o dia N» alternam.
+- **Cronograma encadeado, sem horas fixas** (`tempos._dia`, inspirado no Gantt
+  do «comboio bulk + armazem 23-10 D2.xlsx», com crítica):
+  - voltas na ordem do livro (C1 P1 C2 P2 ...); 1 trem em avanço: a preparação
+    seguinte começa quando a anterior + margem acaba E a volta anterior já
+    partiu; margem = 85 % (dur / 0,85) no armazém e também no comboio (o comboio
+    só pega na seguinte depois de início + dur / 0,85 da anterior);
+  - bulk: caixas primeiro (D2, `Config.bulk_caixas_primeiro`), margem entre
+    blocos; viagens do bulk por ordem de disponibilidade (pronto + posto pronto),
+    SEM partidas forçadas; dollys no fim;
+  - **o comboio nunca é dividido por uma pausa** (`_encaixar_comboio`): se
+    atravessaria, passa para depois dela (repetido se cair noutra); a
+    preparação do armazém PODE ser interrompida pela pausa;
+  - um dia "não encaixa" se o armazém ou o comboio passam do turno, ou se a
+    reposição semanal não cabe. Deixou de haver "voltas atrasadas" (âmbar).
+  - Simplificações conscientes: a procura de cada volta continua a ser a
+    calculada às horas planeadas do livro (aproximação: encadear desloca as
+    partidas uns minutos); a regra D2 "antes da pausa só se acabar antes dela
+    com a preparação atrasada pela margem" ficou só "não atravessa".
+  - `validar_contra_livro`: o Gantt passou a "não comparável" (o livro usa horas
+    fixas); 7b e Bulk continuam a validar 1:1.
+
+Resultado com dados reais (bloco do «Gerar racks», 4,6 m, 1 carro/dia, 250
+dias): 0 células de caminho dentro de racks; 6 dias vermelhos (96, 101, 126,
+151, 171, 201), todos pela reposição semanal; armazém e comboio nunca passam
+do turno; pior dia 180: sobra 12,9 min, armazém acaba 16:30, comboio 16:20,
+viagem Paletes 3 empurrada para 15:15 (depois da pausa); 107 idas a 29
+posições. Browser: 2250 tarefas de comboio em 250 dias, 0 atravessam pausa;
+filtro por tarefa ok; consola limpa. Testes: 155 passam.
+
+## Decisão fechada: as unidades de um SKU ficam JUNTAS (contiguidade, `ALGORITMO_VERSAO` 2026-11-05.2)
+Pedido do utilizador: uma rota do bulk de caixas ia a módulos de prateleira
+de filas diferentes para o mesmo SKU. Causa medida no bloco dimensionado:
+a 1.ª etapa (FFD por distância) metia a unidade seguinte no buraco livre mais
+perto, muitas vezes noutra fila (27 de 401 SKUs de prateleira); a 2.ª etapa
+piorava (trocas de posições inteiras posição a posição e trocas de unidades
+só olhavam para "a mesma posição").
+
+- **Vizinhança** (`alocacao.vizinhanca`): afastamento 1 = módulo ao lado na
+  mesma fila OU o módulo em frente do mesmo corredor (`_frente_a_frente`:
+  sobreposição ≥ metade e corredor de 0,5 a 4 m -- costas com costas NÃO é
+  vizinho, é outro corredor); 2 = dois módulos ao lado ou o do lado do da
+  frente. Só na mesma tipologia e fisicamente perto (o nº de módulo de uma
+  fila do bloco salta da prateleira para o porta-paletes).
+- **1.ª etapa** (`junto`): a unidade seguinte tenta o módulo do SKU, depois os
+  vizinhos, e só depois o resto por distância. Continua a caber tudo.
+- **2.ª etapa (a1)** (`_trocar_posicoes`): componentes de posições ligadas por
+  SKUs que formam módulos seguidos de uma fila mudam-se em BLOCO para módulos
+  seguidos livres; ordem por visitas/posição, mas um bloco só fica num sítio se
+  os blocos de vários módulos que faltam ainda couberem. Componentes que não
+  são módulos seguidos (ex.: ligadas pelo módulo da frente) ficam onde estão.
+- **2.ª etapa (b)**: a caixa seguinte fica na mesma posição ou num vizinho se
+  lá houver lugar até `alocacao_tolerancia_contiguo_min` (0,1 min) mais caro
+  do que o mais barato.
+
+Resultado (bloco dimensionado, 4,6 m, 1 carro/dia): SKUs de prateleira não
+contíguos (pela vizinhança acima) 6 -> 1; tudo continua a caber; deslocação
+ponderada 79,9 -> 84,1 min/dia (+5 %: o preço de não espalhar). Com tolerância
+0,5 min (aceita o +30 s de altura) ficam 13 SKUs em >1 módulo em vez de 39, a
+85,4 min/dia -- não adotado. Em todas as tipologias sobram 9 não contíguos,
+quase todos paletes (porta-paletes costas com costas, ou normal + emparelhada).
+Rota do bulk de caixas: 5 conjuntos de posições em 60 dias (a rotação FIFO
+entre os módulos vizinhos do SKU, aceite pelo utilizador). O estado guardado
+pelo utilizador às 15:22 fica com a lógica antiga: a próxima alocação é de
+raiz e oferece «Guardar como estado». Testes: 158 passam (3 novos; os 2 de
+alocação falham com o código antigo).
+
+## Decisão fechada: referência = livro «… 23-10 D2 auto» e cronograma igual à folha «Gantt» (2026-11-05)
+Pedido do utilizador: o novo Excel `comboio bulk + armazem 23-10 D2 auto.xlsx`
+passa a ser a referência (`sia.json` `pressupostos_picking`; os testes com
+dados reais também). A leitura não mudou de sítio; a procura continua 1:1
+(7b 60/60 + 60/60, Bulk igual nos 30 dias). O livro passou a ter as regras do
+cronograma encadeado (voltas regulares «o mais cedo possível», horário
+calculado por repetição e gravado em «Cenário» E63/E82/E83 -- é isso que
+`tl.partidas` lê, por isso a procura de cada volta já usa as horas reais). O
+que mudou no `tempos._dia` para bater com ele:
+
+- **Regra das pausas** (`_encaixar_comboio`, «Parâmetros» C107, «Gantt» Y33 e
+  X67:X77), igual para voltas regulares, viagens do bulk e dollys: só fica
+  antes da próxima pausa se máx.(início, pronto + preparação × (1/85 % − 1)) +
+  duração ÷ 85 % acabar antes dela; senão parte no fim da pausa. (Antes:
+  só "não atravessa".)
+- **Viagens do bulk e dollys em intervalos**: podem ir num intervalo do comboio
+  entre voltas regulares (regresso de uma -> partida da seguinte) se lá
+  couberem sem a atrasar («Gantt» V67:V77); senão depois do regresso da última.
+- **Dollys** só depois das saídas das estações C (`tl.dolly_rel` = «Gantt» E77
+  = máx. das «Saídas C» com «Sim»), não depois do posto pronto das viagens.
+- **`horario=True`** (só na validação): a volta regular não parte antes da
+  hora gravada no livro -- o livro usa O = máx.(horário, pronto, regresso da
+  anterior) e o horário gravado pode ser > o mais cedo possível (36,25 contra
+  31,75 na Paletes 1: o cálculo por repetição só atrasa). Na simulação dia a
+  dia fica `False` (parte mal possa -- regra do utilizador, sem horas fixas).
+- **Validação contra a folha «Gantt» de volta** (`validar_contra_livro`, com os
+  tempos do livro e a pior volta de cada posição nos 30 dias): sobra do
+  armazém (C7) 41,18 = 41,18; sobra do mizu (C9) 88,70 = 88,70; partida das 4
+  voltas regulares (O32:O35), das 4 viagens do bulk e dos dollys (K67:K77) 9
+  de 9 iguais. Com o livro 23-10 antigo (horas fixas, partidas forçadas) esta
+  validação falha -- é esperado.
+
+Resultado (arranjo do «Gerar racks», 4,6 m, 1 carro/dia, 250 dias): 7 dias
+vermelhos (36, 96, 101, 126, 151, 171, 201), TODOS pela reposição semanal;
+armazém e comboio nunca passam do turno; 0 tarefas do comboio atravessam uma
+pausa; 1.ª viagem do bulk às 13:00 em 189 dias (até 13:08 nos outros); pior
+dia 30 (sobra 5,5 min, armazém acaba 16:36, comboio 15:31). REAR END
+(BEN10.FCC103) continua com 0 emb/h e fora do bulk no PFEP do livro: é
+arrumado mas nunca tem picking (coluna «Ciclos» vazia) -- a confirmar no livro.
+Testes: 160 passam.
+
+## Decisão fechada: zona de bulk e percurso único do bulk de caixas (`ALGORITMO_VERSAO` 2026-11-05.3)
+Pedido do utilizador: a rota do bulk de caixas ia a módulos diferentes no
+dia 1 e no dia 2 e deixava módulos sem visitas no caminho -- "não devíamos
+agrupar o bulk perto, visto que sai todos os dias?". Causa medida: o custo de
+uma visita tem +30 s acima de 1,6 m (N3-N6 das prateleiras: 1,18-1,47 min)
+e a diferença de distância entre o módulo mais perto e o mais longe é só
+~0,3 min (N1-N2: 0,68-0,97) -- o algoritmo preferia um N1/N2 longe a um N3
+perto, e o bulk ficava nos níveis baixos de 16 dos 17 módulos, misturado com
+voltas e consumíveis. Além disso o modelo por caixa (uma ida e volta cada,
+como o livro) não valoriza ter o bulk junto, mas o bulk de caixas prepara-se
+DE UMA VEZ (34 caixas, ~98 min) num percurso com o carrinho.
+
+- **Zona de bulk** (`Config.alocacao_zona_bulk = True`, `alocacao.zona_do_sku`:
+  bulk -> voltas -> reposição semanal -> sem picking, pelos `Taxa.ciclos`): na
+  1.ª etapa o bulk arruma-se primeiro (FFD dentro da zona), nas posições mais
+  perto do destino; a 2.ª etapa não mistura zonas (posições inteiras ordenam-se
+  por zona e depois por visitas; as unidades só se trocam com unidades da mesma
+  zona). Dentro da zona, o mais frequente nos níveis baixos.
+- **Tolerância de contiguidade 0,1 -> 1,0 min**: com a zona, a troca de
+  unidades partia 5 SKUs por módulos não vizinhos; com 1,0 (na prática "sempre
+  junto": nas prateleiras a diferença máxima é ~0,8 min) ficam 0, e SKUs em
+  >1 módulo 31 -> 19, por +0,3 min/dia de deslocação ponderada.
+- **Percurso único** (`tempos.Percursos`, `rt.percursos`, criado em
+  `alocacao.run`): para as preparações do bulk de CAIXAS, o cronograma dá
+  `percurso` = {metros, paragens, pontos, ordem, idas_voltas_m}: sai do destino,
+  passa pela frente de cada posição e volta (mesma grelha/passagem/acessos dos
+  tempos; vizinho mais perto + 2-opt; Dijkstras em cache). As PALETES não: o
+  empilhador leva uma de cada vez, aí as idas e voltas são o percurso real.
+  O TEMPO não muda (continua o por caixa calibrado ao livro) -- o percurso é um
+  indicador. UI: ao abrir a tarefa, a planta desenha o percurso (roxo) e a
+  legenda e a tabela dão metros e paragens.
+
+Resultado (arranjo do «Gerar racks», 250 dias), antes -> depois: bulk de
+caixas em 16 -> 10 módulos (os 10 mais perto); paragens/dia 13 -> 7,2;
+percurso 99,7 -> 92,1 m/dia (o grosso são os ~35 m de cada lado até à Zona de
+Espera); idas e voltas por caixa 2526 -> 2250 m; paletes (idas e voltas)
+Paletes 1 509 -> 503, Paletes 3 516 -> 479 m; deslocação ponderada 84,1 ->
+84,4 min/dia; tudo cabe; 0 SKUs não contíguos. Do dia 1 para o 2 nenhum SKU
+do bulk de caixas muda de módulo neste arranjo. Testes: 162 passam.
+
+## Decisão fechada: regras das viagens do utilizador -- horário fixo das voltas e 13:00 do bulk (2026-11-05)
+O utilizador corrigiu o pedido anterior ("começar as viagens logo às 13h" e
+"sem horas fixas") com as regras de outra análise do livro. Comparadas com o
+`tempos._dia`, batiam todas menos duas, agora iguais:
+
+- **Voltas regulares: o MESMO horário todos os dias**, o do livro («Cenário»
+  E63/E82/E83, calculado o mais cedo possível para o pior dos 30 dias):
+  O = máx.(horário, pronto, comboio livre + 85 %, regra das pausas). Num dia
+  mais pesado a volta sai depois do horário = atraso (`Tarefa.atraso`,
+  `atrasadas`/`atraso_max` do dia, nota «atrasada: …»). `Config.
+  voltas_horario_do_livro = True` (False = cada dia parte mal possa, a regra
+  anterior). Supersede o "encadeado puro" das voltas regulares das decisões
+  acima; o armazém continua encadeado (1 trem em avanço, 85 %).
+- **Bulk: hora mínima explícita** `tl.bulk_hora_min` = «Parâmetros» C104 (225
+  min de trabalho = 13:00) e ordem no armazém `tl.bulk_caixas_primeiro` =
+  C106, lidas do livro (saiu `Config.bulk_caixas_primeiro`). A «Bulk» F já
+  incluía a hora mínima e a margem na linha (C105 = 0); agora é explícito.
+- Iguais desde antes: Caixas 1 às 8:00 (preparada na véspera); ordem C1 P1 C2
+  P2; postos por viagem (Caixas: todos; Paletes 1: C2, C1, C4, P1; Paletes 2:
+  C5; Paletes 3: C3, do «Bulk»); caixas antes das paletes; cada viagem só
+  depois de preparada e 85 % depois da anterior; dollys depois da última
+  viagem (+85 %) e da última estação C com dolly (C1', 15:21:30); pausas com
+  folga (C107).
+
+Resultado (250 dias): validação contra a folha «Gantt» 9 de 9; 1.ª viagem do
+bulk 13:05-13:15 (no pior dia dos 30 do livro: Caixas 1 13:16, Paletes 1
+13:51, igual ao livro); 9 dias vermelhos: 7 pela reposição semanal e 2 (30 e
+180) porque o ARMAZÉM passa do turno (sobra −11,9 e −9,6 min) -- com as voltas
+encadeadas não passava em nenhum (pior sobra +5,5): o horário fixo é calculado
+para o pior dos 30 dias do livro, mais leves do que os 250 (arranque), e com 1
+trem em avanço uma partida mais tarde atrasa a preparação seguinte. 8 dias com
+voltas atrasadas (máx. 26,9 min, dia 192). Testes: 163 passam.
+O utilizador escolheu manter o horário do livro (pior dos 30 dias), aceitando
+os 2 dias em que o armazém passa do turno.
+
+## Decisão fechada: o mais frequente perto -- 1.ª etapa por frequência e trocas aos pares (`ALGORITMO_VERSAO` 2026-11-05.4)
+Pedido do utilizador: no mapa de calor (visitas/dia por posição) havia racks
+mais escuras mais longe. Medido: a 1.ª etapa arrumava por ÁREA (FFD, como o
+dimensionamento) -- as caixas grandes iam para as posições de perto qualquer
+que fosse a frequência -- e a troca de posições inteiras em bloco (a1) quase
+nunca se aplicava, porque a contiguidade liga as posições umas às outras
+(componentes que não são módulos seguidos de uma fila ficam fixas). Nos
+porta-paletes a correlação custo × visitas era nula ou ao contrário (arranjo
+do utilizador −0,09; «Gerar racks» +0,69 = mais longe, mais visitas).
+
+- **1.ª etapa por frequência** dentro de cada zona (visitas/dia por unidade
+  guardada, decrescente; FFD de desempate). Se deixar alguma unidade de fora,
+  `alocar` repete por área (`_alocar(por_frequencia=False)`) e fica com a que
+  deixa menos de fora (aviso).
+- **2.ª etapa (c)** `_trocas_aos_pares`, no fim: (1) reparação -- um SKU que a
+  1.ª etapa partiu (os vizinhos já estavam cheios) junta-se trocando a posição
+  solta com uma igual ao lado do resto dele, mesmo que custe um pouco mais;
+  (2) melhoria -- troca o conteúdo de duas posições inteiras iguais sempre que
+  baixa Σ visitas × custo, sem partir nenhum SKU (nº de blocos pela
+  vizinhança não aumenta) e sem misturar zonas (mesma zona de topo, ou uma
+  vazia). Repete até não haver ganho.
+
+Resultado (correlação custo × visitas por tipologia; inversões = pares em que
+a posição mais longe tem claramente mais visitas):
+
+| arranjo | antes | depois |
+|---|---|---|
+| utilizador, prateleiras | −0,52 · 14 inv. | −0,78 · 8 inv. |
+| utilizador, porta-paletes | −0,09 · 46 inv. | −0,63 · 1 inv. |
+| «Gerar racks», prateleiras | −0,64 · 19 inv. | −0,83 · 10 inv. |
+| «Gerar racks», porta-paletes | +0,69 · 14 inv. | −0,71 · 5 inv. |
+
+Deslocação ponderada: utilizador 46,3 -> 46,6 min/dia (só as trocas aos pares
+davam 45,2, com o mapa pior: escolhida a versão que põe o mais frequente
+perto); «Gerar racks» 84,4 -> 83,2. Não contíguos (todas as tipologias):
+utilizador 5 -> 2, «Gerar racks» 6 -> 7 (paletes). As inversões que sobram
+são sobretudo de altura: subir acima de 1,6 m custa +30 s, mais do que a
+diferença de distância entre módulos, por isso um nível baixo um pouco mais
+longe pode ser mais barato do que um alto perto -- o mapa por posição soma os
+níveis e não mostra isso (o modo «minutos» mostra o custo real).
+No arranjo do utilizador (5 m, 10 carros): 46 SKUs OVERSIZE (70 unidades)
+ficam por alocar -- o arranjo não tem «Rack Porta-Paletes 2 (emparelhada)».
+Bulk de caixas: percurso 40,9 m/dia, 8,7 paragens. Testes: 165 passam.
+(Correção, 2026-11-09: as "46 OVERSIZE" eram 46 PILHAS de 7 SKUs = 70 peças,
+10 carros × 7: FLOOR PANEL, FRONT END, REAR END, SIDE BODY LH/RH, ROOF 4W,
+HEADLINER.)
+
+## Decisão fechada: OVERSIZE em racks normais com dois corredores (`ALGORITMO_VERSAO` 2026-11-09.1)
+Pedido do utilizador: "as oversize podem entrar em racks normais, desde que
+tenham dois corredores, como se fosse uma emparelhada". O arranjo dele só tem
+«Rack Porta-Paletes» simples (frente/trás em filas duplas) e prateleiras -- os
+7 SKUs OVERSIZE (46 pilhas) ficavam por alocar.
+
+- `alocacao.posicoes_em_par`: numa fila DUPLA de porta-paletes
+  (`Config.oversize_par_racks`), cada par frente + trás costas com costas
+  (sobreposição ≥ 90 %, folga ≤ 5 cm) com acesso pelo chão às DUAS faces
+  (`tempos._celula_acesso` na grelha com a passagem mínima) dá uma posição
+  virtual «<fila> frente+trás» (`par|<frente>|<trás>`), tipologia sintética
+  «<base> (par frente+trás)» (profundidade × 2) que só aceita OVERSIZE.
+  `com_pares` junta-as às posições, distâncias (face mais perto) e candidatos
+  das OVERSIZE (DEPOIS das emparelhadas dedicadas, se houver). Em `run` e na
+  calibração. `Config.alocacao_oversize_em_pares = True`.
+- `_alocar(pares=...)`: as OVERSIZE arrumam-se primeiro; um nível ocupado no
+  par reserva o mesmo nível nos dois módulos reais e vice-versa
+  (`area_livre = -1`, também no incremental); pares e módulos com nível
+  reservado ficam fora das trocas de posições/níveis (a reserva é física).
+- UI: o par só se desenha (contorno tracejado roxo, clicável) quando tem carga;
+  `para_json` marca `par`. Endereço no Excel: «… frente+trás · M08 · N1».
+- Cache: o browser corria o `alocacao.js` antigo depois de uma atualização;
+  agora o servidor manda `Cache-Control: no-cache` em tudo o que não é
+  `/api/` e o `index.html` pede `alocacao.js?v=<data>` (subir a data quando
+  mudar o JS).
+
+Resultado no arranjo do utilizador (5 m, 10 carros, guardado em
+`dados/arranjo_utilizador_2026-11-05.json`): 0 por alocar; as 70 peças em 4
+pares (filas duplas 1 e 2, M07/M08, os mais perto da Zona de Espera); 0
+conflitos par × módulo real; deslocação ponderada 46,6 -> 50,7 min/dia (mais
+70 peças com picking diário: o FRONT END, os SIDE BODY... vão no bulk); 1 dia
+vermelho em 250 (reposição semanal), armazém nunca passa do turno, pior dia
+30 com 34,8 min de sobra. «Gerar racks»: as OVERSIZE continuam nas
+emparelhadas dedicadas (5 pares criados, não usados). Testes: 166 passam.
+
+### Visualização dos pares e escala do mapa (2026-11-09)
+O utilizador abriu «Rack Porta-Paletes (fila 1) trás · M08» e viu os 3 níveis
+«vazio» -- estavam reservados pelas OVERSIZE do par, que estão registadas na
+posição virtual, e o mapa só desenhava o contorno do par. Corrigido só na
+apresentação (a alocação não muda):
+
+- `para_json`: cada nível de um módulo real reservado por um par leva `par`
+  = {id, endereco, caixas, visitas_dia, prof_m} do nível do par; o módulo real
+  soma metade das visitas e do picking do par (`visitas_par_dia`).
+- `alocacao.js`: vista de frente desenha as OVERSIZE do par (tracejado roxo,
+  título "ocupa a frente e a trás") e a tabela lista-as com «↔» e «reservado
+  pelo par frente+trás»; ocupação (metade da área do par), classe, pesquisa de
+  SKU e tooltip contam com elas; no modo do dia o módulo real soma as idas ao
+  par.
+- **Escala por tipologia** nos modos do ano (visitas/dia e minutos/dia): com uma
+  escala única os porta-paletes (máx. 3,5 visitas/dia) ficavam quase brancos ao
+  lado das prateleiras (máx. 9,96). Ocupação em 0-100 %; o modo do dia continua
+  com escala única (conta idas). A legenda dá o máximo de cada tipologia.
+
+Validado na fila 1 do arranjo do utilizador: M01-M03 vazios de facto (o stock
+cabe nos mais perto), M04-M06 com paletes, M07 N1-N2 e M08 N1-N3 reservados
+pelos pares (OVERSIZE), M07 N3 com paletes. Testes: 167 passam.
+Em aberto (decisão do utilizador): OVERSIZE por frequência como o resto, ou
+ao fundo de propósito -- hoje vão primeiro e ficam com os pares mais perto.
 
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.

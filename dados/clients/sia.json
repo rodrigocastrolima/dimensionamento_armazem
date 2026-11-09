@@ -5,6 +5,10 @@
   "master_data": "dados/master_data_classificado_v3.xlsx",
   "output": "dados/resultados.xlsx",
 
+  "_comment_pressupostos_picking": "Livro do comboio (dimensionamento_linha) com os pressupostos do abastecimento a linha: PFEP, Consumo SKU, horario das voltas, bulk. Lido so em valores por warehouse/procura.py. Caminho relativo a raiz deste repositorio.",
+  "pressupostos_picking": "../../../Linha de Montagem/Assembly Ceiia - Hangar + BDL/dimensionamento_linha/dados/comboio bulk + armazem 23-10 D2 auto.xlsx",
+  "output_procura": "dados/procura_picking.xlsx",
+
   "autonomia_minima_carros": 10.0,
 
   "_comment_pallet_ultimo_recurso": "Decisao de negocio (2026-09): SIA prefere caixas pequenas (L/MEIA/M/S/XS) a paletes sempre que fisicamente possivel, mesmo custando mais unidades de carga/racks/area -- caixas menores sao mais faceis e seguras de mover, e o armazem e' grande o suficiente para absorver o custo de area. A palete continua a ser o ultimo recurso, nunca se perde stock (ver boxing.choose_load). Ver tambem: 'L' removido do Aceita do Rack Porta-Paletes na folha Racks do master data, para forcar caixas L so para a Prateleira Leve.",
