@@ -19,8 +19,8 @@ from rectpack import newPacker, PackingMode
 from .models import (RackType, BoxType, LoadType, CaixaEspecial,
                      BoxAssignment, RackRequirement, Article,
                      PosicaoChao, BlocoRack, NivelRack, CaixaColocada)
-from .boxing import (altura_real_unidade, capacidade_manual, capacidade_reportada,
-                     carrinhos_fisicos, eixos_possiveis)
+from .boxing import (altura_real_unidade, base_palete_por_sku, capacidade_manual,
+                     capacidade_reportada, carrinhos_fisicos, eixos_possiveis)
 from .config import Config
 
 
@@ -975,6 +975,11 @@ def preparar_itens(assignments: list[BoxAssignment], rack_types: list[RackType],
                     a.load_type, a.pecas_por_unidade, a.sku, _cfg,
                     manual=capacidade_manual(art, a.load_type))
                 alt_dim = altura_real_unidade(art, box, pecas_unidade, _cfg)
+                # Palete à mão (Config.palete_por_sku): na viga conta a carga
+                # se for mais larga do que a palete.
+                base_manual = base_palete_por_sku(art, box, _cfg)
+                if base_manual is not None:
+                    comp_dim, larg_dim = base_manual[0], base_manual[1]
             boxes_per_stack = boxes_per_stack_per_type.get(a.load_type, 1)
 
         # modo picking desligado (altura_picking_m <= 0): nenhum nível é de

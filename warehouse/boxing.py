@@ -204,10 +204,16 @@ def altura_real_unidade(article: Article, box: BoxType, pecas: int, cfg: Config)
     cota vertical for o eixo de aninhagem, cota x (1 + (camadas - 1) x
     fator_empilhamento) -- o menor dos dois, como o `max` de `pecas_no_eixo`.
     Sem encaixe possível (não devia acontecer numa unidade já escolhida)
-    devolve a altura nominal."""
-    tol = cfg.pallet_tolerancia_lateral_m if box.nome in _TIPOS_COM_TOLERANCIA_PALETE else 0.0
+    devolve a altura nominal.
+
+    Palete decidida à mão (`palete_por_sku`): 1 peça por camada, com a cota
+    indicada na vertical -- deck + peças x essa cota."""
     deck = max(box.ext_alt_m - box.int_alt_m, 0.0)
     dims = (article.comp_m, article.larg_m, article.alt_m)
+    spec = palete_por_sku(article.sku, cfg)
+    if spec is not None and box.nome == LoadType.PALLET:
+        return round(deck + pecas * dims[spec[1]], 6)
+    tol = cfg.pallet_tolerancia_lateral_m if box.nome in _TIPOS_COM_TOLERANCIA_PALETE else 0.0
     eixo_a = eixo_forcado(article.eixo_aninhagem)
     por_peso = math.floor(box.peso_max_kg / article.peso_kg) if article.peso_kg > 0 else None
 
@@ -229,6 +235,39 @@ def altura_real_unidade(article: Article, box: BoxType, pecas: int, cfg: Config)
     if melhor is None:
         return box.ext_alt_m
     return round(deck + melhor[1], 6)
+
+
+def palete_por_sku(sku: str, cfg: Config) -> tuple[int, int] | None:
+    """(peças por palete, índice da cota vertical 0/1/2) se o SKU tem a palete
+    decidida à mão em `Config.palete_por_sku`; None caso contrário."""
+    spec = cfg.palete_por_sku.get(sku)
+    if spec is None:
+        return None
+    iv = eixo_forcado(spec.get("vertical", "z"))
+    if iv is None or int(spec.get("pecas", 0)) <= 0:
+        raise ValueError(f"palete_por_sku[{sku!r}]: precisa de 'pecas' > 0 e "
+                         f"'vertical' em x/y/z (recebido {spec!r})")
+    return int(spec["pecas"]), iv
+
+
+def base_palete_por_sku(article: Article, box: BoxType,
+                        cfg: Config) -> tuple[float, float, float, float] | None:
+    """Base no rack de uma palete decidida à mão: (prof, viga, sai_frente_tras,
+    sai_lados), em m, com a palete na orientação de sempre (lado comprido na
+    profundidade do rack). A carga é a base da peça (1 por camada), com o lado
+    comprido também na profundidade. Na viga ocupa max(palete, peça); na
+    profundidade conta a palete -- o que sai para a frente/trás fica fora do
+    rack (só se reporta, por lado). None se o SKU não tem palete à mão."""
+    spec = palete_por_sku(article.sku, cfg)
+    if spec is None or box.nome != LoadType.PALLET:
+        return None
+    dims = (article.comp_m, article.larg_m, article.alt_m)
+    curto, longo = sorted(dims[j] for j in range(3) if j != spec[1])
+    p_curto, p_longo = sorted((box.ext_comp_m, box.ext_larg_m))
+    viga = max(p_curto, curto)
+    return (p_longo, viga,
+            round(max(longo - p_longo, 0.0) / 2, 4),
+            round(max(curto - p_curto, 0.0) / 2, 4))
 
 
 def capacidade_manual(article: Article, load_type: LoadType) -> bool:
@@ -255,6 +294,8 @@ def capacidade_reportada(load_type: LoadType, pecas_por_unidade: int,
     arredondamento.
     """
     if manual:
+        return max(int(pecas_por_unidade), 1)
+    if load_type == LoadType.PALLET and sku in cfg.palete_por_sku:
         return max(int(pecas_por_unidade), 1)
     override = cfg.capacidade_override_sku.get(sku)
     if override is not None:
@@ -360,6 +401,10 @@ def choose_load(article: Article, catalogo: list[BoxType],
     especial = cfg.caixas_especiais.get(article.sku)
     if especial is not None:
         return LoadType.OVERSIZE2, especial.quantidades[article.sku]
+
+    palete = palete_por_sku(article.sku, cfg)    # decidida à mão (Config)
+    if palete is not None:
+        return LoadType.PALLET, palete[0]
 
     if cfg.unidade_da_linha and article.sku not in cfg.skus_carrinho_linha:
         return unidade_da_linha(article, catalogo, cfg)
@@ -575,6 +620,27 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
                                      manual=capacidade_manual(article, load_type))
         altura_real = altura_real_unidade(article, box, pecas, cfg)
     base["altura_real_unidade_m"] = altura_real
+
+    spec = palete_por_sku(article.sku, cfg)
+    if spec is not None and load_type == LoadType.PALLET and box is not None:
+        prof, viga, sai_ft, sai_lados = base_palete_por_sku(article, box, cfg)
+        return BoxJustificacao(
+            **base, orientacao_usada=f"Manual: {_NOMES_EIXO[spec[1]]} na vertical "
+                                     f"({(article.comp_m, article.larg_m, article.alt_m)[spec[1]]:.2f}m)",
+            caixa_int_comp_m=box.int_comp_m, caixa_int_larg_m=box.int_larg_m,
+            caixa_int_alt_m=box.int_alt_m,
+            pecas_por_plano_teorico=1, pecas_por_plano=1,
+            pecas_por_altura=spec[0], pecas_por_peso=None,
+            fator_limitante="N/A (palete decidida à mão)",
+            criterio=(
+                f"Palete decidida à mão (Config.palete_por_sku): {spec[0]} peça(s) por palete, "
+                f"1 por camada, sem tolerância lateral. No rack ocupa {prof:.2f} m de "
+                f"profundidade x {viga:.2f} m de viga; a carga sai {sai_ft:.2f} m à frente/atrás "
+                f"e {sai_lados:.2f} m para cada lado. "
+                f"Nº de unidades = ceil({article.stock_max_un} / {assignment.pecas_por_unidade}) "
+                f"= {assignment.num_unidades}."
+            ),
+        )
 
     # Caixa forçada COM quantidade manual: não há geometria a reconstruir (o
     # motor pode até dizer que não cabe nenhuma -- é por isso que é manual).

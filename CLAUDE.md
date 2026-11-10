@@ -1406,6 +1406,35 @@ pelos pares (OVERSIZE), M07 N3 com paletes. Testes: 167 passam.
 Em aberto (decisão do utilizador): OVERSIZE por frequência como o resto, ou
 ao fundo de propósito -- hoje vão primeiro e ficam com os pares mais perto.
 
+## Decisão fechada: 4 OVERSIZE passam a palete à mão (`Config.palete_por_sku`, SIA, 2026-11-10)
+Decisão do utilizador: FRONT END (`BEN10.FCC101`), REAR END (`FCC103`), ROOF
+4W (`FCF105`) e HEADLINER (`GEB101`) deixam de ser OVERSIZE e vão em PALLET,
+1 peça por camada (a base da carga é a da peça), **sem a tolerância lateral**
+de 0,10 m -- a carga pode sair da palete. `palete_por_sku` (CLIENT-SPECIFIC,
+`sia.json`: `{sku: {"pecas": n, "vertical": "x|y|z"}}`) prevalece sobre a
+unidade da linha e o best-fit (`boxing.choose_load`); a quantidade é usada tal
+e qual (`capacidade_reportada`). Valores: FRONT/REAR 1 peça (não empilhar,
+z na vertical), ROOF 10 deitados (z, 0,13), HEADLINER 5 deitados (z, 0,21 --
+5 + 5 em vez de 7 + 3, para o Passo 0 não subir o stock de 10 para 14).
+
+- **Altura** (`altura_real_unidade`): deck + peças × cota vertical. FRONT 0,84
+  e REAR 0,87 não cabem no 3.º nível (0,81); ROOF 1,44; HEADLINER 1,18.
+- **Base no rack** (`boxing.base_palete_por_sku`, usado em
+  `racking.preparar_itens`): palete com o lado comprido na profundidade; na
+  VIGA conta max(palete, peça) -- ROOF/HEADLINER 1,06 m, não 0,80 --; na
+  profundidade conta a palete (1,20): o que sai à frente/atrás (11-17 cm)
+  **não ocupa rack** e só é reportado (folha Validação, critério).
+- **SIDE BODY LH/RH ficam OVERSIZE** "para mais tarde": de pé em palete são
+  1,58 + 0,144 = 1,73 m > 1,61. **FLOOR PANEL** continua OVERSIZE.
+
+Efeito (SIA, 4,6 m, 10 carros): emparelhada 4 -> 2 posições, Rack
+Porta-Paletes 2 11 -> 15, racks 89,8 -> 86,3 m², área bruta 445,0 -> 442,7 m²
+(bloco 21,6 × 11,4 -> 14,5 × 16,8 m). FCC101/FCC103 passam a bater com o PFEP
+do livro («Europalete de 1»), que era uma das 4 divergências de unidade
+listadas na fase 1 do picking. A alocação usa `preparar_itens`, por isso
+herda isto sem mudanças; o `ALGORITMO_VERSAO` não sobe (a BOM mudou, o estado
+guardado deteta-o).
+
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.
 - Domínio em pt-PT. Packing: `rectpack` (2D, footprint por nível de rack).

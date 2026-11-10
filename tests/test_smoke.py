@@ -1500,6 +1500,47 @@ def test_caixa_forcada_com_quantidade_ignora_best_fit_e_geometria():
     assert "CAIXA_FORCADA=L" in j.criterio and j.fator_limitante.startswith("N/A")
 
 
+def test_palete_por_sku_conta_a_largura_real_na_viga_e_a_altura():
+    """Config.palete_por_sku: um OVERSIZE (1.54 x 1.06, não assenta na palete
+    com a tolerância de 0.10) passa a PALLET com 10 peças deitadas, 1 por
+    camada. Altura = deck 0.144 + 10 x 0.13; na viga ocupa 1.06 (a carga), não
+    os 0.80 da palete; sai 0.17 à frente/atrás e 0.13 para cada lado. Num
+    porta-paletes de 2.7 m: 0.80 + 0.80 + 1.06 = 2.66 cabe, mais um 0.80 não."""
+    import dataclasses
+    from warehouse import boxing
+    from warehouse.config import Config
+    from warehouse.models import Article, BoxAssignment, Empilhamento
+    roof = Article(sku="ROOF", descricao="", comp_m=1.535, larg_m=1.056, alt_m=0.13,
+                   peso_kg=0.0, stock_max_un=10, pecas_por_carro=1, altura_override="y",
+                   empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    front = Article(sku="FRONT", descricao="", comp_m=0.759, larg_m=1.425, alt_m=0.694,
+                    peso_kg=0.0, stock_max_un=10, pecas_por_carro=1, altura_override="z",
+                    empilhamento=Empilhamento.NAO_EMPILHAVEL)
+    cat = [_palete_161()]
+    assert boxing.choose_load(roof, cat, Config())[0] == LoadType.OVERSIZE
+
+    cfg = dataclasses.replace(Config(), palete_por_sku={
+        "ROOF": {"pecas": 10, "vertical": "z"}, "FRONT": {"pecas": 1, "vertical": "z"}})
+    assert boxing.choose_load(roof, cat, cfg) == (LoadType.PALLET, 10)
+    r = boxing.stock_para_autonomia(roof, cat, cfg)
+    assert (r.load_type, r.pecas_por_unidade_pratico, r.num_unidades, r.stock_ajustado_un) \
+        == (LoadType.PALLET, 10, 1, 10)
+    assert boxing.altura_real_unidade(roof, _palete_161(), 10, cfg) == 1.444
+    assert boxing.base_palete_por_sku(roof, _palete_161(), cfg) == (1.2, 1.056, 0.1675, 0.128)
+    assert boxing.base_palete_por_sku(front, _palete_161(), cfg)[:2] == (1.2, 0.8)
+    j = boxing.justificar_escolha(roof, cat, cfg, boxing.plan_box(roof, cat, cfg))
+    assert "palete_por_sku" in j.criterio and j.altura_real_unidade_m == 1.444
+
+    pos, avisos = racking.allocate_to_racks(
+        [BoxAssignment("ROOF", LoadType.PALLET, 10, 1), BoxAssignment("FRONT", LoadType.PALLET, 1, 3)],
+        [], [_pp_161()], {LoadType.PALLET: _palete_161()}, [roof, front], 0.0, 4.6, cfg)
+    assert avisos == []
+    n1 = pos[0].blocos[0].niveis[0].caixas
+    assert sorted((c.sku, min(c.comp_m, c.larg_m)) for c in n1) == \
+        [("FRONT", 0.8), ("FRONT", 0.8), ("ROOF", 1.056)]
+    assert [c.sku for c in pos[0].blocos[0].niveis[1].caixas] == ["FRONT"]
+
+
 def test_caixa_forcada_quantidade_manual_nao_e_arredondada():
     """A capacidade manual já é uma decisão de manuseio: não leva o
     arredondamento à centena que capacidade_reportada aplica à XS/S/M/MEIA

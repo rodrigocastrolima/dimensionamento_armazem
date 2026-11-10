@@ -52,6 +52,7 @@ _CLIENT_FIELD_CONVERTERS = {
     "unidade_da_linha": bool,
     "capacidade_override_sku": dict,
     "stock_autonomia_override_sku": dict,
+    "palete_por_sku": dict,
     "oversize_racks": tuple,
     "oversize_par_racks": tuple,
     "max_modulos_por_tipologia": dict,
@@ -253,6 +254,15 @@ class Config:
     capacidade_override_sku: dict = field(default_factory=lambda: {
         "BEN00.FHG111": 100,
     })
+
+    # Palete decidida à mão por SKU (decisão de negócio, prevalece sobre a
+    # unidade da linha e o best-fit): {sku: {"pecas": n, "vertical": "x|y|z"}}.
+    # A peça vai numa PALLET com n peças, 1 por camada (a base da carga é a da
+    # peça), com a cota `vertical` na vertical. Sem tolerância lateral: a
+    # carga pode sair da palete. No rack conta a largura REAL na viga
+    # (max(palete, peça)); o que sai para a frente/trás não ocupa rack (só se
+    # reporta). Ver boxing.palete_por_sku / base_palete_por_sku.
+    palete_por_sku: dict = field(default_factory=dict)
 
     # --- Passo 0 — stock por autonomia mínima (boxing.stock_para_autonomia) ---
     # Substitui o antigo "Stock_máx_10un_a_utilizar" da master data v2, que era

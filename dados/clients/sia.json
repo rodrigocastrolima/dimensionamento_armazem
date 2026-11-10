@@ -43,6 +43,14 @@
     "WAS00061": 500
   },
 
+  "_comment_palete_por_sku": "Decisao do utilizador (2026-11-10): estes OVERSIZE passam a palete, 1 peca por camada (base = a da peca), sem tolerancia lateral; a carga pode sair da palete. FRONT/REAR END sem empilhar; ROOF e HEADLINER deitados e empilhados. SIDE BODY fica para mais tarde (de pe com deck nao cabe nos 1,61 m). FLOOR PANEL continua OVERSIZE.",
+  "palete_por_sku": {
+    "BEN10.FCC101_____FRONT END": {"pecas": 1, "vertical": "z"},
+    "BEN10.FCC103_____REAR END": {"pecas": 1, "vertical": "z"},
+    "BEN10.FCF105_____ROOF 4W": {"pecas": 10, "vertical": "z"},
+    "BEN10.GEB101_____HEADLINER": {"pecas": 5, "vertical": "z"}
+  },
+
   "_comment_oversize_racks": "A SIA nao tem rack wide-span na folha Racks: OVERSIZE vai para o par emparelhado de porta-paletes (oversize_par_racks). Vazio = regra desligada, sem aviso.",
   "oversize_racks": [],
   "oversize_par_racks": ["porta-paletes"],
