@@ -44,6 +44,24 @@ from pathlib import Path
 
 import openpyxl
 
+
+def abrir_livro(caminho, **kw):
+    """openpyxl.load_workbook que não falha com o livro aberto no Excel: o
+    ficheiro fica bloqueado para abertura direta (PermissionError) mas pode
+    copiar-se. Lê-se então uma cópia -- o que está GRAVADO em disco. A cópia
+    vai para memória (BytesIO) porque com read_only=True o openpyxl lê o
+    ficheiro aos poucos e uma cópia temporária apagada partia a leitura."""
+    try:
+        return openpyxl.load_workbook(caminho, **kw)
+    except PermissionError:
+        import io, shutil, tempfile
+        from pathlib import Path as _P
+        with tempfile.TemporaryDirectory() as tmp:
+            copia = _P(tmp) / _P(caminho).name
+            shutil.copy2(caminho, copia)
+            dados = io.BytesIO(copia.read_bytes())
+        return openpyxl.load_workbook(dados, **kw)
+
 EPS = 1e-9
 CAIXAS, PALETES, BULK = "Caixas", "Paletes", "Bulk"
 SEMANAL = "Reposição semanal"       # consumíveis, à parte do comboio (Config.consumiveis_reposicao)
@@ -183,7 +201,7 @@ def carregar_pressupostos(caminho: Path) -> Pressupostos:
     vão por NOME do cabeçalho (o livro ganha colunas com frequência); as
     células de parâmetro vão por endereço, como nas fórmulas do próprio livro."""
     warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
-    wb = openpyxl.load_workbook(caminho, data_only=True)
+    wb = abrir_livro(caminho, data_only=True)
     par, cen = wb["Parâmetros"], wb["Cenário"]
     tempo_dia = _num(par["C11"].value)
     if tempo_dia <= 0:
@@ -546,7 +564,7 @@ def validar_contra_excel(p: Pressupostos, res: ResultadoProcura) -> list:
         return [Verificacao("Validação contra o Excel", True,
                             f"Não aplicável: {res.carros_por_dia:g} carros/dia, o livro tem "
                             f"{p.carros_por_dia_base:g}.")]
-    wb = openpyxl.load_workbook(p.caminho, data_only=True, read_only=True)
+    wb = abrir_livro(p.caminho, data_only=True, read_only=True)
     out = []
 
     # 1. bulk: mesmas linhas do PFEP

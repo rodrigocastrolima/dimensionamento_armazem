@@ -35,7 +35,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .procura import SEMANAL
+from .procura import SEMANAL, abrir_livro
 
 INF = float("inf")
 GRUPO_CAIXA, GRUPO_PALETE, GRUPO_PECA, GRUPO_KIT = "caixa", "palete", "peça de carrinho", "kit"
@@ -277,7 +277,7 @@ def carregar_tempos_livro(caminho: Path) -> TemposLivro:
     import warnings
     import openpyxl
     warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
-    wb = openpyxl.load_workbook(caminho, data_only=True, read_only=True)
+    wb = abrir_livro(caminho, data_only=True, read_only=True)
     par = wb["Parâmetros"]
     num = lambda ws, ref: float(ws[ref].value or 0.0)   # noqa: E731
 

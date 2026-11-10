@@ -11,6 +11,7 @@ campo do dataclass.
 from __future__ import annotations
 import json
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 # dados/clients/<nome>.json vive ao lado de dados/ (irmão de warehouse/), não
@@ -20,6 +21,21 @@ from pathlib import Path
 # cwd de sempre (comportamento inalterado: quem já corria a partir da pasta
 # certa continua a funcionar sem tocar em nada).
 _CLIENTS_DIR = Path(__file__).resolve().parent.parent / "dados" / "clients"
+_REPO_DIR = Path(__file__).resolve().parent.parent
+
+
+def _caminho_do_repo(valor: str) -> Path:
+    """Caminho relativo à raiz do repositório, absoluto e NORMALIZADO (sem
+    «..»). Sem normalizar, «<repo>\\..\\..\\..\\Linha de Montagem\\...» passa
+    os 260 caracteres do Windows (MAX_PATH) e o open() dá «No such file»,
+    embora o caminho resolvido tenha só ~245."""
+    if not str(valor):
+        return Path("")
+    p = Path(valor)
+    if not p.is_absolute():
+        p = _REPO_DIR / p
+    return Path(os.path.normpath(p))
+
 
 # Nomes de campo do dataclass que Config.for_client aceita ler do JSON do
 # cliente, com o conversor a aplicar ao valor lido (JSON só tem list/dict/
@@ -42,7 +58,7 @@ _CLIENT_FIELD_CONVERTERS = {
     "empilhamento_por_nivel": tuple,
     "picking_manual_racks": tuple,
     "pilar_rack_m": dict,
-    "pressupostos_picking": Path,
+    "pressupostos_picking": _caminho_do_repo,
     "output_procura": Path,
 }
 
