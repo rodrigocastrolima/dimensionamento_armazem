@@ -1435,6 +1435,27 @@ listadas na fase 1 do picking. A alocação usa `preparar_itens`, por isso
 herda isto sem mudanças; o `ALGORITMO_VERSAO` não sobe (a BOM mudou, o estado
 guardado deteta-o).
 
+## Decisão fechada: as paletes vão para o porta-paletes de 2,70 m (SIA, 2026-11-10)
+O utilizador quer usar o «Rack Porta-Paletes» de **2,70 m**, não o «Rack
+Porta-Paletes 2» de 3,50 m. Até aqui o motor usava sempre o de 3,50 m, por erro
+de DADOS: o `Footprint_m2` dele na folha «Racks» estava a 3,24 (copiado da
+linha do 2,70 m) em vez de 3,5 × 1,2 = 4,20. Como `preparar_itens` ordena as
+candidatas por `area_chao_m2` crescente (e `com_par_oversize` escolhe a base da
+emparelhada pelo mesmo critério), o de 3,50 m parecia mais pequeno (3,32 contra
+3,35 m² com pilar) e ganhava sempre; a área de racks ficava subcontada ~1 m² por
+módulo (que aparecia como corredor).
+
+Corrigido na folha: `Footprint_m2` = `=B3*C3` / `=B4*C4` (fórmula, como na
+Prateleira Leve). Backup: `dados/master_data_classificado_v3.xlsx.pre-footprint-pp2.bak`.
+O de 3,50 m continua na folha mas fica sem uso (área maior). Os números da
+secção anterior (Rack Porta-Paletes 2 15, emparelhada 3,5 × 2,4) são de antes
+desta correção.
+
+Efeito (SIA, 4,6 m, 10 carros): Rack Porta-Paletes (2,70) 0 -> 19, Rack
+Porta-Paletes 2 (3,50) 15 -> 0, emparelhada 2 -> 3 (agora 2,7 × 2,4), racks
+86,3 -> 102,9 m² (a subcontagem acabou), bloco 14,5 × 16,8 -> 14,1 × 16,8 m,
+área bruta 442,7 -> 435,8 m².
+
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.
 - Domínio em pt-PT. Packing: `rectpack` (2D, footprint por nível de rack).
