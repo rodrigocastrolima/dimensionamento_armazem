@@ -637,6 +637,7 @@ class _ItemParaColocar:
     pecas_nesta_caixa: int
     eh_primeira_do_sku: bool    # True = precisa picking; False = overflow/reserva
     num_boxes_in_stack: int = 1  # quantas caixas físicas estão empilhadas neste item
+    orientacao_fixa: bool = False  # comp_m no vão, larg_m na profundidade, sem rodar
 
 
 def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -> dict | None:
@@ -657,6 +658,9 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
 
     dims = [(c.comp_m, c.larg_m) for c in nivel.caixas] + [(item.comp_m, item.larg_m)]
     ids: list = list(range(len(nivel.caixas))) + ["novo"]
+    fixos = {i for i, c in enumerate(nivel.caixas) if c.orientacao_fixa}
+    if item.orientacao_fixa:
+        fixos.add("novo")
 
     # 1.º tenta uma arrumação ORDENADA: todas as caixas com a mesma footprint
     # ficam com a MESMA orientação (grelha alinhada). Só se isso não couber se
@@ -665,8 +669,9 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
     # paletes de 0,6 x 0,8 e 2 rodadas a 0,8 x 0,6, com 0,4 m de profundidade
     # vazia à frente das primeiras): frentes desalinhadas e 5 meias por nível
     # quando a grelha 3 x 2 leva 6.
-    colocados = _empacotar_alinhado(rack, dims, ids)
-    if colocados is not None:
+    colocados = _empacotar_alinhado(rack, dims, ids, fixos)
+    if colocados is not None or fixos:
+        # com orientações fixas no nível não há packer livre (roda tudo)
         return colocados
 
     packer = newPacker(mode=PackingMode.Offline, rotation=True)
@@ -689,15 +694,19 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
 _MAX_FORMAS_ALINHADO = 4   # 2^4 = 16 combinações de orientação, no máximo
 
 
-def _empacotar_alinhado(rack: RackType, dims: list[tuple[float, float]], ids: list):
+def _empacotar_alinhado(rack: RackType, dims: list[tuple[float, float]], ids: list,
+                        fixos: set | frozenset = frozenset()):
     """Arrumação sem rotação livre: cada footprint distinta (lado curto x lado
     longo) recebe UMA orientação fixa, igual para todas as caixas dessa
     footprint. Testa as combinações de orientação por ordem (lado longo ao
     longo da profundidade primeiro, como a palete no rack) e devolve a 1.ª
-    onde o lote inteiro cabe; None se nenhuma couber ou houver formas demais."""
+    onde o lote inteiro cabe; None se nenhuma couber ou houver formas demais.
+    Os `fixos` (ids) entram tal e qual (w no vão, h na profundidade) e não
+    contam como forma a orientar."""
     if sum(w * h for w, h in dims) > rack.larg_m * rack.prof_m + 1e-9:
         return None
-    formas = sorted({tuple(sorted((round(w, 4), round(h, 4)))) for w, h in dims})
+    formas = sorted({tuple(sorted((round(w, 4), round(h, 4))))
+                     for rid, (w, h) in zip(ids, dims) if rid not in fixos})
     if len(formas) > _MAX_FORMAS_ALINHADO:
         return None
 
@@ -706,6 +715,9 @@ def _empacotar_alinhado(rack: RackType, dims: list[tuple[float, float]], ids: li
         packer = newPacker(mode=PackingMode.Offline, rotation=False)
         packer.add_bin(rack.larg_m, rack.prof_m)
         for rid, (w, h) in zip(ids, dims):
+            if rid in fixos:
+                packer.add_rect(w, h, rid=rid)
+                continue
             curto, longo = sorted((w, h))
             forma = tuple(sorted((round(w, 4), round(h, 4))))
             # 0: lado longo na profundidade (y); 1: lado longo no vão (x)
@@ -761,6 +773,7 @@ def _commit_nivel(nivel: NivelRack, item: _ItemParaColocar, solucao: dict) -> No
         comp_m=round(r.width, 4), larg_m=round(r.height, 4), alt_m=item.alt_m,
         pecas_nesta_caixa=item.pecas_nesta_caixa, eh_picking=nivel.eh_picking,
         num_boxes_in_stack=item.num_boxes_in_stack,
+        orientacao_fixa=item.orientacao_fixa,
     ))
     nivel.caixas = novas
 
@@ -914,6 +927,7 @@ def preparar_itens(assignments: list[BoxAssignment], rack_types: list[RackType],
     for a in assignments:
         art = article_idx.get(a.sku)
         desc = art.descricao if art else ""
+        fixa = False   # palete à mão: orientação fixa no nível
 
         if a.load_type == LoadType.OVERSIZE:
             # Wide-span OU par emparelhado (ver _melhor_oversize_ativo): a peça
@@ -979,7 +993,9 @@ def preparar_itens(assignments: list[BoxAssignment], rack_types: list[RackType],
                 # se for mais larga do que a palete.
                 base_manual = base_palete_por_sku(art, box, _cfg)
                 if base_manual is not None:
-                    comp_dim, larg_dim = base_manual[0], base_manual[1]
+                    # viga no vão (x), palete na profundidade (y), sem rodar
+                    comp_dim, larg_dim = base_manual[1], base_manual[0]
+                    fixa = True
             boxes_per_stack = boxes_per_stack_per_type.get(a.load_type, 1)
 
         # modo picking desligado (altura_picking_m <= 0): nenhum nível é de
@@ -1019,6 +1035,7 @@ def preparar_itens(assignments: list[BoxAssignment], rack_types: list[RackType],
                 pecas_nesta_caixa=pecas_aqui,
                 eh_primeira_do_sku=eh_primeira_do_sku,
                 num_boxes_in_stack=boxes_in_stack,
+                orientacao_fixa=fixa,
             ))
             boxes_allocated += boxes_in_stack
 

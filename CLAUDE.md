@@ -1435,6 +1435,41 @@ listadas na fase 1 do picking. A alocação usa `preparar_itens`, por isso
 herda isto sem mudanças; o `ALGORITMO_VERSAO` não sobe (a BOM mudou, o estado
 guardado deteta-o).
 
+**Atualização (2026-11-11, informação recebida pelo utilizador):** FRONT/REAR
+END não empilháveis (1 por palete, sem mudança); ROOF 4W só empilhável (10
+deitados, sem mudança); **HEADLINER empilhável E aninhável** -> `"aninha": true`
+na entrada do `palete_por_sku` (`boxing.palete_aninha`; também liga se o
+`EIXO_ANINHAGEM` do artigo for a cota vertical): altura = deck + cota × (1 +
+(n − 1) × `fator_empilhamento` 0,3). Passa a **10 numa palete** (0,91 m em vez
+de 2 paletes de 5 a 1,18 m). Nº de módulos e área não mudam (19 + 3 + 17,
+435,8 m²): a palete a menos cabe nas sobras. Pendente: na folha «Peças»
+estes 4 SKUs estão todos `NAO_EMPILHAVEL` e sem `EIXO_ANINHAGEM` -- ROOF e
+HEADLINER deviam ficar `EMPILHAVEL` e HEADLINER com `EIXO_ANINHAGEM` = z (não
+altera nada no motor para estes SKUs: a palete à mão manda; fica para coerência
+dos dados).
+
+**SIDE BODY LH/RH deitados em palete (2026-11-11, decisão do utilizador):**
+base 1,58 × 1,28, 0,25 m na vertical (`"vertical": "y"`), empilhados, **5 por
+palete** = 0,144 + 5 × 0,2483 = 1,39 m (cabe nos níveis de 1,61); 10 de cada
+-> 2 paletes cada. Na viga 1,28 m (sai 0,24 de cada lado), na profundidade
+1,20 (sai 0,19 à frente/atrás, não conta). Deixam de ser OVERSIZE: só o FLOOR
+PANEL continua. Em `palete_por_sku` só falta o SIDE BODY se mudar de ideias.
+
+**Orientação fixa** (`CaixaColocada.orientacao_fixa` /
+`_ItemParaColocar.orientacao_fixa`): as paletes à mão entram no packer com
+`comp_m` = viga (vão) e `larg_m` = profundidade da palete e **nunca rodam**
+(`_empacotar_alinhado(..., fixos)`; num nível com alguma fixa não há packer
+livre). Sem isto, na emparelhada (2,4 m de fundo) o packer rodava a palete do
+SIDE BODY (1,2 no vão) e a peça de 1,58 m saía para cima das vizinhas -- a base
+contada não é a da peça. A grelha alinhada também falhava: punha o lado longo
+da base (1,28, a viga) na profundidade. Na alocação: a troca de unidades da
+mesma forma só junta fixas com a mesma base e orientação, e a reposição
+incremental recusa geometria rodada.
+
+Efeito (SIA, 4,6 m, 10 carros): emparelhada 3 -> 2 (as 4 paletes do SIDE BODY
+ficam 2 × 2 no N2 de uma emparelhada), racks 102,9 -> 96,2 m², área bruta
+435,8 -> 434,3 m², bloco 14,0 × 16,8 m.
+
 ## Decisão fechada: as paletes vão para o porta-paletes de 2,70 m (SIA, 2026-11-10)
 O utilizador quer usar o «Rack Porta-Paletes» de **2,70 m**, não o «Rack
 Porta-Paletes 2» de 3,50 m. Até aqui o motor usava sempre o de 3,50 m, por erro

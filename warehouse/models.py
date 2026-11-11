@@ -311,6 +311,11 @@ class CaixaColocada:
     pecas_nesta_caixa: int = 0
     eh_picking: bool = False
     num_boxes_in_stack: int = 1  # quantas caixas neste stack
+    # Palete decidida à mão (Config.palete_por_sku): comp_m = largura na viga,
+    # larg_m = profundidade da palete, e o packer NUNCA a roda -- a base
+    # contada não é a da peça (o que sai à frente/atrás não conta), por isso
+    # rodá-la punha a peça a sair para cima das vizinhas.
+    orientacao_fixa: bool = False
 
 
 @dataclass

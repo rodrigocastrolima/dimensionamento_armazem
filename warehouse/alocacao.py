@@ -905,6 +905,8 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             return False
         if sorted((round(comp, 3), round(larg, 3))) != sorted((round(it.comp_m, 3), round(it.larg_m, 3))):
             return False
+        if it.orientacao_fixa and (round(comp, 3), round(larg, 3)) != (round(it.comp_m, 3), round(it.larg_m, 3)):
+            return False
         if x < -1e-6 or y < -1e-6 or x + comp > c.pos.rack.larg_m + 1e-6 or y + larg > c.pos.rack.prof_m + 1e-6:
             return False
         for b in c.nivel.caixas:
@@ -913,7 +915,8 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
                 return False
         cx = CaixaColocada(sku=it.sku, descricao=it.descricao, load_type=it.load_type, x_m=x, y_m=y,
                            comp_m=comp, larg_m=larg, alt_m=it.alt_m, pecas_nesta_caixa=it.pecas_nesta_caixa,
-                           eh_picking=False, num_boxes_in_stack=it.num_boxes_in_stack)
+                           eh_picking=False, num_boxes_in_stack=it.num_boxes_in_stack,
+                           orientacao_fixa=it.orientacao_fixa)
         if c.chave in reservadas:
             return False
         c.nivel.caixas.append(cx)
@@ -1017,8 +1020,10 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         h = altura_nivel(c.pos.rack, c.nivel.nivel_idx)
         for cx in c.nivel.caixas:
             if id(cx) not in bloqueadas:
-                forma = (cx.load_type, tuple(sorted((round(cx.comp_m, 3), round(cx.larg_m, 3)))),
-                         zona_de(cx.sku) if zonas else 0)
+                pe = (round(cx.comp_m, 3), round(cx.larg_m, 3))
+                # orientação fixa (palete à mão): só troca com a mesma base E orientação
+                forma = (cx.load_type, pe if cx.orientacao_fixa else tuple(sorted(pe)),
+                         cx.orientacao_fixa, zona_de(cx.sku) if zonas else 0)
                 slots[forma].append((c, cx, h))
     for lst in slots.values():
         if len(lst) < 2:

@@ -1526,6 +1526,11 @@ def test_palete_por_sku_conta_a_largura_real_na_viga_e_a_altura():
     assert (r.load_type, r.pecas_por_unidade_pratico, r.num_unidades, r.stock_ajustado_un) \
         == (LoadType.PALLET, 10, 1, 10)
     assert boxing.altura_real_unidade(roof, _palete_161(), 10, cfg) == 1.444
+    # aninhável na cota vertical: deck + cota x (1 + (n - 1) x 0.3)
+    roof_aninha = dataclasses.replace(roof, eixo_aninhagem="z")
+    assert boxing.altura_real_unidade(roof_aninha, _palete_161(), 10, cfg) == 0.144 + 0.13 * 3.7
+    cfg_an = dataclasses.replace(cfg, palete_por_sku={"ROOF": {"pecas": 10, "vertical": "z", "aninha": True}})
+    assert boxing.altura_real_unidade(roof, _palete_161(), 10, cfg_an) == 0.144 + 0.13 * 3.7
     assert boxing.base_palete_por_sku(roof, _palete_161(), cfg) == (1.2, 1.056, 0.1675, 0.128)
     assert boxing.base_palete_por_sku(front, _palete_161(), cfg)[:2] == (1.2, 0.8)
     j = boxing.justificar_escolha(roof, cat, cfg, boxing.plan_box(roof, cat, cfg))
@@ -1539,6 +1544,26 @@ def test_palete_por_sku_conta_a_largura_real_na_viga_e_a_altura():
     assert sorted((c.sku, min(c.comp_m, c.larg_m)) for c in n1) == \
         [("FRONT", 0.8), ("FRONT", 0.8), ("ROOF", 1.056)]
     assert [c.sku for c in pos[0].blocos[0].niveis[1].caixas] == ["FRONT"]
+
+
+def test_palete_por_sku_orientacao_fixa_nao_roda_no_nivel():
+    """SIDE BODY deitado (2026-11-11): palete de 1,2 com a peça a 1,28 na viga.
+    Numa emparelhada (2,7 x 2,4) o packer não pode rodá-la (1,2 no vão punha
+    os 1,58 m da peça a sair para cima das vizinhas): ficam 2 x 2 com 1,28 no vão."""
+    from warehouse.models import NivelRack
+    emp = RackType("Rack Porta-Paletes (emparelhada)", larg_m=2.7, prof_m=2.4, alt_nivel_m=1.61,
+                   niveis=3, aceita=[LoadType.PALLET, LoadType.OVERSIZE],
+                   profundidade_inclui_par=True, alturas_niveis_m=(1.61, 1.61, 0.81))
+    nivel = NivelRack(nivel_idx=0, eh_picking=False)
+    item = racking._ItemParaColocar(sku="SB", descricao="", load_type=LoadType.PALLET,
+                                    comp_m=1.2828, larg_m=1.2, alt_m=1.3855, pecas_nesta_caixa=5,
+                                    eh_primeira_do_sku=False, orientacao_fixa=True)
+    for _ in range(4):
+        sol = racking._empacotar_nivel(nivel, emp, item)
+        assert sol is not None
+        racking._commit_nivel(nivel, item, sol)
+    assert racking._empacotar_nivel(nivel, emp, item) is None
+    assert all((c.comp_m, c.larg_m) == (1.2828, 1.2) and c.orientacao_fixa for c in nivel.caixas)
 
 
 def test_caixa_forcada_quantidade_manual_nao_e_arredondada():

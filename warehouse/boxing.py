@@ -207,12 +207,16 @@ def altura_real_unidade(article: Article, box: BoxType, pecas: int, cfg: Config)
     devolve a altura nominal.
 
     Palete decidida à mão (`palete_por_sku`): 1 peça por camada, com a cota
-    indicada na vertical -- deck + peças x essa cota."""
+    indicada na vertical -- deck + peças x essa cota; se aninham
+    (`palete_aninha`): deck + cota x (1 + (peças - 1) x fator_empilhamento)."""
     deck = max(box.ext_alt_m - box.int_alt_m, 0.0)
     dims = (article.comp_m, article.larg_m, article.alt_m)
     spec = palete_por_sku(article.sku, cfg)
     if spec is not None and box.nome == LoadType.PALLET:
-        return round(deck + pecas * dims[spec[1]], 6)
+        n, iv = max(int(pecas), 1), spec[1]
+        if palete_aninha(article, cfg):
+            return round(deck + dims[iv] * (1 + (n - 1) * cfg.fator_empilhamento), 6)
+        return round(deck + n * dims[iv], 6)
     tol = cfg.pallet_tolerancia_lateral_m if box.nome in _TIPOS_COM_TOLERANCIA_PALETE else 0.0
     eixo_a = eixo_forcado(article.eixo_aninhagem)
     por_peso = math.floor(box.peso_max_kg / article.peso_kg) if article.peso_kg > 0 else None
@@ -248,6 +252,16 @@ def palete_por_sku(sku: str, cfg: Config) -> tuple[int, int] | None:
         raise ValueError(f"palete_por_sku[{sku!r}]: precisa de 'pecas' > 0 e "
                          f"'vertical' em x/y/z (recebido {spec!r})")
     return int(spec["pecas"]), iv
+
+
+def palete_aninha(article: Article, cfg: Config) -> bool:
+    """As peças de uma palete à mão aninham umas nas outras na vertical:
+    `"aninha": true` na entrada de `Config.palete_por_sku`, ou o
+    `EIXO_ANINHAGEM` do artigo igual à cota vertical dessa entrada."""
+    spec = palete_por_sku(article.sku, cfg)
+    if spec is None:
+        return False
+    return bool(cfg.palete_por_sku[article.sku].get("aninha"))         or spec[1] == eixo_forcado(article.eixo_aninhagem)
 
 
 def base_palete_por_sku(article: Article, box: BoxType,
@@ -634,7 +648,7 @@ def justificar_escolha(article: Article, catalogo: list[BoxType], cfg: Config,
             fator_limitante="N/A (palete decidida à mão)",
             criterio=(
                 f"Palete decidida à mão (Config.palete_por_sku): {spec[0]} peça(s) por palete, "
-                f"1 por camada, sem tolerância lateral. No rack ocupa {prof:.2f} m de "
+                f"1 por camada{' (aninham na vertical)' if palete_aninha(article, cfg) else ''}, sem tolerância lateral. No rack ocupa {prof:.2f} m de "
                 f"profundidade x {viga:.2f} m de viga; a carga sai {sai_ft:.2f} m à frente/atrás "
                 f"e {sai_lados:.2f} m para cada lado. "
                 f"Nº de unidades = ceil({article.stock_max_un} / {assignment.pecas_por_unidade}) "

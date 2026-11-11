@@ -43,12 +43,14 @@
     "WAS00061": 500
   },
 
-  "_comment_palete_por_sku": "Decisao do utilizador (2026-11-10): estes OVERSIZE passam a palete, 1 peca por camada (base = a da peca), sem tolerancia lateral; a carga pode sair da palete. FRONT/REAR END sem empilhar; ROOF e HEADLINER deitados e empilhados. SIDE BODY fica para mais tarde (de pe com deck nao cabe nos 1,61 m). FLOOR PANEL continua OVERSIZE.",
+  "_comment_palete_por_sku": "Decisao do utilizador (2026-11-10): estes OVERSIZE passam a palete, 1 peca por camada (base = a da peca), sem tolerancia lateral; a carga pode sair da palete. FRONT/REAR END nao empilhaveis (1 por palete); ROOF deitado e empilhado (10); HEADLINER deitado, empilhado e aninhavel em z (aninha = true, fator_empilhamento 0.3): 10 numa palete, 0,91 m (2026-11-11). SIDE BODY LH/RH deitados (base 1,58 x 1,28, 0,25 na vertical = y) e empilhados, 5 por palete = 1,39 m (2026-11-11; de pe com deck nao cabia nos 1,61 m). FLOOR PANEL continua OVERSIZE.",
   "palete_por_sku": {
     "BEN10.FCC101_____FRONT END": {"pecas": 1, "vertical": "z"},
     "BEN10.FCC103_____REAR END": {"pecas": 1, "vertical": "z"},
     "BEN10.FCF105_____ROOF 4W": {"pecas": 10, "vertical": "z"},
-    "BEN10.GEB101_____HEADLINER": {"pecas": 5, "vertical": "z"}
+    "BEN10.GEB101_____HEADLINER": {"pecas": 10, "vertical": "z", "aninha": true},
+    "BEN10.FCE101_____SIDE BODY LH": {"pecas": 5, "vertical": "y"},
+    "BEN10.FCE102_____SIDE BODY RH": {"pecas": 5, "vertical": "y"}
   },
 
   "_comment_oversize_racks": "A SIA nao tem rack wide-span na folha Racks: OVERSIZE vai para o par emparelhado de porta-paletes (oversize_par_racks). Vazio = regra desligada, sem aviso.",
