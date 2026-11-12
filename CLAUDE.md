@@ -1621,8 +1621,25 @@ mostrava. Feito (só visualização, o algoritmo não mudou):
   tapadas)». Mapa: modo «Caixas tapadas».
 - Descoberto ao ver: XS de 0,30 × 0,15 m vão deitadas com 0,15 m de fundo --
   até 4 filas de profundidade numa prateleira de 0,60 m (uma XS atrás de 3
-  outros componentes). Regra possível, por decidir: atrás de uma caixa só o
-  mesmo SKU.
+  outros componentes).
+
+## Decisão fechada: atrás de uma caixa só o MESMO SKU (2026-11-12)
+Utilizador: "adiciona a regra que só podes ter atrás o mesmo SKU". Na
+alocação, cada nível arruma-se em **faixas de profundidade**
+(`alocacao._empacotar_faixas`, no lugar de `racking._empacotar_nivel`): uma
+faixa = uma coluna ao longo do vão com caixas de UM só SKU, da frente para
+trás; cada grupo (SKU + forma) escolhe a orientação que gasta menos vão; cada
+faixa leva a folga lateral. Também: `profundidade_ok` em `repor` (incremental),
+a troca de unidades (b) só mexe em caixas sozinhas na faixa
+(`_sozinha_na_faixa`), e a cache de falhas do nível passou a ser por forma E
+SKU. As trocas de posições/níveis inteiros (a1, a2, c) não mexem na geometria
+de um nível. `ALGORITMO_VERSAO = "2026-11-12.3"`.
+Impacto no layout de referência (A.run, ano inteiro): tapadas 284 -> 0; nada
+por alocar; +3 módulos ocupados; 49,9 -> 51,9 min/dia; dias que não encaixam
+11 -> 12; armazém passa do turno 4 -> 5 dias.
+**O dimensionamento (`racks_needed`, área dos colegas) ainda usa o packer
+livre** -- não conta com a regra; o teste do bloco dimensionado passou a
+aceitar «sem espaço livre» além de «CONTÍGUO».
 
 ## Decisão fechada: contiguidade = SÓ LADO A LADO (2026-11-12)
 Utilizador: "a regra devia ser lado a lado só" (via um SKU com 2 módulos com

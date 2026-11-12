@@ -234,8 +234,11 @@ def test_o_bloco_dimensionado_leva_todo_o_stock(tmp_path):
     assert res.estado["modo"] == "de raiz" and res.estado["guardado"] and not res.estado["pode_guardar"]
     assert (tmp_path / "estado.json").exists() and res.estado["calibracao"] == "refeita"
     # contiguidade obrigatória: o bloco dimensionado tem o espaço à justa (usa qualquer buraco), por
-    # isso alguns SKUs grandes podem não ter um bloco inteiro -- só por esse motivo, e as contas fecham
-    assert all("CONTÍGUO" in n.motivo for n in res.nao_alocados), {n.motivo for n in res.nao_alocados}
+    # isso alguns SKUs grandes podem não ter um bloco inteiro; e o dimensionamento ainda arruma os níveis
+    # com o packer livre (SKUs diferentes em fila), a alocação com faixas de um só SKU (2026-11-12) --
+    # só por estes motivos, e as contas fecham
+    assert all("CONTÍGUO" in n.motivo or "sem espaço livre" in n.motivo for n in res.nao_alocados), \
+        {n.motivo for n in res.nao_alocados}
     assert (sum(c.n_unidades for c in res.colocacoes) + sum(n.n_unidades for n in res.nao_alocados)
             == sum(a.num_unidades for a in asg))
     # tempos: com os tempos do livro bate com a «7b Voltas», o «Bulk» e o «Gantt»
@@ -349,6 +352,36 @@ def test_profundidade_marca_caixas_tapadas_por_outro_sku():
     assert tras_a["atras"] and tras_a["tapada_por"] == []           # atrás do próprio SKU: não conta
     assert not solta["atras"] and not frente_a["atras"]             # nada à frente
     assert n == 2                                                   # unidades (a pilha de 2 do B)
+
+
+def test_so_o_mesmo_sku_atras_faixas_de_profundidade():
+    # regra do utilizador (2026-11-12): atrás de uma caixa só o mesmo SKU. XS 0,30 x 0,15 numa
+    # prateleira de 1,80 x 0,60: o mesmo SKU enche a faixa em profundidade (2 de 0,30 de fundo
+    # numa faixa de 0,15 de vão); SKUs diferentes ficam lado a lado, nunca um atrás do outro.
+    prat = dataclasses.replace(PRAT1, folga_lateral_m=0.03)
+    pos = [_pos("P1", prat, 0.0)]
+    itens = [_item(s, comp=0.30, larg=0.15, alt=0.12) for s in ("A", "A", "B", "C", "C", "C")]
+    res = A.alocar(pos, itens, {LoadType.XS: [prat]}, _taxas(A=3, B=2, C=1), (0, 0), CFG)
+    assert not res.nao_alocados
+    cx = [c for n in A.para_json(res, _taxas(A=3, B=2, C=1))["posicoes"][0]["niveis"] for c in n["caixas"]]
+    assert all(not c["tapada_por"] for c in cx)
+    assert {c["sku"] for c in cx if c["atras"]} <= {"A", "C"}          # só atrás de si próprios
+    assert A.marcar_profundidade(cx) == 0
+
+
+def test_faixas_nao_cabe_sku_novo_quando_o_vao_acaba():
+    # caixas de 0,30 x 0,60 (uma por faixa): 5 faixas com folga de 3 cm = 1,65 m cabem em 1,80;
+    # a 6.ª (1,98 > 1,83) já não -- um SKU novo precisa de uma faixa só dele
+    prat = dataclasses.replace(PRAT1, folga_lateral_m=0.03)
+    nivel = A.NivelRack(nivel_idx=0, eh_picking=False)
+    for s in "ABCDEFGHIJK":
+        sol = A._empacotar_faixas(nivel, prat, _item(s, comp=0.30, larg=0.60, alt=0.12))
+        if sol is None:
+            break
+        A._commit_nivel(nivel, _item(s, comp=0.30, larg=0.60, alt=0.12), sol)
+    n_skus = len({c.sku for c in nivel.caixas})
+    assert n_skus == 5 and A.profundidade_ok(nivel.caixas)
+    assert A._empacotar_faixas(nivel, prat, _item("Z", comp=0.30, larg=0.60, alt=0.12)) is None
 
 
 def test_contiguidade_obrigatoria_o_sku_nunca_fica_partido():

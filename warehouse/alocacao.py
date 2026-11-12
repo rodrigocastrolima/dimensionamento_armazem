@@ -20,11 +20,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .models import CaixaColocada, LoadType, NivelRack, RackType
-from .racking import _commit_nivel, _empacotar_nivel, altura_nivel, cotas_fisicas_niveis
+import math
+
+from .racking import _Colocado, _commit_nivel, altura_nivel, cotas_fisicas_niveis
 
 # Versão das REGRAS de alocação: mudar quando a lógica muda (o modo incremental
 # deixa de valer -- alocação de raiz até se guardar um estado novo).
-ALGORITMO_VERSAO = "2026-11-12.2"
+ALGORITMO_VERSAO = "2026-11-12.3"
 CONTIGUIDADE_MODULOS = 1     # vizinho = só o módulo LADO A LADO na mesma fila (2026-11-12)
 
 REGRAS = (
@@ -503,6 +505,77 @@ def _ligado(ps: set, viz: dict) -> bool:
     return vist == ps
 
 
+def _empacotar_faixas(nivel: NivelRack, rack: RackType, item) -> dict | None:
+    """Arruma o nível em FAIXAS DE PROFUNDIDADE: cada faixa é uma coluna ao
+    longo do vão com caixas de UM SÓ SKU, uma atrás da outra a partir da
+    frente (y = 0, o corredor). Regra do utilizador (2026-11-12, "só podes ter
+    atrás o mesmo SKU"): para tirar uma caixa nunca é preciso mexer noutro
+    componente. Substitui, na alocação, o packer livre do dimensionamento
+    (``racking._empacotar_nivel``), que punha 2 a 4 XS de SKUs diferentes em
+    fila (206 de 851 unidades tapadas no layout de referência).
+
+    Cada grupo (SKU + forma + orientação fixa) escolhe a orientação que gasta
+    MENOS vão: k = caixas por faixa (profundidade / fundo da caixa), faixas =
+    ceil(n / k); cada faixa leva a folga lateral da tipologia. Cabe se a soma
+    das larguras couber no vão (n faixas = n-1 folgas, como no packer
+    alinhado). Mesma interface de ``_empacotar_nivel``: {rid: retângulo},
+    rid = índice da caixa existente ou "novo"; None se não couber."""
+    if item.alt_m > altura_nivel(rack, nivel.nivel_idx) + 1e-9:
+        return None
+    caixas = [(i, c.sku, c.comp_m, c.larg_m, c.orientacao_fixa) for i, c in enumerate(nivel.caixas)]
+    caixas.append(("novo", item.sku, item.comp_m, item.larg_m, item.orientacao_fixa))
+    grupos: dict = {}
+    for rid, sku, w, h, fixa in caixas:
+        chave = (sku, (round(w, 4), round(h, 4)) if fixa else tuple(sorted((round(w, 4), round(h, 4)))), fixa)
+        grupos.setdefault(chave, {"dims": (w, h), "fixa": fixa, "rids": []})["rids"].append(rid)
+    g, L, P = rack.folga_lateral_m, rack.larg_m, rack.prof_m
+    plano, total = [], 0.0
+    for gr in grupos.values():
+        w, h = gr["dims"]
+        curto, longo = sorted((w, h))
+        opcoes = [(w, h)] if gr["fixa"] else [(curto, longo), (longo, curto)]
+        melhor = None
+        for cw, ch in opcoes:
+            if cw > L + 1e-9 or ch > P + 1e-9:
+                continue
+            k = max(1, int((P + 1e-9) // ch))
+            faixas = math.ceil(len(gr["rids"]) / k)
+            larg = faixas * (cw + g)
+            if melhor is None or larg < melhor[0] - 1e-9:
+                melhor = (larg, cw, ch, k)
+        if melhor is None:
+            return None
+        plano.append((gr["rids"], *melhor[1:]))
+        total += melhor[0]
+    if total > L + g + 1e-6:
+        return None
+    out, x = {}, 0.0
+    for rids, cw, ch, k in plano:
+        for f in range(0, len(rids), k):
+            for j, rid in enumerate(rids[f:f + k]):
+                out[rid] = _Colocado(round(x, 4), round(j * ch, 4), cw, ch, rid)
+            x += cw + g
+    return out
+
+
+def profundidade_ok(caixas: list) -> bool:
+    """Nenhuma caixa (CaixaColocada) atrás de uma de OUTRO SKU sobreposta no
+    vão (y = 0 é a frente). Ver ``_empacotar_faixas``."""
+    for b in caixas:
+        for a in caixas:
+            if a is not b and a.sku != b.sku and a.y_m + a.larg_m <= b.y_m + 1e-6 \
+                    and a.x_m < b.x_m + b.comp_m - 1e-6 and b.x_m < a.x_m + a.comp_m - 1e-6:
+                return False
+    return True
+
+
+def _sozinha_na_faixa(cx, caixas: list) -> bool:
+    """A caixa não tem nenhuma outra à frente nem atrás (sobreposta no vão):
+    pode trocar de SKU sem pôr nada atrás de outro componente."""
+    return not any(a is not cx and a.x_m < cx.x_m + cx.comp_m - 1e-6 and cx.x_m < a.x_m + a.comp_m - 1e-6
+                   for a in caixas)
+
+
 def _trocas_aos_pares(por_posicao: dict, parte, viz: dict, zona, bloqueada) -> int:
     """2.ª etapa (c): troca o conteúdo de DUAS posições inteiras iguais
     (mesma tipologia e nº de níveis) sempre que isso baixa Σ visitas × custo,
@@ -864,12 +937,14 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         if tentar is None:
             tentar = junto(it) + ordem_celulas.get(it.load_type, [])
         nomes = compat.get(it.load_type, set())
-        forma = (round(it.comp_m, 3), round(it.larg_m, 3), round(it.alt_m, 3))
+        # o que falhou num nível depende da forma E do SKU (com faixas, um SKU que
+        # já lá tem uma faixa a meio ainda cabe onde um SKU novo já não cabe)
+        forma = (round(it.comp_m, 3), round(it.larg_m, 3), round(it.alt_m, 3), it.sku)
         a_it = it.comp_m * it.larg_m
         for c in tentar:
             if c.pos.rack.nome not in nomes or forma in c.falhas or c.area_livre < a_it - 1e-9:
                 continue
-            sol = _empacotar_nivel(c.nivel, c.pos.rack, it)
+            sol = _empacotar_faixas(c.nivel, c.pos.rack, it)
             if sol is None:
                 c.falhas.add(forma)
                 continue
@@ -916,7 +991,7 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
                            comp_m=comp, larg_m=larg, alt_m=it.alt_m, pecas_nesta_caixa=it.pecas_nesta_caixa,
                            eh_picking=False, num_boxes_in_stack=it.num_boxes_in_stack,
                            orientacao_fixa=it.orientacao_fixa)
-        if c.chave in reservadas:
+        if c.chave in reservadas or not profundidade_ok(c.nivel.caixas + [cx]):
             return False
         c.nivel.caixas.append(cx)
         c.area_livre -= comp * larg
@@ -1103,7 +1178,9 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
     for c in celulas if otimizar else []:
         h = altura_nivel(c.pos.rack, c.nivel.nivel_idx)
         for cx in c.nivel.caixas:
-            if id(cx) not in bloqueadas:
+            # só troca de SKU uma caixa sozinha na sua faixa: numa faixa com várias
+            # (todas do mesmo SKU) a troca punha outro componente à frente/atrás
+            if id(cx) not in bloqueadas and _sozinha_na_faixa(cx, c.nivel.caixas):
                 pe = (round(cx.comp_m, 3), round(cx.larg_m, 3))
                 # orientação fixa (palete à mão): só troca com a mesma base E orientação
                 forma = (cx.load_type, pe if cx.orientacao_fixa else tuple(sorted(pe)),
