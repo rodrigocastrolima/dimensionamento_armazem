@@ -48,13 +48,26 @@ def aplicar_pilares(racks: list[RackType], cfg: Config) -> list[RackType]:
     return saida
 
 
+def aplicar_folgas_laterais(racks: list[RackType], cfg: Config) -> list[RackType]:
+    """Preenche `RackType.folga_lateral_m` a partir de `Config.folga_lateral_rack_m`
+    (chave = substring do nome, case-insensitive, a primeira que casar ganha)."""
+    if not cfg.folga_lateral_rack_m:
+        return racks
+    saida = []
+    for r in racks:
+        nome = (r.nome or "").lower()
+        folga = next((float(v) for k, v in cfg.folga_lateral_rack_m.items() if k.lower() in nome), 0.0)
+        saida.append(replace(r, folga_lateral_m=folga) if folga else r)
+    return saida
+
+
 def load_rack_types(cfg: Config) -> list[RackType]:
     if cfg.data_source == "supabase":
         from . import db_supabase
         racks = db_supabase.load_rack_types(cfg.client_name)
     else:
         racks = io_excel.load_rack_types(cfg.master_data)
-    return aplicar_pilares(racks, cfg)
+    return aplicar_folgas_laterais(aplicar_pilares(racks, cfg), cfg)
 
 
 def load_zones(cfg: Config) -> list[Zona]:

@@ -13,6 +13,7 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass
+from typing import NamedTuple
 
 from rectpack import newPacker, PackingMode
 
@@ -68,8 +69,9 @@ def rack_capacity(rack: RackType, box: BoxType) -> int:
     (alt_nivel_m) e o resultado é idêntico ao de sempre (todos ou nenhum).
     Total = caixas por nível x nº de níveis compatíveis.
     """
-    op1 = math.floor(rack.larg_m / box.ext_comp_m) * math.floor(rack.prof_m / box.ext_larg_m)
-    op2 = math.floor(rack.larg_m / box.ext_larg_m) * math.floor(rack.prof_m / box.ext_comp_m)
+    g = rack.folga_lateral_m     # só no vão: n caixas levam n*(c+g) <= larg+g
+    op1 = math.floor((rack.larg_m + g) / (box.ext_comp_m + g)) * math.floor(rack.prof_m / box.ext_larg_m)
+    op2 = math.floor((rack.larg_m + g) / (box.ext_larg_m + g)) * math.floor(rack.prof_m / box.ext_comp_m)
     por_nivel = max(op1, op2)
     if por_nivel <= 0:
         return 0
@@ -314,6 +316,7 @@ _CAMPOS_SUBSTRING_RACK = {
     "empilhamento_por_nivel": lambda cfg: cfg.empilhamento_por_nivel,
     "picking_manual_racks": lambda cfg: cfg.picking_manual_racks,
     "pilar_rack_m": lambda cfg: tuple(cfg.pilar_rack_m),
+    "folga_lateral_rack_m": lambda cfg: tuple(cfg.folga_lateral_rack_m),
 }
 
 
@@ -640,6 +643,19 @@ class _ItemParaColocar:
     orientacao_fixa: bool = False  # comp_m no vão, larg_m na profundidade, sem rodar
 
 
+_EPS_FOLGA = 1e-6   # tolerância de vírgula flutuante quando há folga (4 x 0,41 = 1,64 ...)
+
+
+class _Colocado(NamedTuple):
+    """Retângulo colocado num nível, com a dimensão REAL da caixa (já sem a
+    folga lateral) -- mesma interface (x, y, width, height, rid) do rectpack."""
+    x: float
+    y: float
+    width: float
+    height: float
+    rid: object
+
+
 def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -> dict | None:
     """Testa (via rectpack, batch com as caixas já lá + a nova) se item cabe no
     nível. Devolve a solução completa {rid -> rect colocado} se couber tudo
@@ -674,16 +690,21 @@ def _empacotar_nivel(nivel: NivelRack, rack: RackType, item: _ItemParaColocar) -
         # com orientações fixas no nível não há packer livre (roda tudo)
         return colocados
 
+    # Com folga lateral, o packer livre (que roda as caixas) não distingue o
+    # vão da profundidade: aqui a folga vai nos DOIS eixos (mais conservador).
+    # Só entra quando a arrumação alinhada acima não coube.
+    g = rack.folga_lateral_m
     packer = newPacker(mode=PackingMode.Offline, rotation=True)
-    packer.add_bin(rack.larg_m, rack.prof_m)
+    packer.add_bin(rack.larg_m + g + (_EPS_FOLGA if g else 0.0),
+                   rack.prof_m + g + (_EPS_FOLGA if g else 0.0))
     for rid, (w, h) in zip(ids, dims):
-        packer.add_rect(w, h, rid=rid)
+        packer.add_rect(round(w + g, 4), round(h + g, 4), rid=rid)
     packer.pack()
 
     colocados = {}
     for abin in packer:
         for rect in abin:
-            colocados[rect.rid] = rect
+            colocados[rect.rid] = _Colocado(rect.x, rect.y, rect.width - g, rect.height - g, rect.rid)
 
     if len(colocados) != len(nivel.caixas) + 1 or "novo" not in colocados:
         return None
@@ -710,23 +731,29 @@ def _empacotar_alinhado(rack: RackType, dims: list[tuple[float, float]], ids: li
     if len(formas) > _MAX_FORMAS_ALINHADO:
         return None
 
+    # Folga lateral (RackType.folga_lateral_m): cada caixa entra com `w + g` no
+    # vão e o nível com `larg + g` -- n caixas levam (n-1) folgas e nenhuma
+    # encosta ao pilar. A profundidade não leva folga. Os retângulos devolvidos
+    # já têm a largura REAL da caixa (sem a folga).
+    g = rack.folga_lateral_m
     for escolha in itertools.product((0, 1), repeat=len(formas)):
         ori = dict(zip(formas, escolha))
         packer = newPacker(mode=PackingMode.Offline, rotation=False)
-        packer.add_bin(rack.larg_m, rack.prof_m)
+        packer.add_bin(rack.larg_m + g + (_EPS_FOLGA if g else 0.0), rack.prof_m)
         for rid, (w, h) in zip(ids, dims):
             if rid in fixos:
-                packer.add_rect(w, h, rid=rid)
+                packer.add_rect(round(w + g, 4), h, rid=rid)
                 continue
             curto, longo = sorted((w, h))
             forma = tuple(sorted((round(w, 4), round(h, 4))))
             # 0: lado longo na profundidade (y); 1: lado longo no vão (x)
-            packer.add_rect(*((curto, longo) if ori[forma] == 0 else (longo, curto)), rid=rid)
+            cw, ch = (curto, longo) if ori[forma] == 0 else (longo, curto)
+            packer.add_rect(round(cw + g, 4), ch, rid=rid)
         packer.pack()
         colocados = {}
         for abin in packer:
             for rect in abin:
-                colocados[rect.rid] = rect
+                colocados[rect.rid] = _Colocado(rect.x, rect.y, rect.width - g, rect.height, rect.rid)
         if len(colocados) == len(dims):
             return colocados
     return None

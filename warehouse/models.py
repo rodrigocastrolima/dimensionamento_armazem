@@ -195,6 +195,14 @@ class RackType:
     # Não vem da folha «Racks»: preenche-se em data_access.load_rack_types a
     # partir de Config.pilar_rack_m (por substring do nome da tipologia).
     pilar_m: float = 0.0
+    # Folga LATERAL (m) entre caixas lado a lado, ao longo do vão (eixo x):
+    # cada caixa é arrumada com `larg + folga` e o nível tem `larg_m + folga`,
+    # ou seja, n caixas levam (n-1) folgas e nenhuma encosta ao pilar. Não
+    # se aplica à profundidade (as caixas da frente/trás ficam encostadas: o
+    # nível da Prateleira Leve tem 0,60 m = 2 S ou 2 XS de 0,30 m). 0 = caixas
+    # coladas (comportamento de sempre). Não vem da folha «Racks»: preenche-se
+    # em data_access.load_rack_types a partir de Config.folga_lateral_rack_m.
+    folga_lateral_m: float = 0.0
 
     @property
     def larg_total_m(self) -> float:

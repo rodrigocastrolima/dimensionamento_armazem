@@ -334,7 +334,7 @@ class Operador {
 // Regra operacional: quem anda a pé só faz picking manual em estantes leves;
 // paletes/material longo exigem porta-paletes. Por isso cada perfil tem o seu
 // conjunto de tipologias acessíveis.
-const RACKS_A_PE = ["Prateleira Leve"];
+const RACKS_A_PE = ["Prateleira Leve", "Prateleira XS"];
 
 /** O backend só emite os corredores INTERIORES (entre pares de filas) -- a faixa
  *  que corre ao longo da parede é área envolvente, não um corredor listado. Mas

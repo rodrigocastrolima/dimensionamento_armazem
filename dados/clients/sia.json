@@ -61,5 +61,8 @@
   "picking_manual_racks": ["prateleira"],
 
   "_comment_pilar_rack_m": "Largura (m) de 1 pilar por tipologia (substring do nome). Larg_m da folha Racks e o vao LIVRE; o pilar soma-se so no espaco de chao (layout, sandbox, area). Ajustar ao montante real (80-100 mm tipico). Prateleira Leve fora: 1.80 m ja e a medida total.",
-  "pilar_rack_m": {"porta-paletes": 0.09}
+  "pilar_rack_m": {"porta-paletes": 0.09},
+
+  "_comment_folga_lateral_rack_m": "Folga (m) entre caixas lado a lado, so no vao (nunca na profundidade), por tipologia (substring do nome). SIA: 3 cm nas prateleiras (decisao do utilizador, 2026-11-12: com 1 cm uma XS entrava a justa no canto ao lado de 4 M, 1 cm de cada lado; antes 1 cm). Com folga em y, 2 S/XS de 0,30 m ja nao cabem em 0,60 m de fundo: a folga so existe ao longo do vao.",
+  "folga_lateral_rack_m": {"prateleira": 0.03}
 }

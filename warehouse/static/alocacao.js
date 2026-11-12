@@ -16,6 +16,7 @@ const SVGNS = "http://www.w3.org/2000/svg";
 const COR_CLASSE = { A: "#e06666", B: "#f6b26b", C: "#93c47d", "—": "#cccccc" };
 let dados = null;           // última resposta do /api/alocacao
 let selecionada = null;     // id da posição na vista de frente
+let nivelSel = null;        // nível da posição na vista de cima
 let diaAtual = null;        // dia no cronograma
 let crono = null;           // resposta do /api/alocacao/dia/N
 let tarefaAberta = null;    // índice da tarefa com os picks à mostra
@@ -70,15 +71,42 @@ function melhorClasse(p) {
 function valorCalor(p, modo) {
   if (modo === "movimentos") return p.visitas_dia;
   if (modo === "ocupacao") return ocupacao(p);
+  if (modo === "tapadas") return p.tapadas || 0;
   return p.picking_min_dia;
+}
+
+// SKUs que a pesquisa escolhe: o código exato primeiro; senão código ou descrição que contenham o texto
+function skusDaPesquisa(txt) {
+  if (!dados || !txt) return [];
+  const q = txt.trim().toLowerCase();
+  if (!q) return [];
+  const todos = Object.keys(dados.skus || {});
+  const exato = todos.filter((s) => codigo(s).toLowerCase() === q || s.toLowerCase() === q);
+  if (exato.length) return exato;
+  return todos.filter((s) => s.toLowerCase().includes(q)
+    || ((dados.skus[s] || {}).descricao || "").toLowerCase().includes(q));
+}
+
+// onde está cada unidade de um SKU: [{pid, endereco, nivel, n}] (inclui as OVERSIZE dos pares)
+function enderecosDoSku(sku) {
+  const out = [];
+  for (const p of dados.posicoes) {
+    for (const n of p.niveis) {
+      const k = n.caixas.filter((c) => c.sku === sku).reduce((s, c) => s + c.n_unidades, 0);
+      const t = n.caixas.filter((c) => c.sku === sku && (c.tapada_por || []).length).reduce((s, c) => s + c.n_unidades, 0);
+      if (k) out.push({ pid: p.id, endereco: p.endereco, nivel: n.nivel, n: k, t, dist: p.picking_min_dia });
+    }
+  }
+  return out;
 }
 
 function posicoesDoSku(txt) {
   if (!dados || !txt) return new Set();
   const q = txt.trim().toLowerCase();
   if (!q) return new Set();
+  const alvo = new Set(skusDaPesquisa(txt));
   return new Set(dados.posicoes.filter((p) => p.niveis.some((n) => caixasDoNivel(n).some(
-    (c) => c.sku.toLowerCase().includes(q) || (c.descricao || "").toLowerCase().includes(q)))).map((p) => p.id));
+    (c) => alvo.has(c.sku)))).map((p) => p.id));
 }
 
 // estado de um dia (cronograma encadeado: não há "voltas atrasadas"): vermelho
@@ -172,12 +200,14 @@ function desenharPlanta() {
   }
   const escala = (p) => (porTipo ? maxTipo[p.rack_nome] : modo === "ocupacao" ? 1 : max);
   const destaque = posicoesDoSku($("aloc-sku").value);
+  const comPesquisa = destaque.size > 0;
   for (const p of dados.posicoes) {
     // posição «frente+trás» (OVERSIZE num par de módulos costas com costas): só o contorno, se tiver carga
     if (p.par) {
       if (p.niveis.some((n) => n.caixas.length)) {
         const r = el("rect", { x: p.x, y: p.y, width: p.larg_m, height: p.prof_m, fill: "none", class: "rack",
-                               stroke: p.id === selecionada ? "#1d4ed8" : "#7c3aed", "stroke-width": 0.1,
+                               stroke: p.id === selecionada || destaque.has(p.id) ? "#1d4ed8" : "#7c3aed",
+                               "stroke-width": destaque.has(p.id) ? 0.25 : 0.1,
                                "stroke-dasharray": "0.35 0.2", "pointer-events": "stroke" }, svg);
         r.addEventListener("click", () => selecionar(p.id));
         r.addEventListener("mousemove", (ev) => mostrarTooltip(ev, p));
@@ -186,11 +216,13 @@ function desenharPlanta() {
       continue;
     }
     const fill = modo === "classe" ? (COR_CLASSE[melhorClasse(p)] || "#f3f4f6")
+      : modo === "tapadas" ? (p.tapadas ? corCalor(0.3 + 0.7 * p.tapadas / max) : "#f8fafc")
       : modo === "dia" ? (movDe(p) ? corCalor(0.3 + 0.7 * movDe(p) / max) : "#f8fafc")
       : corCalor(Math.min(1, valorCalor(p, modo) / escala(p)));
     const r = el("rect", { x: p.x, y: p.y, width: p.larg_m, height: p.prof_m, fill, class: "rack",
-                           stroke: p.id === selecionada ? "#1d4ed8" : destaque.has(p.id) ? "#2563eb" : "#9ca3af",
-                           "stroke-width": p.id === selecionada || destaque.has(p.id) ? 0.12 : 0.03 }, svg);
+                           stroke: destaque.has(p.id) ? "#1d4ed8" : p.id === selecionada ? "#1d4ed8" : "#9ca3af",
+                           "stroke-width": destaque.has(p.id) ? 0.25 : p.id === selecionada ? 0.12 : 0.03,
+                           opacity: comPesquisa && !destaque.has(p.id) ? 0.25 : 1 }, svg);
     r.addEventListener("click", () => selecionar(p.id));
     r.addEventListener("mousemove", (ev) => mostrarTooltip(ev, p));
     r.addEventListener("mouseleave", () => ($("aloc-tooltip").style.display = "none"));
@@ -215,6 +247,12 @@ function desenharPlanta() {
          <span><span class="swatch" style="background:#ea580c"></span>caminho (mais grosso = mais vezes)</span>`)
       + `<button id="aloc-ver-ano" style="padding:2px 8px">Ver o ano</button>`;
     $("aloc-ver-ano").addEventListener("click", () => { mapaDia = false; desenharPlanta(); });
+  } else if (modo === "tapadas") {
+    const comT = dados.posicoes.filter((p) => !p.par && p.tapadas);
+    leg.innerHTML = `<span><b>${dados.resumo.tapadas || 0}</b> unidade(s) atrás de uma caixa de OUTRO componente,
+        em ${comT.length} módulo(s)</span>
+      <span class="aloc-escala">por módulo: 0 <i></i> ${fmt(max, 0)}</span>
+      <span class="dica" style="margin:0">clica num módulo: a vista de cima mostra quem tapa quem</span>`;
   } else if (modo === "classe") {
     leg.innerHTML = Object.entries(COR_CLASSE).map(([k, c]) =>
       `<span><span class="swatch" style="background:${c}"></span>${k === "—" ? "sem saídas" : "Classe " + k}</span>`).join("");
@@ -237,6 +275,7 @@ function mostrarTooltip(ev, p) {
   tt.innerHTML = `<b>${esc(p.endereco)}</b><br>${esc(p.rack_nome)}<br>
     Visitas: <b>${fmt(p.visitas_dia, 2)}</b>/dia · Picking: <b>${fmt(p.picking_min_dia)}</b> min/dia<br>
     Ocupação: ${fmt(ocupacao(p) * 100, 0)} % · ${skus.size} SKU(s)`
+    + (p.tapadas ? `<br><span style="color:#b91c1c">${p.tapadas} unidade(s) atrás de outro componente</span>` : "")
     + (nPar ? `<br>${nPar} nível(eis) com OVERSIZE do par frente+trás (inclui ${fmt(p.visitas_par_dia || 0, 2)} visitas/dia)` : "");
   tt.style.display = "block";
   tt.style.left = `${ev.clientX + 14}px`;
@@ -244,16 +283,85 @@ function mostrarTooltip(ev, p) {
 }
 
 // ----------------------------------------------------------------- vista de frente
-function selecionar(id) {
+// nível a mostrar de cima: o do componente pesquisado; senão o com mais caixas tapadas; senão o 1.º com caixas
+function nivelPadrao(p) {
+  const alvo = new Set(skusDaPesquisa($("aloc-sku").value).slice(0, 1));
+  const doSku = p.niveis.find((n) => n.caixas.some((c) => alvo.has(c.sku)));
+  if (doSku) return doSku.nivel;
+  const comT = [...p.niveis].sort((a, b) => (b.tapadas || 0) - (a.tapadas || 0))[0];
+  if (comT && comT.tapadas) return comT.nivel;
+  return (p.niveis.find((n) => n.caixas.length) || p.niveis[0] || {}).nivel ?? null;
+}
+
+function selecionar(id, nivel = null) {
   selecionada = id;
+  const p = dados && dados.posicoes.find((x) => x.id === id);
+  nivelSel = nivel ?? (p ? nivelPadrao(p) : null);
   desenharPlanta();
   desenharFrente();
+}
+
+function escolherNivel(nivel) {
+  nivelSel = nivel;
+  desenharFrente();
+}
+
+// o nível escolhido visto de cima, à escala: vão na horizontal, profundidade na vertical, frente em baixo
+function desenharCima(p, alvo) {
+  const box = $("aloc-cima");
+  const n = p.niveis.find((x) => x.nivel === nivelSel);
+  if (!n) { box.innerHTML = ""; return; }
+  const W = 560, H = 160, topo = 16, baixo = 16;
+  const larg = p.larg_nivel_m, prof = p.prof_nivel_m || 1;
+  const s = Math.min((W - 24) / larg, (H - topo - baixo) / prof);
+  const x0 = (W - larg * s) / 2, yF = topo + prof * s;
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+  const tit = el("text", { x: 4, y: 10, "font-size": 9, fill: "#374151", "font-weight": 700 }, svg);
+  tit.textContent = `N${n.nivel} visto de cima · ${fmt(larg, 2)} × ${fmt(prof, 2)} m`;
+  if (n.tapadas) {
+    const tt = el("text", { x: W - 4, y: 10, "font-size": 9, fill: "#b91c1c", "text-anchor": "end", "font-weight": 700 }, svg);
+    tt.textContent = `${n.tapadas} tapada(s)`;
+  }
+  el("rect", { x: x0, y: topo, width: larg * s, height: prof * s, fill: "#f9fafb", stroke: "#d1d5db",
+               "stroke-width": 0.8 }, svg);
+  for (const x of [x0 - 2, x0 + larg * s + 2]) el("line", { x1: x, y1: topo, x2: x, y2: yF, stroke: "#6b7280",
+                                                            "stroke-width": 3 }, svg);
+  el("line", { x1: x0 - 3, y1: yF + 1, x2: x0 + larg * s + 3, y2: yF + 1, stroke: "#f59e0b", "stroke-width": 2 }, svg);
+  const fr = el("text", { x: W / 2, y: H - 3, "font-size": 8.5, fill: "#6b7280", "text-anchor": "middle" }, svg);
+  fr.textContent = "▲ frente — corredor (onde está o operador)";
+  if (n.par) {
+    const t = el("text", { x: W / 2, y: topo + prof * s / 2 + 3, "font-size": 9, fill: "#7c3aed", "text-anchor": "middle" }, svg);
+    t.textContent = "nível ocupado pelo par frente+trás (OVERSIZE)";
+  }
+  for (const c of n.caixas) {
+    const tap = (c.tapada_por || []).length > 0, doSku = alvo.has(c.sku);
+    const bx = x0 + c.x_m * s, by = yF - (c.y_m + c.larg_m) * s, bw = c.comp_m * s, bh = c.larg_m * s;
+    const r = el("rect", { x: bx + 0.5, y: by + 0.5, width: Math.max(bw - 1, 1), height: Math.max(bh - 1, 1),
+                           fill: COR_CLASSE[c.classe] || "#ccc", opacity: alvo.size && !doSku ? 0.35 : 0.9,
+                           stroke: doSku ? "#1d4ed8" : tap ? "#b91c1c" : "#374151",
+                           "stroke-width": doSku ? 2.5 : tap ? 2 : 0.6, "stroke-dasharray": tap && !doSku ? "4 2" : "none" }, svg);
+    const ti = el("title", {}, r);
+    ti.textContent = `${c.sku}\n${c.unidade} × ${c.n_unidades} · ${c.pecas} peças · classe ${c.classe}` +
+      `\n${c.atras ? `atrás (a ${fmt(c.y_m, 2)} m da frente)` : "à frente"}` +
+      (tap ? `\n⚠ tapada por: ${c.tapada_por.map(codigo).join(", ")}` : "");
+    const rot = cabe(rotuloCurto(c.sku) + (c.n_unidades > 1 ? ` ×${c.n_unidades}` : ""), bw - 2, 4.6);
+    if (rot && bh > 9) {
+      const t = el("text", { x: bx + bw / 2, y: by + bh / 2 + 3, "font-size": 7.5, "text-anchor": "middle",
+                             fill: tap ? "#7f1d1d" : "#111", "pointer-events": "none" }, svg);
+      t.textContent = (tap ? "⚠" : "") + rot;
+    }
+  }
+  box.innerHTML = "";
+  box.appendChild(svg);
 }
 
 function desenharFrente() {
   const p = dados && dados.posicoes.find((x) => x.id === selecionada);
   if (!p) return;
   $("aloc-frente-titulo").textContent = `Vista de frente — ${p.endereco}`;
+  const alvoFrente = new Set(skusDaPesquisa($("aloc-sku").value).slice(0, 1));
   const topo = Math.max(...p.niveis.map((n) => n.base_m + n.altura_util_m), 0.5);
   const W = 300, H = 420, margem = 24;
   const s = Math.min((W - 2 * margem) / p.larg_nivel_m, (H - 26) / topo);
@@ -267,10 +375,20 @@ function desenharFrente() {
   for (const n of p.niveis) {
     const yb = yChao - n.base_m * s;
     el("line", { x1: x0 - 3, y1: yb, x2: x0 + largPx + 3, y2: yb, stroke: "#f59e0b", "stroke-width": 2 }, svg);
-    el("rect", { x: x0, y: yb - n.altura_util_m * s, width: largPx, height: n.altura_util_m * s, fill: "none",
-                 stroke: "#d1d5db", "stroke-dasharray": "3 3", "stroke-width": 0.8 }, svg);
-    const lt = el("text", { x: 3, y: yb - 4, "font-size": 10, fill: "#6b7280" }, svg);
+    const escolhido = n.nivel === nivelSel;
+    const zona = el("rect", { x: x0, y: yb - n.altura_util_m * s, width: largPx, height: n.altura_util_m * s,
+                              fill: escolhido ? "rgba(37,99,235,0.06)" : "transparent",
+                              stroke: escolhido ? "#2563eb" : "#d1d5db", "stroke-dasharray": escolhido ? "none" : "3 3",
+                              "stroke-width": escolhido ? 1.5 : 0.8, cursor: "pointer" }, svg);
+    zona.addEventListener("click", () => escolherNivel(n.nivel));
+    const lt = el("text", { x: 3, y: yb - 4, "font-size": 10, fill: escolhido ? "#2563eb" : "#6b7280",
+                            "font-weight": escolhido ? 700 : 400, cursor: "pointer" }, svg);
     lt.textContent = `N${n.nivel}`;
+    lt.addEventListener("click", () => escolherNivel(n.nivel));
+    if (n.tapadas) {
+      const tw = el("text", { x: 3, y: yb - 15, "font-size": 9, fill: "#b91c1c", "font-weight": 700 }, svg);
+      tw.textContent = `⚠${n.tapadas}`;
+    }
     const prof = p.prof_nivel_m || 1;
     // OVERSIZE do par frente+trás que ocupa este nível (frente e trás ao mesmo tempo)
     for (const c of (n.par ? n.par.caixas : [])) {
@@ -289,44 +407,63 @@ function desenharFrente() {
     }
     for (const c of [...n.caixas].sort((a, b) => b.y_m - a.y_m)) {
       const atras = c.y_m > 0.05 * prof;
+      const doSku = alvoFrente.has(c.sku);
       const r = el("rect", { x: x0 + c.x_m * s, y: yb - c.alt_m * s, width: Math.max(c.comp_m * s - 1, 1),
                              height: Math.max(c.alt_m * s - 1, 1), fill: COR_CLASSE[c.classe] || "#ccc",
-                             opacity: atras ? 0.45 : 0.95, stroke: "#374151", "stroke-width": 0.6 }, svg);
+                             opacity: alvoFrente.size && !doSku ? 0.25 : atras ? 0.45 : 0.95,
+                             stroke: doSku ? "#1d4ed8" : "#374151", "stroke-width": doSku ? 2.5 : 0.6 }, svg);
+      r.addEventListener("click", () => escolherNivel(n.nivel));
       const tit = el("title", {}, r);
       tit.textContent = `${c.sku}\n${c.unidade} × ${c.n_unidades} · ${c.pecas} peças · classe ${c.classe}` +
         (atras ? `\n(atrás, a ${fmt(c.y_m, 2)} m da frente)` : "");
       const rot = atras ? "" : cabe(rotuloCurto(c.sku), c.comp_m * s - 3);
       if (rot && c.alt_m * s > 11) {
         const t = el("text", { x: x0 + (c.x_m + c.comp_m / 2) * s, y: yb - c.alt_m * s / 2 + 3, "font-size": 8,
-                               "text-anchor": "middle", fill: "#111" }, svg);
+                               "text-anchor": "middle", fill: "#111", "pointer-events": "none" }, svg);
         t.textContent = rot;
       }
+    }
+    // caixas tapadas por OUTRO componente: contorno vermelho tracejado por cima (escondidas atrás da da frente)
+    for (const c of n.caixas.filter((c) => (c.tapada_por || []).length)) {
+      el("rect", { x: x0 + c.x_m * s + 1.5, y: yb - c.alt_m * s + 1.5, width: Math.max(c.comp_m * s - 4, 1),
+                   height: Math.max(c.alt_m * s - 4, 1), fill: "none", stroke: "#b91c1c", "stroke-width": 1.5,
+                   "stroke-dasharray": "4 2", "pointer-events": "none" }, svg);
     }
   }
   $("aloc-frente").innerHTML = "";
   $("aloc-frente").appendChild(svg);
+  desenharCima(p, alvoFrente);
   const tabela = (lista, doPar) => {
     const por = {};
     for (const c of lista) {
-      por[c.sku] = por[c.sku] || { sku: c.sku, desc: c.descricao, un: c.unidade, n: 0, pecas: 0, classe: c.classe };
+      por[c.sku] = por[c.sku] || { sku: c.sku, desc: c.descricao, un: c.unidade, n: 0, pecas: 0, classe: c.classe,
+                                   frente: false, tras: false, tapa: new Set() };
       por[c.sku].n += c.n_unidades;
       por[c.sku].pecas += c.pecas;
+      if (c.atras) por[c.sku].tras = true; else por[c.sku].frente = true;
+      for (const t of c.tapada_por || []) por[c.sku].tapa.add(t);
     }
+    const fila = (x) => (doPar ? "par" : x.frente && x.tras ? "frente e trás" : x.tras ? "trás" : "frente")
+      + (x.tapa.size ? ` <span class="aloc-tapada" title="Para a tirar é preciso mexer primeiro em: ${esc([...x.tapa].map(codigo).join(", "))}">⚠ atrás de ${esc([...x.tapa].map(rotuloCurto).join(", "))}</span>` : "");
     return Object.values(por).map((x) =>
-      `<tr${doPar ? ' style="color:#7c3aed"' : ""}><td title="${esc(x.desc)}">${doPar ? "↔ " : ""}${esc(codigo(x.sku))}</td>
+      `<tr${doPar ? ' style="color:#7c3aed"' : ""}${alvoFrente.has(x.sku) ? ' class="aloc-sku-alvo"' : ""}><td title="${esc(x.desc)}">${doPar ? "↔ " : ""}${esc(codigo(x.sku))}</td>
         <td>${esc(x.un)}</td><td class="num">${x.n}</td>
-        <td class="num">${x.pecas}</td><td><span class="swatch" style="background:${COR_CLASSE[x.classe]}"></span> ${esc(x.classe)}</td></tr>`).join("");
+        <td class="num">${x.pecas}</td><td><span class="swatch" style="background:${COR_CLASSE[x.classe]}"></span> ${esc(x.classe)}</td>
+        <td>${fila(x)}</td></tr>`).join("");
   };
   const linhas = [...p.niveis].reverse().map((n) => {
     const itens = tabela(n.caixas, false) + (n.par ? tabela(n.par.caixas, true) : "");
     const vis = n.visitas_dia + (n.par ? n.par.visitas_dia / 2 : 0);
-    return `<tr><td colspan="5" style="background:var(--surface-2); color:var(--text-dim)">
+    return `<tr class="aloc-nivel-cab${n.nivel === nivelSel ? " sel" : ""}" data-nivel="${n.nivel}"><td colspan="6" style="background:var(--surface-2); color:var(--text-dim)">
       <b>N${n.nivel}</b> · ${fmt(n.altura_util_m, 2)} m útil · ${fmt(vis, 2)} visitas/dia`
+      + (n.tapadas ? ` · <span class="aloc-tapada">⚠ ${n.tapadas} tapada(s)</span>` : "")
       + (n.par ? ` · <span style="color:#7c3aed">reservado pelo par frente+trás (OVERSIZE, ↔)</span>` : "") + `</td></tr>`
-      + (itens || `<tr><td colspan="5" style="color:var(--text-faint)">vazio</td></tr>`);
+      + (itens || `<tr><td colspan="6" style="color:var(--text-faint)">vazio</td></tr>`);
   }).join("");
   $("aloc-nivel-detalhe").innerHTML = `<table><thead><tr><th>SKU</th><th>Unid.</th><th class="num">Nº</th>
-    <th class="num">Peças</th><th>Classe</th></tr></thead><tbody>${linhas}</tbody></table>`;
+    <th class="num">Peças</th><th>Classe</th><th>Fila</th></tr></thead><tbody>${linhas}</tbody></table>`;
+  for (const tr of $("aloc-nivel-detalhe").querySelectorAll("tr[data-nivel]"))
+    tr.addEventListener("click", () => escolherNivel(+tr.dataset.nivel));
 }
 
 // ----------------------------------------------------------------- faixa e ano
@@ -509,7 +646,7 @@ function preencherSkus() {
 async function alocar() {
   const btn = $("btn-alocar");
   if (!window.pedidoArranjo || !window.temArranjo || !window.temArranjo()) {
-    $("aloc-estado").textContent = "O arranjo não tem racks: gera o bloco de racks ou acrescenta filas manuais no «Arranjar Layout».";
+    $("aloc-estado").textContent = "O arranjo não tem racks: carrega o layout no «Arranjar Layout» («Carregar»).";
     return;
   }
   btn.disabled = true;
@@ -527,6 +664,10 @@ async function alocar() {
     if (selecionada && !dados.posicoes.some((p) => p.id === selecionada)) selecionada = null;
     if (!selecionada && dados.posicoes.length)   // abre logo a posição com mais movimentações
       selecionada = dados.posicoes.reduce((a, b) => (b.visitas_dia > a.visitas_dia ? b : a)).id;
+    {   // nível da vista de cima: mantém-se se ainda existir nessa posição
+      const p = dados.posicoes.find((x) => x.id === selecionada);
+      if (p && !p.niveis.some((n) => n.nivel === nivelSel)) nivelSel = nivelPadrao(p);
+    }
     $("aloc-download").style.display = "";
     desenharEstado();
     const r = d.resumo;
@@ -536,6 +677,8 @@ async function alocar() {
     preencherSkus();
     desenharPlanta();
     desenharFrente();
+    desenharFichaSku();
+    desenharListaSkus();
     desenharFaixa();
     desenharCalendario();
     const dias = (d.tempos && d.tempos.por_dia) || [];
@@ -559,7 +702,7 @@ function desenharEstado() {
   if (b.alterados?.length) partes.push(`${b.alterados.length} com unidade/quantidade diferente`);
   $("aloc-estado-modo").innerHTML = `<b>${esc(e.modo || "—")}</b> · ${esc(e.motivo || "")}`
     + (partes.length ? ` · BOM: ${partes.join(", ")}` : "")
-    + (e.calibracao ? ` · tempos calibrados no armazém dimensionado (${esc(e.calibracao)})` : "");
+    + (e.calibracao ? ` · tempos calibrados no layout de referência (${esc(e.calibracao)})` : "");
   const bt = $("btn-guardar-estado");
   bt.style.display = e.pode_guardar ? "" : "none";
   bt.title = (e.logica_mudou ? "A lógica de alocação mudou. " : "")
@@ -585,7 +728,153 @@ function proximoVermelho() {
 $("btn-alocar").addEventListener("click", alocar);
 $("btn-guardar-estado").addEventListener("click", guardarEstado);
 $("aloc-modo").addEventListener("change", desenharPlanta);
-$("aloc-sku").addEventListener("input", () => { if (dados) desenharPlanta(); });
+const NOME_ZONA = { 0: "Bulk (sai todos os dias)", 1: "Voltas regulares do comboio",
+                    2: "Consumíveis (reposição semanal)", 3: "Sem picking" };
+
+// ficha do componente pesquisado: onde está cada unidade (clicável) e o que o algoritmo sabe dele
+function desenharFichaSku() {
+  const ficha = $("aloc-sku-ficha");
+  if (!ficha) return;
+  const txt = $("aloc-sku").value;
+  const lista = skusDaPesquisa(txt);
+  if (!dados || !txt.trim()) { ficha.innerHTML = ""; return; }
+  if (!lista.length) { ficha.innerHTML = '<span class="dica">Nenhum componente com esse código ou descrição.</span>'; return; }
+  if (lista.length > 1) {
+    ficha.innerHTML = `<b>${lista.length} componentes</b> correspondem — escolhe um: ` + lista.slice(0, 12).map((s) =>
+      `<a href="#" data-sku="${esc(codigo(s))}">${esc(codigo(s))}</a> <span class="dica">${esc((dados.skus[s] || {}).descricao || "")}</span>`)
+      .join(" · ") + (lista.length > 12 ? " …" : "");
+    for (const a of ficha.querySelectorAll("a[data-sku]")) a.addEventListener("click", (ev) => {
+      ev.preventDefault(); $("aloc-sku").value = a.dataset.sku; aoPesquisar();
+    });
+    return;
+  }
+  const s = lista[0], info = dados.skus[s] || {};
+  const ends = enderecosDoSku(s);
+  const nao = (dados.nao_alocados || []).filter((n) => n.sku === s);
+  const tot = ends.reduce((a, e) => a + e.n, 0);
+  const totT = ends.reduce((a, e) => a + e.t, 0);
+  const porPos = {};
+  for (const e of ends) (porPos[e.pid] = porPos[e.pid] || { pid: e.pid, endereco: e.endereco, niveis: [] }).niveis.push(e);
+  ficha.innerHTML = `<div class="aloc-ficha-cab"><b>${esc(codigo(s))}</b> — ${esc(info.descricao || "")}</div>
+    <div class="aloc-ficha-linha">${esc(NOME_ZONA[info.zona] || "")} · ${fmt(info.visitas_dia || 0, 2)} visitas/dia ·
+      <b>${tot}</b> unidade(s) em <b>${Object.keys(porPos).length}</b> posição(ões)${totT ? ` · <span class="aloc-tapada">⚠ ${totT} atrás de outro componente</span>` : ""}${nao.length ? ` · <span style="color:#b91c1c">${nao.reduce((a, n) => a + n.n_unidades, 0)} por alocar: ${esc(nao[0].motivo)}</span>` : ""}</div>
+    <div class="aloc-ficha-ends">${Object.values(porPos).map((g) =>
+      `<a href="#" data-pid="${esc(g.pid)}" data-nivel="${g.niveis[0].nivel}">${esc(g.endereco)}</a> <span class="dica">${g.niveis.map((e) => `N${e.nivel}: ${e.n}${e.t ? ` (${e.t} tapada${e.t > 1 ? "s" : ""})` : ""}`).join(", ")}</span>`).join("<br>")}</div>`;
+  for (const a of ficha.querySelectorAll("a[data-pid]")) a.addEventListener("click", (ev) => {
+    ev.preventDefault(); selecionar(a.dataset.pid, +a.dataset.nivel);
+  });
+}
+
+function aoPesquisar() {
+  if (!dados) return;
+  desenharPlanta();
+  desenharFichaSku();
+  const lista = skusDaPesquisa($("aloc-sku").value);
+  if (lista.length === 1) {           // abre logo a vista de frente na 1.ª posição do componente
+    const e = enderecosDoSku(lista[0])[0];
+    if (e) selecionar(e.pid, e.nivel);
+  } else if (selecionada) {
+    desenharFrente();
+  }
+}
+$("aloc-sku").addEventListener("input", () => { aoPesquisar(); marcarNaLista(); });
+
+// ----------------------------------------------------------------- lista de componentes
+// para percorrer todos os SKUs depressa e ver onde ficou cada um (2026-11-12)
+const COR_ZONA = { 0: "#d9541e", 1: "#2e5c8a", 2: "#5b9a68", 3: "#9e9e9e" };
+let listaSkus = [];        // a lista filtrada e ordenada, como está à vista
+let skuNaLista = null;     // o SKU selecionado na lista
+
+function linhasSkus() {
+  const pos = {}, un = {};
+  for (const p of dados.posicoes) for (const n of p.niveis) for (const c of n.caixas) {
+    (pos[c.sku] = pos[c.sku] || new Set()).add(p.id);
+    un[c.sku] = (un[c.sku] || 0) + c.n_unidades;
+  }
+  const nao = {};
+  for (const n of dados.nao_alocados || []) nao[n.sku] = (nao[n.sku] || 0) + n.n_unidades;
+  return Object.entries(dados.skus || {}).map(([s, i]) => ({
+    sku: s, cod: codigo(s), desc: i.descricao || "", zona: i.zona, vis: i.visitas_dia || 0,
+    un: un[s] || 0, npos: pos[s] ? pos[s].size : 0, nao: nao[s] || 0,
+  }));
+}
+
+function desenharListaSkus() {
+  if (!dados) return;
+  $("aloc-sku-nav").style.display = "";
+  $("aloc-sku-lista").style.display = "";
+  $("aloc-sku-ficha").classList.add("fixa");
+  const q = $("aloc-sku-filtro").value.trim().toLowerCase();
+  const z = $("aloc-sku-zona").value;
+  const ordem = $("aloc-sku-ordem").value;
+  let l = linhasSkus().filter((x) => (!q || x.sku.toLowerCase().includes(q) || x.desc.toLowerCase().includes(q))
+    && (z === "" || (z === "nao" ? x.nao > 0 : String(x.zona) === z)));
+  const porCod = (a, b) => a.cod.localeCompare(b.cod);
+  l.sort(ordem === "codigo" ? porCod
+    : ordem === "visitas" ? (a, b) => b.vis - a.vis || porCod(a, b)
+    : ordem === "posicoes" ? (a, b) => b.npos - a.npos || porCod(a, b)
+    : (a, b) => a.zona - b.zona || b.vis - a.vis || porCod(a, b));
+  listaSkus = l;
+  $("aloc-sku-lista").innerHTML = `<table><thead><tr><th>SKU</th><th>Descrição</th><th>Zona</th>
+    <th class="num">Vis./dia</th><th class="num">Unid.</th><th class="num">Posições</th></tr></thead><tbody>
+    ${l.map((x, i) => `<tr data-i="${i}" class="${x.sku === skuNaLista ? "sel" : ""} ${x.nao ? "nao" : ""}">
+      <td>${esc(x.cod)}</td><td class="desc" title="${esc(x.desc)}">${esc(x.desc)}</td>
+      <td><span class="aloc-zona-ponto" style="background:${COR_ZONA[x.zona] || "#ccc"}"></span>${esc((NOME_ZONA[x.zona] || "").split(" (")[0])}</td>
+      <td class="num">${fmt(x.vis, 2)}</td><td class="num">${x.un}${x.nao ? ` <b>+${x.nao} por alocar</b>` : ""}</td>
+      <td class="num">${x.npos}</td></tr>`).join("")}</tbody></table>`;
+  for (const tr of $("aloc-sku-lista").querySelectorAll("tr[data-i]"))
+    tr.addEventListener("click", () => { irPara(+tr.dataset.i); $("aloc-sku-lista").focus({ preventScroll: true }); });
+  atualizarContador();
+}
+
+function atualizarContador() {
+  const i = listaSkus.findIndex((x) => x.sku === skuNaLista);
+  $("aloc-sku-pos").textContent = listaSkus.length ? `${i >= 0 ? i + 1 : "–"} / ${listaSkus.length}` : "0 / 0";
+}
+
+function irPara(i) {
+  if (!listaSkus.length) return;
+  i = Math.max(0, Math.min(listaSkus.length - 1, i));
+  const x = listaSkus[i];
+  skuNaLista = x.sku;
+  $("aloc-sku").value = x.cod;
+  aoPesquisar();
+  for (const tr of $("aloc-sku-lista").querySelectorAll("tr[data-i]")) tr.classList.toggle("sel", +tr.dataset.i === i);
+  const tr = $("aloc-sku-lista").querySelector(`tr[data-i="${i}"]`);
+  const caixa = $("aloc-sku-lista");
+  if (tr) {
+    const cab = caixa.querySelector("thead") ? caixa.querySelector("thead").offsetHeight : 0;
+    const topo = tr.offsetTop - cab, fundo = tr.offsetTop + tr.offsetHeight;
+    if (topo < caixa.scrollTop) caixa.scrollTop = topo;
+    else if (fundo > caixa.scrollTop + caixa.clientHeight) caixa.scrollTop = fundo - caixa.clientHeight;
+  }
+  atualizarContador();
+}
+
+function passo(d) {
+  const i = listaSkus.findIndex((x) => x.sku === skuNaLista);
+  irPara(i < 0 ? 0 : i + d);
+}
+
+// a pesquisa por texto também marca o componente na lista, se for um só
+function marcarNaLista() {
+  const l = skusDaPesquisa($("aloc-sku").value);
+  skuNaLista = l.length === 1 ? l[0] : null;
+  for (const tr of $("aloc-sku-lista").querySelectorAll("tr[data-i]"))
+    tr.classList.toggle("sel", listaSkus[+tr.dataset.i] && listaSkus[+tr.dataset.i].sku === skuNaLista);
+  atualizarContador();
+}
+
+$("aloc-sku-ant").addEventListener("click", () => passo(-1));
+$("aloc-sku-seg").addEventListener("click", () => passo(1));
+for (const id of ["aloc-sku-filtro", "aloc-sku-zona", "aloc-sku-ordem"])
+  $(id).addEventListener(id === "aloc-sku-filtro" ? "input" : "change", desenharListaSkus);
+// setas ↑ ↓ (e ← →) com a lista ou os botões ◀ ▶ em foco; nunca dentro do filtro ou das listas de escolha
+for (const id of ["aloc-sku-lista", "aloc-sku-nav"]) $(id).addEventListener("keydown", (ev) => {
+  if (["INPUT", "SELECT"].includes(ev.target.tagName)) return;
+  const d = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[ev.key];
+  if (d) { ev.preventDefault(); passo(d); }
+});
 $("aloc-dia").addEventListener("change", () => escolherDia(parseInt($("aloc-dia").value, 10) || 1));
 $("aloc-dia-ant").addEventListener("click", () => escolherDia((diaAtual || 1) - 1));
 $("aloc-dia-seg").addEventListener("click", () => escolherDia((diaAtual || 0) + 1));

@@ -608,6 +608,26 @@ novo com o cliente — a mudança é deliberada, o algoritmo em si não mudou de
 opinião sobre o que minimiza chão (continua documentado acima, `Regra de
 escolha de caixa`).
 
+## Decisão fechada: folga lateral de 1 cm + XS em prateleira própria (SIA, 2026-11-12)
+**Folga lateral**: `Config.folga_lateral_rack_m` (SIA: `{"prateleira": 0.01}`) -> `RackType.folga_lateral_m`
+(`data_access.aplicar_folgas_laterais`). Só no VÃO (eixo x): cada caixa entra no packer com `larg + 1 cm` e o
+nível com `larg_m + 1 cm` (n caixas = n-1 folgas, nenhuma encosta ao pilar); `_empacotar_nivel` devolve
+retângulos já com a dimensão real (`_Colocado`). **Nunca na profundidade**: com 1 cm em y, 2 S ou 2 XS de
+0,30 m deixam de caber nos 0,60 m do nível (101 dos 102 níveis rebentavam). Entra na `assinatura_logica`
+(estado guardado antigo é descartado). Sem a chave, o comportamento é o de sempre (caixas coladas).
+
+**XS em prateleira própria**: folha «Racks» do master data ganhou **«Prateleira XS»** (1,80 x 0,60 m, 6 níveis de
+0,70 m, `Aceita` = `XS`) e a «Prateleira Leve» passou a `S, M, L`. Antes as XS enchiam a faixa de 0,20 m que sobra
+em 101 dos 102 níveis (4 x 0,40 = 1,60 de 1,80 m): era espaço grátis; fora de lá custam 12 níveis (= 2-3 módulos).
+Backup: `dados/master_data_classificado_v3.xlsx.pre-prateleira-xs.bak`. Editado por XML (o ficheiro tem
+ligações externas/customXml); **se o Excel o guardar por cima a linha desaparece**.
+Arranjo: `dados/arranjo_utilizador_2026-11-12.json` = o de 2026-11-05 com a fila 4 reduzida a 9 módulos e **3
+módulos «Prateleira XS» no extremo junto ao ponto de carga** (2 não chegam: ficam 20 caixas por alocar).
+Medido (alocação completa): 17 módulos de Prateleira Leve (como antes) + 3 XS, 0 por alocar; Gantt do modelo
+sobra -27,7 min (era -16,3 com as XS misturadas): as XS passam a ser um destino à parte. XS no extremo oposto
+da fila: -66 min. S não se muda: 2 S = 1 M, trocar de prateleira não poupa nada.
+Mexe também em `operador.js` (`RACKS_A_PE`) e em `tests/test_folga_lateral.py`.
+
 ## Decisão fechada: níveis de 1,8 m com pé-direito útil de 4,6 m (SIA, 2026-10-27)
 Substitui a versão do mesmo dia com `1.8,1.8,1.0` e caixas no porta-paletes.
 
@@ -1490,6 +1510,134 @@ Efeito (SIA, 4,6 m, 10 carros): Rack Porta-Paletes (2,70) 0 -> 19, Rack
 Porta-Paletes 2 (3,50) 15 -> 0, emparelhada 2 -> 3 (agora 2,7 × 2,4), racks
 86,3 -> 102,9 m² (a subcontagem acabou), bloco 14,5 × 16,8 -> 14,1 × 16,8 m,
 área bruta 442,7 -> 435,8 m².
+
+## Decisão fechada: contiguidade OBRIGATÓRIA -- um SKU nunca fica partido (`ALGORITMO_VERSAO` 2026-11-12.1)
+Pedido do utilizador: "a regra de contiguidade não é negociável -- num
+armazém real não posso ter o mesmo componente em duas zonas completamente
+diferentes" (o battery pack, SKT10.DCA003, estava em 3 módulos de dois
+corredores). Até aqui a contiguidade era uma preferência (1.ª etapa caía para
+o lugar livre mais perto quando os vizinhos estavam cheios; a troca de
+unidades (b) também podia partir).
+
+- **1.ª etapa por SKU inteiro** (`_alocar`, `colocar_bloco`): a 1.ª unidade
+  no sítio mais perto onde caiba e as seguintes SÓ no bloco e vizinhos
+  (`junto`, sem cair para o resto); se não couber tudo, desfaz (`desfazer`,
+  liberta também as reservas dos pares frente+trás) e recomeça a partir da
+  posição seguinte por distância (até 120). Sem nenhuma, o SKU fica POR
+  ALOCAR com o motivo «não há espaço CONTÍGUO ...» e um aviso -- nunca partido.
+  SKUs com unidades já postas (fixação / incremental) só crescem no bloco.
+- **SKUs de mais de um módulo primeiro** (dentro da zona; `grandes_primeiro`):
+  precisam de módulos seguidos livres; os pequenos preenchem os buracos.
+  No arranjo do utilizador: 51,1 -> 50,3 min/dia.
+- **(b) troca de unidades**: cada grupo de forma aplica-se só se nenhum SKU
+  ficar em mais blocos (`_n_blocos`); senão desfaz-se o grupo. (a1) e (c)
+  já não partiam.
+- Vizinhança igual à de 2026-11-05 (mesmo módulo, ao lado ±1/±2 na fila, em
+  frente no mesmo corredor).
+
+Resultado: arranjo do utilizador (5 m, 0 carros-alvo, master SEM a Prateleira
+XS): 1118 unidades, 0 por alocar, 0 SKUs partidos, 50,3 min/dia; battery pack
+num só corredor (Fila 1 trás M06 + Fila 2 frente M05, frente a frente).
+**Bloco dimensionado («Gerar racks», 4,6 m)**: 70 unidades por alocar (7
+SKUs de 10 paletes, incl. FLOOR PANEL) por falta de bloco contíguo -- o
+dimensionamento põe o stock à justa usando qualquer buraco; com a contiguidade
+obrigatória precisa de folga (a rever no dimensionamento: racks_needed /
+allocate_to_racks não sabem da contiguidade). O teste de integração aceita
+unidades por alocar só por esse motivo.
+Nota de 2026-11-12: o utilizador disse que a «Prateleira XS» (só XS, master
+data) foi um erro; foi reposto o master sem ela às 10:10, mas às 10:17 voltou a
+ser gravado COM ela (sincronização de outro posto). `tests/test_folga_lateral.py`
+ficou a exigir que não exista -- falha enquanto o master tiver a XS. Testes: 170
+passam (+ esse).
+
+## Decisão fechada: layout FIXO -- o «Gerar racks» sai da alocação (2026-11-12)
+Pedido do utilizador: "o gerar racks já não é necessário, visto que temos um
+layout fixo; a alocação é o que importa". Não se apagou o dimensionamento (é a
+base do trabalho do Alexandre e do Guilherme e de muitos testes); tirou-se do
+caminho da alocação:
+
+- **Calibração dos tempos contra o layout fixo** (`Config.layout_referencia`,
+  por omissão `dados/layout_referencia.json` = o layout do utilizador de
+  2026-11-12, 5 m, sem a Prateleira XS). `calibracao_automatica` deixou de
+  correr racks_needed / allocate_to_racks / gerar_layout; a chave da
+  calibração inclui o arranjo de referência. Sem o ficheiro, calibra no próprio
+  arranjo (aviso no contexto da calibração). UI/Excel: «tempos calibrados no
+  layout de referência».
+- **«Carregar» carrega o ficheiro tal e qual** -- já não clica no «Gerar
+  racks» por trás; repõe pé-direito, altura de picking e carros-alvo se o
+  ficheiro os tiver. **«Guardar»** grava também esses três campos.
+- **3D automático** sem arranjo carregado não dimensiona nada (antes gerava
+  racks sozinho).
+- **Botão** «Gerar racks» -> «Dimensionar racks (avançado)», secundário, com
+  explicação e confirmação («é o dimensionamento, não a alocação»).
+- Testes: o de integração verifica que a calibração diz «layout de
+  referência»; 170 passam (+ o da Prateleira XS, ver acima).
+
+## Decisão fechada: pesquisa de componente para validar a alocação (2026-11-12)
+Pedido do utilizador: "uma forma de selecionar um componente e ver a posição
+dele no mapa, para validar e perceber se há discrepâncias". O campo «Procurar
+SKU» do separador «Alocação & Picking» passou a ser essa ferramenta:
+- código exato primeiro, senão código/descrição que contenham o texto (vários
+  -> lista para escolher); `para_json` dá `skus` {descricao, zona, ciclos,
+  visitas_dia} (inclui os por alocar);
+- planta: as posições do componente com contorno grosso e o resto esbatido
+  (opacidade 0,25), em qualquer modo do mapa; pares frente+trás incluídos;
+- ficha por baixo da planta: zona, visitas/dia, unidades e posições, cada
+  endereço com os níveis e nº de unidades e clicável (abre a vista de frente);
+  o que ficou por alocar e porquê;
+- vista de frente abre sozinha na 1.ª posição, com as caixas do componente
+  realçadas e a linha da tabela a negrito.
+- **lista navegável** por baixo da ficha (`desenharListaSkus`): todos os SKUs
+  (código, descrição, zona com cor, visitas/dia, unidades, nº de posições; por
+  alocar a vermelho), filtro de texto, zona («por alocar» incluída) e ordem;
+  clique, ◀ ▶ ou setas ↑ ↓ (com a lista focada) percorrem um a um e fazem o
+  mesmo que a pesquisa; contador «i / N».
+Corrigido ao mesmo tempo: o aviso «não coube num só bloco» só aparece quando
+a causa é o espaço contíguo (antes saía também para XS sem rack que as aceite).
+- **Setas fixas** (pedido: "estão sempre a mudar de altura"): a barra ◀ ▶ fica
+  logo por baixo da legenda (antes vinha depois da ficha, que muda de altura);
+  com a lista à vista a ficha tem altura fixa (96 px, rola por dentro); a
+  lista rola só ela (nada de `scrollIntoView`, que rolava a página) e o foco
+  usa `preventScroll`. Setas ↑ ↓ ← → com a lista OU os botões em foco.
+
+## Decisão fechada: folga lateral nas prateleiras = 3 cm (2026-11-12)
+Com 1 cm, 4 caixas M (0,40 m no vão) ocupavam 1,63 m de 1,80 e uma XS (0,15)
+entrava à justa no canto, 1 cm de cada lado -- em 21 de 166 níveis. O
+utilizador passou para 3 cm (`sia.json` `folga_lateral_rack_m`): a XS deixa de
+caber ali; layout de referência continua com nada por alocar (49,2 min/dia).
+Por medir/decidir: 206 de 851 unidades ficam ATRÁS de uma caixa de OUTRO SKU
+(187 XS, 12 S, 7 meias-paletes; 164 de classe C) -- a vista de frente não o
+mostrava. Feito (só visualização, o algoritmo não mudou):
+- `alocacao.marcar_profundidade` (em `para_json`): cada caixa leva `atras` e
+  `tapada_por` (OUTROS SKUs com caixa à frente, sobreposta no vão; y = 0 é a
+  frente); nível `tapadas`, posição `tapadas`, `resumo.tapadas` (unidades).
+- UI: **vista de cima** do nível escolhido (faixa larga por baixo da vista de
+  frente, à escala, frente/corredor em baixo, montantes e viga, tapadas com
+  contorno vermelho tracejado e ⚠); o nível escolhe-se clicando na vista de
+  frente ou no cabeçalho do nível na tabela (`nivelSel`, `nivelPadrao`: o do
+  SKU pesquisado, senão o com mais tapadas). Vista de frente: tapadas com
+  contorno vermelho por cima e «⚠n» junto ao nível. Tabela: coluna «Fila»
+  (frente / trás / frente e trás + «⚠ atrás de …»). Ficha do SKU: «(n
+  tapadas)». Mapa: modo «Caixas tapadas».
+- Descoberto ao ver: XS de 0,30 × 0,15 m vão deitadas com 0,15 m de fundo --
+  até 4 filas de profundidade numa prateleira de 0,60 m (uma XS atrás de 3
+  outros componentes). Regra possível, por decidir: atrás de uma caixa só o
+  mesmo SKU.
+
+## Decisão fechada: contiguidade = SÓ LADO A LADO (2026-11-12)
+Utilizador: "a regra devia ser lado a lado só" (via um SKU com 2 módulos com
+um pelo meio e um 3.º do outro lado do corredor). `vizinhanca` passou a ligar
+só o módulo ±1 da MESMA fila (mesmo lado do bloco, fisicamente encostado):
+saiu o módulo em frente do corredor, o «do lado do da frente» e o ±2
+(`CONTIGUIDADE_MODULOS = 1`, `_frente_a_frente` apagada). Os vários níveis do
+mesmo módulo continuam a contar como o mesmo sítio. Como todas as regras de
+contiguidade (1.ª etapa `junto`/`colocar_bloco`, trocas b e c, `_n_blocos`)
+usam `vizinhanca`, não houve mais nada a mudar. Layout de referência: antes
+25 dos 33 SKUs em >1 módulo estavam partidos pela regra nova; agora 0, nada
+por alocar, 50,2 min/dia (antes 50,3). `ALGORITMO_VERSAO = "2026-11-12.2"`.
+A proposta do utilizador ("alocar 1 a 1 como num armazém físico a começar do
+0") é o que a 1.ª etapa já faz (SKU a SKU, inteiro, por zona e frequência, o
+mais perto primeiro); o que partia os SKUs era a definição de vizinho.
 
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.

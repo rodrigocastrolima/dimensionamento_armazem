@@ -24,8 +24,8 @@ from .racking import _commit_nivel, _empacotar_nivel, altura_nivel, cotas_fisica
 
 # Versão das REGRAS de alocação: mudar quando a lógica muda (o modo incremental
 # deixa de valer -- alocação de raiz até se guardar um estado novo).
-ALGORITMO_VERSAO = "2026-11-09.1"
-CONTIGUIDADE_MODULOS = 2     # 1.ª etapa: a unidade seguinte de um SKU tenta até ±2 módulos na mesma fila
+ALGORITMO_VERSAO = "2026-11-12.2"
+CONTIGUIDADE_MODULOS = 1     # vizinho = só o módulo LADO A LADO na mesma fila (2026-11-12)
 
 REGRAS = (
     "Só as racks que estão no arranjo nesse momento (bloco de racks gerado e filas manuais do sandbox): "
@@ -50,9 +50,14 @@ REGRAS = (
     "fica na posição mais barata onde caiba em altura; por fim trocam-se posições inteiras iguais duas a "
     "duas sempre que isso baixa Σ visitas × custo sem partir um SKU nem misturar zonas. Nenhuma troca tira "
     "nada do arranjo.",
-    "Contiguidade: as unidades de um SKU ficam juntas -- na 1.ª etapa a unidade seguinte tenta primeiro o "
-    "módulo onde o SKU já está, depois os vizinhos (o do lado na mesma fila ou o da frente no mesmo "
-    "corredor, depois a 2 módulos), e só depois o resto do arranjo; na troca de unidades fica na mesma "
+    "Contiguidade OBRIGATÓRIA: cada SKU fica num só bloco de módulos LADO A LADO (o mesmo módulo, em "
+    "qualquer nível, ou módulos seguidos da mesma fila -- nunca o da frente do corredor, nem as costas, "
+    "nem com um módulo pelo meio) -- arruma-se inteiro; se não couber junto em nenhum sítio fica por "
+    "alocar, nunca partido, e nenhuma troca o pode partir. Detalhe: "
+    "na 1.ª etapa a unidade seguinte tenta primeiro o "
+    "módulo onde o SKU já está, depois o do lado na mesma fila; se aí não houver lugar, o SKU recomeça "
+    "noutra posição; na troca de "
+    "unidades fica na mesma "
     "posição ou num vizinho se lá houver lugar até Config.alocacao_tolerancia_contiguo_min mais caro do "
     "que o lugar mais barato; na troca de posições inteiras os módulos seguidos de um SKU mudam-se em "
     "bloco.",
@@ -260,8 +265,7 @@ def _atribuir_por_altura(prioridade: list, alt_conteudo: list, slots_por_custo: 
     o mais barato, fica lá -- sem isto, slots quase com o mesmo custo em filas
     diferentes espalhavam as 10 paletes de um SKU por 3 posições de 2 filas.
     Com `vizinhos` (``vizinhanca``), se não houver lugar na mesma posição,
-    tenta um módulo vizinho (ao lado na mesma fila ou em frente no mesmo
-    corredor, depois a 2), com a mesma tolerância (2026-11-05: um SKU de
+    tenta um módulo vizinho (lado a lado na mesma fila), com a mesma tolerância (2026-11-05: um SKU de
     caixas aparecia em módulos de filas diferentes). Devolve {slot: conteúdo}."""
     classes = sorted(set(alt_slot))
 
@@ -433,30 +437,16 @@ def zona_do_sku(taxa) -> int:
     return ZONA_SEMANAL if ciclos else ZONA_SEM_PICKING
 
 
-def _frente_a_frente(a: PosicaoFisica, b: PosicaoFisica) -> bool:
-    """Dois módulos de filas diferentes, virados um para o outro do mesmo
-    corredor: sobrepõem-se ao longo da fila (≥ metade do menor) e entre as
-    frentes há um corredor (0,5 a 4 m) -- costas com costas (0 m) não conta."""
-    if (a.larg_m >= a.prof_m) != (b.larg_m >= b.prof_m):
-        return False
-    if a.larg_m >= a.prof_m:      # filas ao longo de x
-        sobre = min(a.x_m + a.larg_m, b.x_m + b.larg_m) - max(a.x_m, b.x_m)
-        folga = max(b.y_m - (a.y_m + a.prof_m), a.y_m - (b.y_m + b.prof_m))
-        comp = min(a.larg_m, b.larg_m)
-    else:
-        sobre = min(a.y_m + a.prof_m, b.y_m + b.prof_m) - max(a.y_m, b.y_m)
-        folga = max(b.x_m - (a.x_m + a.larg_m), a.x_m - (b.x_m + b.larg_m))
-        comp = min(a.prof_m, b.prof_m)
-    return sobre >= 0.5 * comp - 1e-9 and 0.5 - 1e-9 <= folga <= 4.0 + 1e-9
-
-
 def vizinhanca(posicoes: list[PosicaoFisica]) -> dict:
-    """pid -> {pid vizinho: afastamento}. 1 = módulo ao lado na mesma fila ou o
-    módulo em frente do mesmo corredor (a mesma paragem do operador); 2 = dois
-    módulos ao lado, ou o do lado do que está em frente. Só entre posições da
-    mesma tipologia (uma prateleira e um porta-paletes nunca guardam a mesma
-    unidade) e fisicamente perto (o nº de módulo de uma fila de um bloco pode
-    saltar de uma ponta à outra)."""
+    """pid -> {pid vizinho: 1}: só o módulo LADO A LADO na mesma fila (e do
+    mesmo lado do bloco). Decisão do utilizador (2026-11-12, "a regra devia
+    ser lado a lado só"): antes o módulo em frente do corredor e o que ficava
+    a 2 módulos também contavam como vizinhos, e um SKU aparecia de um lado e
+    do outro do corredor (25 de 33 SKUs em mais de um módulo no layout de
+    referência); só lado a lado ficam 0, nada por alocar, 50,2 min/dia. Só
+    entre posições da mesma tipologia (uma prateleira e um porta-paletes nunca
+    guardam a mesma unidade) e fisicamente encostadas (o nº de módulo de uma
+    fila de um bloco pode saltar de uma ponta à outra)."""
     viz = defaultdict(dict)
 
     def liga(a, b, n):
@@ -477,21 +467,29 @@ def vizinhanca(posicoes: list[PosicaoFisica]) -> dict:
                 (ax, ay), (bx, by) = p.centro, q.centro
                 if abs(ax - bx) + abs(ay - by) <= (g + 0.5) * max(p.larg_m, p.prof_m, q.larg_m, q.prof_m):
                     liga(p, q, g)
-    pmap = {p.id: p for p in posicoes}
-    lado = {pid: {q for q, n in d.items() if n == 1} for pid, d in viz.items()}
-    for i, a in enumerate(posicoes):
-        for b in posicoes[i + 1:]:
-            if a.fila != b.fila and a.rack.nome == b.rack.nome and _frente_a_frente(a, b):
-                liga(a, b, 1)
-                for q in lado.get(b.id, ()):
-                    liga(a, pmap[q], 2)
-                for q in lado.get(a.id, ()):
-                    liga(b, pmap[q], 2)
     return viz
 
 
+def _n_blocos(ps: set, viz: dict) -> int:
+    """Em quantos blocos ligados (vizinhança) estão as posições de um SKU."""
+    ps, n, vist = set(ps), 0, set()
+    for x in sorted(ps):
+        if x in vist:
+            continue
+        n += 1
+        pilha = [x]
+        vist.add(x)
+        while pilha:
+            y = pilha.pop()
+            for z in viz.get(y, {}):
+                if z in ps and z not in vist:
+                    vist.add(z)
+                    pilha.append(z)
+    return n
+
+
 def _ligado(ps: set, viz: dict) -> bool:
-    """As posições de um SKU formam um só bloco (vizinhança: ao lado ou em frente)."""
+    """As posições de um SKU formam um só bloco (vizinhança: lado a lado na mesma fila)."""
     if len(ps) < 2:
         return True
     ini = next(iter(ps))
@@ -747,7 +745,7 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             ponto: tuple[float, float], cfg, fixacoes: dict | None = None,
             anterior: dict | None = None, otimizar: bool = True,
             dist: dict | None = None, pares: dict | None = None,
-            por_frequencia: bool = True) -> ResultadoAlocacao:
+            por_frequencia: bool = True, grandes_primeiro: bool = True) -> ResultadoAlocacao:
     """`itens`: racking.preparar_itens (stacks). `taxas`: sku -> procura.Taxa.
     `fixacoes`: sku -> endereço/id (ver _resolver_fixacao). `anterior`: sku ->
     [(id da posição, nível)] da última alocação guardada (modo incremental).
@@ -845,8 +843,8 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
 
     def junto(it) -> list:
         """Onde tentar primeiro uma unidade de um SKU que já tem lugar: os
-        módulos onde ele já está, depois os vizinhos (``vizinhanca``: ao lado
-        na mesma fila ou em frente no mesmo corredor, depois a 2), cada um com
+        módulos onde ele já está, depois os vizinhos (``vizinhanca``: lado a
+        lado na mesma fila), cada um com
         os níveis por custo. Sem isto a unidade seguinte ia para o buraco livre
         mais perto, muitas vezes noutra fila (2026-11-05)."""
         ja = onde.get(it.sku)
@@ -909,8 +907,9 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             return False
         if x < -1e-6 or y < -1e-6 or x + comp > c.pos.rack.larg_m + 1e-6 or y + larg > c.pos.rack.prof_m + 1e-6:
             return False
+        g = c.pos.rack.folga_lateral_m      # folga lateral entre caixas, só no vão
         for b in c.nivel.caixas:
-            if x < b.x_m + b.comp_m - 1e-6 and b.x_m < x + comp - 1e-6 and \
+            if x < b.x_m + b.comp_m + g - 1e-6 and b.x_m < x + comp + g - 1e-6 and \
                     y < b.y_m + b.larg_m - 1e-6 and b.y_m < y + larg - 1e-6:
                 return False
         cx = CaixaColocada(sku=it.sku, descricao=it.descricao, load_type=it.load_type, x_m=x, y_m=y,
@@ -972,10 +971,91 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
                                    -vis.get(it.sku, 0.0) / max(unidades.get(it.sku, 1), 1)))
     if pares:            # as OVERSIZE primeiro: só cabem num par se os dois módulos ainda estiverem livres
         resto.sort(key=lambda it: it.load_type != LoadType.OVERSIZE)
-    nao = []
+    # CONTIGUIDADE OBRIGATÓRIA (decisão do utilizador, 2026-11-12: "não posso
+    # ter o mesmo componente em duas zonas completamente diferentes"): cada SKU
+    # arruma-se INTEIRO num só bloco -- a 1.ª unidade num sítio (o mais perto
+    # primeiro) e as seguintes só no mesmo módulo ou num vizinho (``junto``,
+    # sem cair para o resto do arranjo). Se não couber tudo, desfaz-se e tenta-se
+    # a partir da posição seguinte; sem nenhuma, o SKU fica por alocar com o
+    # motivo, em vez de ficar partido.
+    def desfazer(colocados, onde_antes, sku):
+        for c, cx in reversed(colocados):
+            c.nivel.caixas.remove(cx)
+            c.area_livre += cx.comp_m * cx.larg_m
+            c.falhas = set()
+            for k in ligadas.get(c.chave, ()):      # liberta a reserva do par, se já não houver nada
+                if k in reservadas and not any(por_chave[o].nivel.caixas for o in ligadas.get(k, ())):
+                    reservadas.discard(k)
+                    kc = por_chave[k]
+                    kc.area_livre = kc.pos.rack.larg_m * kc.pos.rack.prof_m - sum(
+                        b.comp_m * b.larg_m for b in kc.nivel.caixas)
+                    kc.falhas = set()
+        onde[sku] = set(onde_antes)
+
+    def colocar_bloco(sku, unidades_sku, ancora=None) -> bool:
+        colocados, onde_antes = [], set(onde.get(sku, set()))
+        for u in unidades_sku:
+            if onde.get(sku):
+                tentar = junto(u)                   # só o bloco e os vizinhos
+            elif ancora is not None:
+                tentar = por_modulo.get(u.load_type, {}).get(ancora, [])
+            else:
+                tentar = None                       # o mais perto onde caiba
+            c = colocar(u, tentar)
+            if c is None:
+                desfazer(colocados, onde_antes, sku)
+                return False
+            colocados.append((c, c.nivel.caixas[-1]))
+        return True
+
+    grupos_sku = defaultdict(list)
     for it in resto:
-        if colocar(it) is None:
-            nao.append(NaoAlocado(it.sku, it.descricao, it.load_type.value, it.num_boxes_in_stack, motivo(it)))
+        grupos_sku[it.sku].append(it)
+
+    # SKUs que precisam de MAIS DE UM módulo vão primeiro (dentro da zona): precisam
+    # de módulos seguidos livres, e os pequenos arrumam-se depois nos buracos. Sem
+    # isto, no armazém dimensionado (espaço justo) os pequenos e frequentes partiam
+    # os módulos e 7 SKUs de 10 paletes ficavam sem bloco (2026-11-12).
+    def modulos_precisos(lst) -> float:
+        area = sum(i.comp_m * i.larg_m for i in lst)
+        rs = candidatos_por_tipo.get(lst[0].load_type) or []
+        cap = max((r.larg_m * r.prof_m * r.niveis for r in rs), default=0.0)
+        return area / cap if cap else 0.0
+
+    ordem_grupos = list(grupos_sku)
+    if grandes_primeiro:
+        rank = {s: i for i, s in enumerate(ordem_grupos)}
+        ordem_grupos.sort(key=lambda s: (zona_de(s) if zonas else 0, modulos_precisos(grupos_sku[s]) <= 1.0,
+                                         rank[s]))
+    nao = []
+    for sku in ordem_grupos:
+        unidades_sku = grupos_sku[sku]
+        if colocar_bloco(sku, unidades_sku):
+            continue
+        ja_tinha = bool(onde.get(sku))              # fixação / incremental: não se muda o que já lá está
+        ok = False
+        if not ja_tinha:
+            lt = unidades_sku[0].load_type
+            vistas = []
+            for c in ordem_celulas.get(lt, []):
+                if c.pos.id not in vistas:
+                    vistas.append(c.pos.id)
+            for pid in vistas[:120]:
+                if colocar_bloco(sku, unidades_sku, ancora=pid):
+                    ok = True
+                    break
+        if not ok:
+            contiguo = False
+            for it in unidades_sku:
+                m = motivo(it)
+                if "sem espaço" in m and len(unidades_sku) > 1:
+                    m = (f"não há espaço CONTÍGUO para as {len(unidades_sku)} unidades do SKU juntas "
+                         "(contiguidade obrigatória)")
+                    contiguo = True
+                nao.append(NaoAlocado(it.sku, it.descricao, it.load_type.value, it.num_boxes_in_stack, m))
+            if contiguo:    # só quando a causa é mesmo o espaço contíguo (não "sem rack que a aceite")
+                avisos.append(f"{sku}: não coube num só bloco de módulos vizinhos -- fica por alocar "
+                              "(contiguidade obrigatória).")
 
     def visitas_celula(c):
         return sum(parte(cx.sku, cx.num_boxes_in_stack) for cx in c.nivel.caixas)
@@ -1015,6 +1095,10 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
                 c.nivel.caixas, c.area_livre, c.falhas = cxs, livre, falhas
 
     # 2.ª etapa (b): unidades com a mesma forma -- a de mais visitas no slot mais barato
+    pos_sku = defaultdict(lambda: defaultdict(int))     # sku -> posição -> nº de unidades
+    for c in celulas:
+        for cx in c.nivel.caixas:
+            pos_sku[cx.sku][c.pos.id] += 1
     slots = defaultdict(list)
     for c in celulas if otimizar else []:
         h = altura_nivel(c.pos.rack, c.nivel.nivel_idx)
@@ -1043,9 +1127,20 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         if len(atrib) != len(lst):      # não devia acontecer (a 1.ª etapa é viável): fica como estava
             avisos.append("Troca de unidades da mesma forma não aplicada a um grupo (inviável em altura).")
             continue
+        # contiguidade obrigatória: o grupo só se aplica se nenhum SKU ficar em mais blocos
+        afetados = {t[0] for t in conteudo}
+        antes = {s: _n_blocos({p for p, n in pos_sku[s].items() if n > 0}, viz) for s in afetados}
         for si, ci in atrib.items():
-            cx = lst[si][1]
+            c, cx = lst[si][0], lst[si][1]
+            pos_sku[cx.sku][c.pos.id] -= 1
             cx.sku, cx.descricao, cx.alt_m, cx.pecas_nesta_caixa, cx.num_boxes_in_stack = conteudo[ci]
+            pos_sku[cx.sku][c.pos.id] += 1
+        if any(_n_blocos({p for p, n in pos_sku[s].items() if n > 0}, viz) > antes[s] for s in afetados):
+            for si in atrib:                         # desfaz: cada slot volta ao seu conteúdo original
+                c, cx = lst[si][0], lst[si][1]
+                pos_sku[cx.sku][c.pos.id] -= 1
+                cx.sku, cx.descricao, cx.alt_m, cx.pecas_nesta_caixa, cx.num_boxes_in_stack = conteudo[si]
+                pos_sku[cx.sku][c.pos.id] += 1
 
     # 2.ª etapa (c): posições inteiras duas a duas, depois de tudo o resto
     if otimizar:
@@ -1082,7 +1177,8 @@ def assinatura_logica(cfg) -> str:
              "passagem": cfg.picking_passagem_min_m, "destino": cfg.picking_zona_destino,
              "zona_bulk": getattr(cfg, "alocacao_zona_bulk", False),
              "oversize_pares": getattr(cfg, "alocacao_oversize_em_pares", False),
-             "cons": [cfg.consumiveis_reposicao, cfg.consumiveis_periodo_dias]}
+             "cons": [cfg.consumiveis_reposicao, cfg.consumiveis_periodo_dias],
+             "folga_lateral": sorted(getattr(cfg, "folga_lateral_rack_m", {}).items())}
     return hashlib.sha1(json.dumps(chave, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
@@ -1300,34 +1396,32 @@ def _folhas_tempos(wb, folha, rt) -> None:
 # ----------------------------------------------------------------- pipeline
 def calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, rack_types, candidatos, itens,
                           taxas, res_proc, tl) -> tuple[dict, str]:
-    """Calibração dos tempos no ARMAZÉM DIMENSIONADO (o bloco de racks e as zonas
-    como o «Gerar racks» os põe -- web.blocos_canvas_por_omissao): a referência
-    é sempre a mesma e reproduzível, e todos os arranjos se comparam com ela.
-    Refaz-se sozinha quando muda alguma coisa de que depende (BOM, lógica,
-    tempos do livro, racks, zonas, pé-direito, carros); senão lê-se do ficheiro."""
-    from . import area, data_access, layout as layout_mod, racking, tempos
-    from .web import ArrangeRequest, blocos_canvas_por_omissao, render_layout
-    zonas = data_access.load_zones(local)
+    """Calibração dos tempos contra o LAYOUT FIXO de referência
+    (`Config.layout_referencia`, um arranjo guardado em .json): decisão do
+    utilizador (2026-11-12) -- o layout do armazém está fixo, por isso o «Gerar
+    racks» (dimensionamento) deixou de entrar na alocação. A referência é a mesma
+    para todos os arranjos que se comparem. Sem o ficheiro, calibra no próprio
+    arranjo (o tempo médio por caixa fica igual ao do livro nesse arranjo).
+    Refaz-se sozinha quando muda alguma coisa de que depende (BOM, lógica, tempos
+    do livro, racks, layout de referência, carros); senão lê-se do ficheiro."""
+    from . import tempos
+    from .web import ArrangeRequest, render_layout
+    ref, fonte = arranjo, "o próprio arranjo (sem layout de referência)"
+    caminho = Path(getattr(cfg, "layout_referencia", "") or "")
+    if str(caminho) and caminho.exists():
+        d = json.loads(caminho.read_text(encoding="utf-8"))
+        ref = ArrangeRequest(**{k: v for k, v in d.items() if k in ArrangeRequest.model_fields})
+        fonte = f"layout de referência ({caminho.name})"
     chave = hashlib.sha1(json.dumps({
         "logica": assinatura_logica(cfg), "bom": impressao_bom(assignments, artigos),
         "livro": [tl.caixa_picking, tl.palete_picking, tl.peca_carrinho, tl.kit_pequena, tl.kit_grande],
-        "arranjo": [arranjo.altura_armazem_m, arranjo.largura_max_m, arranjo.profundidade_max_m,
-                    arranjo.carros_alvo], "carros": res_proc.carros_por_dia,
+        "referencia": ref.model_dump(), "carros": res_proc.carros_por_dia,
         "racks": [[r.nome, r.larg_m, r.prof_m, r.niveis, list(r.alturas_niveis_m), [x.value for x in r.aceita]]
-                  for r in rack_types],
-        "zonas": [[z.nome, z.comp_m, z.larg_m] for z in zonas]}, sort_keys=True, default=str).encode()).hexdigest()[:16]
+                  for r in rack_types]}, sort_keys=True, default=str).encode()).hexdigest()[:16]
     guardada = tempos.carregar_calibracao(cfg.tempos_calibracao, chave)
     if guardada is not None:
         return guardada, "lida"
-    cpt = {b.nome: b for b in catalogo}
-    req, _ = racking.racks_needed(assignments, rack_types, cpt, local, 0.0, artigos)
-    posd, _ = racking.allocate_to_racks(assignments, req, rack_types, cpt, artigos, 0.0, local.altura_armazem_m, local)
     rack_by_name = {r.nome: r for r in rack_types}
-    artigos_chao = area.artigos_chao_oversize2(assignments, local, rack_types)
-    wl = layout_mod.gerar_layout(posd, rack_by_name, zonas, arranjo.largura_max_m, arranjo.profundidade_max_m,
-                                 artigos_chao, local.oversize_chao_altura_max_m, local.oversize_chao_peso_max_kg,
-                                 local.picking_manual_racks)
-    ref = arranjo.model_copy(update={"blocks": blocos_canvas_por_omissao(wl, zonas)})
     render = render_layout(ref)
     posicoes = posicoes_do_render(render["layout"] + render["racks_manuais"], rack_by_name)
     ponto = ponto_de_carga(render["zonas_layout"], cfg.picking_zona_destino) or \
@@ -1338,8 +1432,7 @@ def calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, r
                                                   ponto, cfg)
     res_ref = alocar(posicoes, itens, candidatos, taxas, ponto, local, dist=dist, pares=pares)
     cal, _ = tempos.calibrar(res_proc.picks, tempos.deslocacao_por_sku(res_ref, dist, local), tl)
-    tempos.guardar_calibracao(cfg.tempos_calibracao, cal, {"referencia": "armazém dimensionado (Gerar racks)",
-                                                          "posicoes": len(posicoes)}, chave)
+    tempos.guardar_calibracao(cfg.tempos_calibracao, cal, {"referencia": fonte, "posicoes": len(posicoes)}, chave)
     return cal, "refeita"
 
 
@@ -1357,7 +1450,7 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
     * `res.estado["pode_guardar"]` só quando há alterações à BOM (ou à lógica)
       face ao estado guardado -- guarda-se com `guardar_estado` (UI: botão;
       CLI: `guardar=True` / --guardar);
-    * calibração dos tempos no armazém dimensionado (``calibracao_automatica``).
+    * calibração dos tempos no layout de referência (``calibracao_automatica``).
     `dias`: só para testes (omissão: Config.simulacao_dias)."""
     from . import boxing, data_access, io_excel, procura, racking, tempos
     from .cenario_autonomia import aplicar_autonomia
@@ -1454,7 +1547,7 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
 
     contexto = {"Carros por dia": carros, "Pé-direito útil (m)": altura_armazem_m or "(sem limite)",
                 "Modo": f"{res.estado['modo']} -- {res.estado['motivo']}",
-                "Calibração dos tempos": f"no armazém dimensionado ({como})",
+                "Calibração dos tempos": f"no layout de referência ({como})",
                 "Pressupostos de picking": str(cfg.pressupostos_picking),
                 "Velocidades (m/s)": ", ".join(f"{k} {v:g}" for k, v in cfg.picking_velocidade_m_s.items()),
                 "Extra de altura": f"+{cfg.picking_altura_extra_min * 60:g} s acima de "
@@ -1472,6 +1565,24 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
         guardar_estado(cfg.alocacao_estado, res)
         res.estado.update(pode_guardar=False, guardado=True)
     return res, taxas
+
+
+def marcar_profundidade(caixas: list[dict]) -> int:
+    """Profundidade de um nível (y = 0 é a frente, do lado do corredor): marca
+    em cada caixa ``atras`` (há outra caixa à frente dela, sobreposta ao longo
+    do vão) e ``tapada_por`` (os OUTROS SKUs dessas caixas da frente -- para a
+    tirar é preciso mexer primeiro noutro componente). Devolve as unidades
+    tapadas por outro SKU (2026-11-12: 206 de 851 no layout de referência,
+    quase todas XS de 0,30 m em prateleiras de 0,60 m de fundo)."""
+    tapadas = 0
+    for b in caixas:
+        frente = [a for a in caixas if a is not b and a["y_m"] + a["larg_m"] <= b["y_m"] + 1e-6
+                  and a["x_m"] < b["x_m"] + b["comp_m"] - 1e-6 and b["x_m"] < a["x_m"] + a["comp_m"] - 1e-6]
+        b["atras"] = bool(frente)
+        b["tapada_por"] = sorted({a["sku"] for a in frente if a["sku"] != b["sku"]})
+        if b["tapada_por"]:
+            tapadas += b["n_unidades"]
+    return tapadas
 
 
 def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
@@ -1498,11 +1609,13 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
                             "alt_m": cx.alt_m, "n_unidades": cx.num_boxes_in_stack,
                             "pecas": cx.pecas_nesta_caixa, "classe": res.classes.get(cx.sku, "—")}
                            for cx in c.nivel.caixas]})
+            niveis[-1]["tapadas"] = marcar_profundidade(niveis[-1]["caixas"])
         posicoes.append({"id": p.id, "par": p.id in res.pares, "endereco": p.endereco(), "fila": p.fila,
                          "modulo": p.modulo,
                          "rack_nome": p.rack.nome, "larg_nivel_m": p.rack.larg_m, "prof_nivel_m": p.rack.prof_m,
                          "x": p.x_m, "y": p.y_m, "larg_m": p.larg_m, "prof_m": p.prof_m,
-                         "visitas_dia": round(vis_pos.get(p.id, 0.0), 4), "niveis": niveis})
+                         "visitas_dia": round(vis_pos.get(p.id, 0.0), 4), "niveis": niveis,
+                         "tapadas": sum(n["tapadas"] for n in niveis)})
     rt = res.tempos
     min_pos = rt.tempo_por_posicao if rt else {}
     for p in posicoes:
@@ -1543,6 +1656,12 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
         "tempos": tempos,
         "posicoes": posicoes,
         "nao_alocados": [dataclasses.asdict(n) for n in res.nao_alocados],
+        # resumo por SKU para a pesquisa de componentes na UI (validar onde ficou cada um)
+        "skus": {s: {"descricao": d, "zona": zona_do_sku(taxas.get(s)),
+                     "ciclos": list(taxas[s].ciclos) if s in taxas else [],
+                     "visitas_dia": round(taxas[s].visitas_dia, 4) if s in taxas else 0.0}
+                 for s, d in sorted({(c.sku, c.descricao) for c in res.colocacoes}
+                                    | {(n.sku, n.descricao) for n in res.nao_alocados})},
         "mudancas": res.mudancas,
         "avisos": res.avisos,
         "resumo": {
@@ -1550,6 +1669,7 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
             "unidades_alocadas": sum(c.n_unidades for c in res.colocacoes),
             "unidades_nao_alocadas": sum(n.n_unidades for n in res.nao_alocados),
             "custo_ponderado": round(res.custo_ponderado, 1),
+            "tapadas": sum(p["tapadas"] for p in posicoes if not p["par"]),
             "classes": {k: sum(1 for v in res.classes.values() if v == k) for k in ("A", "B", "C", "—")},
         },
         "regras": list(REGRAS),

@@ -59,8 +59,10 @@ _CLIENT_FIELD_CONVERTERS = {
     "empilhamento_por_nivel": tuple,
     "picking_manual_racks": tuple,
     "pilar_rack_m": dict,
+    "folga_lateral_rack_m": dict,
     "pressupostos_picking": _caminho_do_repo,
     "output_procura": Path,
+    "layout_referencia": Path,
 }
 
 
@@ -139,6 +141,11 @@ class Config:
     # primeiro» vêm do livro («Parâmetros» C104 e C106).
     voltas_horario_do_livro: bool = True
     tempos_calibracao: Path = Path("dados/tempos_calibracao.json")   # manuseio calibrado (referência)
+    # layout FIXO contra o qual se calibram os tempos de picking (um arranjo
+    # guardado: «Guardar» no «Arranjar Layout»). Decisão do utilizador
+    # (2026-11-12): o layout do armazém está fixo e o «Gerar racks» deixou de
+    # entrar na alocação. Sem o ficheiro, calibra-se no próprio arranjo.
+    layout_referencia: Path = Path("dados/layout_referencia.json")
 
     # Alocação às racks do arranjo (warehouse/alocacao.py). Custo de um nível =
     # minutos de uma visita (ida e volta + altura, tempos.custo_visita_min).
@@ -560,6 +567,14 @@ class Config:
     # {"porta-paletes": 0.09} (montante típico de 80-100 mm); a Prateleira
     # Leve (1.80 m) não está lá porque se assume que a medida já é total.
     pilar_rack_m: dict = field(default_factory=dict)
+
+    # Folga LATERAL (m) entre caixas lado a lado, por tipologia de rack (ver
+    # RackType.folga_lateral_m). Chave = substring do nome da tipologia
+    # (case-insensitive; a primeira que casar ganha); valor = folga em metros.
+    # Só se aplica ao vão (eixo x), nunca à profundidade. Aplicado em
+    # data_access.load_rack_types. Vazio = caixas coladas (comportamento
+    # anterior). SIA: {"prateleira": 0.01} (1 cm, decisão do utilizador).
+    folga_lateral_rack_m: dict = field(default_factory=dict)
 
     # ------------------------------------------------------------ multi-cliente
     @classmethod

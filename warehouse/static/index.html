@@ -208,12 +208,45 @@
                  border: 1px solid var(--border); border-radius: var(--r-lg); display: block; }
   #aloc-planta .rack { cursor: pointer; }
   #aloc-planta .rack:hover { stroke: #111; }
-  #aloc-frente-card { height: calc(42vh + 26px); min-height: 326px; display: flex; flex-direction: column; }
+  #aloc-frente-card { height: calc(42vh + 196px); min-height: 496px; display: flex; flex-direction: column; }
   #aloc-frente-corpo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 10px;
                        flex: 1; min-height: 0; }
-  #aloc-frente { min-height: 0; overflow: hidden; }
+  #aloc-frente-col { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+  #aloc-frente { min-height: 0; overflow: hidden; flex: 1 1 0; }
+  #aloc-cima { flex: 0 0 160px; min-height: 0; margin-top: 8px; }
+  #aloc-cima:empty { display: none; }
+  #aloc-cima svg { width: 100%; height: 100%; display: block; background: #fff; border-radius: var(--r); }
+  #aloc-nivel-detalhe tr.aloc-nivel-cab td { cursor: pointer; }
+  #aloc-nivel-detalhe tr.aloc-nivel-cab.sel td { box-shadow: inset 3px 0 0 #2563eb; color: var(--text); }
+  .aloc-tapada { color: #b91c1c; font-weight: 600; }
   #aloc-frente svg { width: 100%; height: 100%; display: block; background: #fff; border-radius: var(--r); }
   #aloc-nivel-detalhe { overflow-y: auto; min-height: 0; }
+  #aloc-sku-ficha { margin-top: 8px; font-size: 13px; line-height: 1.5; }
+  .aloc-sku-nav { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .aloc-sku-nav button { padding: 2px 10px; }
+  .aloc-sku-nav input { flex: 1; min-width: 140px; }
+  .aloc-sku-nav select { width: auto; flex: 0 0 auto; max-width: 170px; }
+  #aloc-sku-lista { margin-top: 6px; max-height: 240px; overflow-y: auto; border: 1px solid var(--border, #d1d5db);
+                    border-radius: 6px; outline: none; }
+  #aloc-sku-lista:focus { box-shadow: 0 0 0 2px #93c5fd; }
+  #aloc-sku-lista table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #aloc-sku-lista th { position: sticky; top: 0; background: var(--surface-2, #f3f4f6); text-align: left;
+                       padding: 3px 6px; font-weight: 600; }
+  #aloc-sku-lista td { padding: 2px 6px; border-top: 1px solid var(--border, #e5e7eb); white-space: nowrap; }
+  #aloc-sku-lista td.desc { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  #aloc-sku-lista tr { cursor: pointer; }
+  #aloc-sku-lista tr:hover td { background: rgba(37, 99, 235, 0.08); }
+  #aloc-sku-lista tr.sel td { background: rgba(37, 99, 235, 0.18); font-weight: 600; }
+  #aloc-sku-lista tr.nao td { color: #b91c1c; }
+  .aloc-zona-ponto { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; }
+  #aloc-sku-ficha:empty { display: none; }
+  #aloc-sku-ficha a { color: #2563eb; }
+  /* com a lista à vista a ficha tem altura FIXA: a lista por baixo não salta de componente para componente */
+  #aloc-sku-ficha.fixa { display: block; height: 96px; overflow-y: auto; margin-top: 0; }
+  #aloc-sku-ficha.fixa .aloc-ficha-ends { max-height: none; }
+  .aloc-ficha-cab { font-size: 14px; margin-bottom: 2px; }
+  .aloc-ficha-ends { margin-top: 4px; max-height: 120px; overflow-y: auto; }
+  tr.aloc-sku-alvo td { font-weight: 700; color: #1d4ed8; }
   #aloc-tooltip { position: fixed; pointer-events: none; z-index: 10; display: none; max-width: 340px;
                   background: #0b0d11; color: var(--text); border: 1px solid var(--border-strong);
                   border-radius: var(--r); padding: 7px 9px; font-size: 11.5px; line-height: 1.5; }
@@ -356,7 +389,7 @@
       </div>
     </div>
     <div class="actions">
-      <button class="action" id="btn-gerar-racks">Gerar racks</button>
+      <button class="btn-ghost" id="btn-gerar-racks" title="Dimensionamento (avançado): calcula quantas racks o stock pede e desenha um bloco de racks NOVO. Com o layout fixo não é preciso -- usa «Carregar» e depois «Alocação &amp; Picking».">Dimensionar racks (avançado)</button>
       <span class="sep"></span>
       <button id="btn-rodar-zona" title="Roda o bloco selecionado: zonas a 45°, racks a 90°">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2v3h-3"/></svg>Rodar</button>
@@ -488,7 +521,7 @@
         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;" title="Operadores a fazer picking nos corredores, com entrega na zona de espera de transporte">
           <input type="checkbox" id="ops-ativo" checked> Operadores
         </label>
-        <label style="display:flex; gap:6px; align-items:center;" title="Operadores a pé — só fazem picking em Prateleira Leve">
+        <label style="display:flex; gap:6px; align-items:center;" title="Operadores a pé — só fazem picking em Prateleira Leve e Prateleira XS">
           A pé <input id="ops-n" type="number" min="0" max="20" step="1" value="4" style="width:48px">
         </label>
         <label style="display:flex; gap:6px; align-items:center;" title="Operadores com porta-paletes — acedem a porta-paletes e outras tipologias pesadas">
@@ -530,11 +563,12 @@
           <option value="minutos">Picking (min/dia)</option>
           <option value="classe">Classe ABC</option>
           <option value="ocupacao">Ocupação (planta)</option>
+          <option value="tapadas">Caixas tapadas (atrás de outro componente)</option>
         </select>
       </div>
       <div class="field" style="min-width:240px">
         <label for="aloc-sku">Procurar SKU</label>
-        <input id="aloc-sku" type="search" list="aloc-skus" placeholder="código ou descrição">
+        <input id="aloc-sku" type="search" list="aloc-skus" placeholder="código ou descrição — mostra onde está">
         <datalist id="aloc-skus"></datalist>
       </div>
     </div>
@@ -552,13 +586,38 @@
     <div class="aloc-planta-wrap">
       <svg id="aloc-planta"></svg>
       <div class="legend" id="aloc-legenda" style="margin-top:0"></div>
+      <div class="aloc-sku-nav" id="aloc-sku-nav" style="display:none">
+        <button id="aloc-sku-ant" title="Componente anterior (seta ↑)">◀</button>
+        <span id="aloc-sku-pos" class="dica" style="margin:0; min-width:70px; text-align:center"></span>
+        <button id="aloc-sku-seg" title="Componente seguinte (seta ↓)">▶</button>
+        <input id="aloc-sku-filtro" type="search" placeholder="filtrar a lista">
+        <select id="aloc-sku-zona" title="Zona">
+          <option value="">todas as zonas</option>
+          <option value="0">bulk</option>
+          <option value="1">voltas do comboio</option>
+          <option value="2">consumíveis</option>
+          <option value="3">sem picking</option>
+          <option value="nao">por alocar</option>
+        </select>
+        <select id="aloc-sku-ordem" title="Ordenar por">
+          <option value="zona">zona e visitas</option>
+          <option value="visitas">visitas/dia</option>
+          <option value="codigo">código</option>
+          <option value="posicoes">nº de posições</option>
+        </select>
+      </div>
+      <div id="aloc-sku-ficha"></div>
+      <div id="aloc-sku-lista" tabindex="0" style="display:none"></div>
     </div>
     <div class="card" id="aloc-frente-card">
       <h3 id="aloc-frente-titulo">Vista de frente</h3>
       <div id="aloc-frente-corpo">
-        <div id="aloc-frente"><div class="dica">Clica numa rack da planta.</div></div>
+        <div id="aloc-frente-col">
+          <div id="aloc-frente"><div class="dica">Clica numa rack da planta.</div></div>
+        </div>
         <div id="aloc-nivel-detalhe"></div>
       </div>
+      <div id="aloc-cima" title="O nível escolhido visto de cima: a frente (corredor) em baixo"></div>
     </div>
   </div>
 
@@ -652,11 +711,9 @@ async function gerar3DAutomatico() {
   if (_auto3dEmCurso) return;
   _auto3dEmCurso = true;
   try {
-    if (!canvasBlocks.length) {
-      document.getElementById("btn-gerar-racks").click();
-      await _esperarBotao("btn-gerar-racks");
-      if (!canvasBlocks.length) return;          // «Gerar racks» falhou (ver a consola/servidor)
-    }
+    // layout fixo: sem arranjo carregado não há nada a desenhar (já não se
+    // dimensionam racks sozinho -- 2026-11-12)
+    if (!canvasBlocks.length) return;
     if (_assinaturaRender === _assinaturaArranjo()) return;   // 3D já está atualizado
     document.getElementById("btn-renderizar").click();
     await _esperarBotao("btn-renderizar");
@@ -3314,6 +3371,10 @@ function inicializarCanvas() {
 
   // 1 · Gerar racks: corre o pipeline, carrega os blocos e mostra SÓ a área do bloco de racks (sem 3D)
   document.getElementById("btn-gerar-racks").addEventListener("click", async () => {
+    // layout fixo (2026-11-12): o dimensionamento deixou de fazer parte da alocação
+    if (!confirm("Dimensionar racks gera um bloco de racks NOVO a partir do stock (é o dimensionamento, não a "
+                 + "alocação). Com o layout fixo não é preciso: para alocar, carrega o layout e usa «Alocação & "
+                 + "Picking». Continuar mesmo assim?")) return;
     const btn = document.getElementById("btn-gerar-racks");
     btn.textContent = "A gerar...";
     btn.disabled = true;
@@ -3408,7 +3469,7 @@ function inicializarCanvas() {
       }
       document.getElementById("canvas-resumo").innerHTML = html;
     } finally {
-      btn.textContent = "Gerar racks";
+      btn.textContent = "Dimensionar racks (avançado)";
       btn.disabled = false;
     }
   });
@@ -3503,7 +3564,10 @@ function inicializarCanvas() {
   });
 
   document.getElementById("btn-guardar-arranjo").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify({ blocks: canvasBlocks }, null, 2)], { type: "application/json" });
+    const num = (id) => parseFloat(document.getElementById(id)?.value) || 0;
+    const blob = new Blob([JSON.stringify({ blocks: canvasBlocks, altura_armazem_m: num("altura-armazem"),
+                                            altura_picking_m: num("altura-picking"), carros_alvo: num("carros-alvo") },
+                                          null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.download = "arranjo_layout.json";
     a.href = URL.createObjectURL(blob);
@@ -3524,14 +3588,13 @@ function inicializarCanvas() {
         if (d.blocks) canvasBlocks = d.blocks;
         selBlockId = null;
         desenharBlocks();
-        // Sincroniza logo com o Excel: «Gerar racks» mantém as posições do
-        // ficheiro mas atualiza tamanhos e zonas novas (um arranjo antigo não
-        // traz o tamanho atual das zonas). Se falhar, fica o ficheiro tal e qual.
-        // (se o ficheiro não tem bloco de racks -- layout desenhado do zero --,
-        // o «Gerar racks» não o repõe)
-        if (d.blocks && d.blocks.length) {
-          _semBlocoRacks = !d.blocks.some(b => b.type === "racking");
-          document.getElementById("btn-gerar-racks").click();
+        // Layout fixo (2026-11-12): carrega o ficheiro TAL E QUAL -- já não se
+        // corre o «Gerar racks» por trás (o dimensionamento deixou de fazer
+        // parte da alocação). Pé-direito e carros-alvo, se o ficheiro os tiver.
+        _semBlocoRacks = !(d.blocks || []).some(b => b.type === "racking");
+        for (const [k, id] of [["altura_armazem_m", "altura-armazem"], ["altura_picking_m", "altura-picking"],
+                               ["carros_alvo", "carros-alvo"]]) {
+          if (typeof d[k] === "number" && document.getElementById(id)) document.getElementById(id).value = d[k];
         }
       } catch (err) {
         alert("Ficheiro inválido.");
@@ -3551,6 +3614,6 @@ carregarZonas();
 initViewer();
 inicializarCanvas();
 </script>
-<script type="module" src="./alocacao.js?v=2026-11-09d"></script>
+<script type="module" src="./alocacao.js?v=2026-11-12g"></script>
 </body>
 </html>

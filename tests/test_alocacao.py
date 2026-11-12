@@ -100,7 +100,9 @@ def test_incremental_mantem_onde_estava_mesmo_com_a_frequencia_trocada():
     assert inc.mudancas == []
 
 
-@pytest.mark.parametrize("tolerancia, esperado", [(1.0, {"P1"}), (0.0, {"P1", "P2"})])
+# contiguidade obrigatória (2026-11-12): P1 e P2 não são vizinhos, por isso X fica junto em P1 mesmo
+# com tolerância 0 (antes partia-se entre P1 e P2)
+@pytest.mark.parametrize("tolerancia, esperado", [(1.0, {"P1"}), (0.0, {"P1"})])
 def test_contiguidade_com_tolerancia(tolerancia, esperado):
     # P1: 2 níveis de 1,0 m (o topo do 2.º, a 2 m, passa 1,6 m: +0,5 min); P2: 1 nível 3 m mais longe
     # (+0,07 min de order-picker, ida e volta). X tem 2 unidades: com tolerância fica junta em P1.
@@ -116,14 +118,16 @@ def _p(pid, fila, mod, x, y, rack=PRAT1):
     return A.PosicaoFisica(pid, fila, mod, rack, rack.niveis, x, y, rack.larg_m, rack.prof_m)
 
 
-def test_vizinhanca_lado_e_frente_do_corredor_mas_nao_costas_com_costas():
-    # A (y 0-0,6) e B (y 0,6-1,2) costas com costas; C (y 2,4) em frente de B, corredor de 1,2 m
+def test_vizinhanca_so_lado_a_lado_na_mesma_fila():
+    # A (y 0-0,6) e B (y 0,6-1,2) costas com costas; C (y 2,4) em frente de B, corredor de 1,2 m.
+    # Regra do utilizador (2026-11-12): vizinho é SÓ o módulo lado a lado da mesma fila.
     pos = [_p(f"{f}{m}", f, m, 1.8 * (m - 1), y) for f, y in (("A", 0.0), ("B", 0.6), ("C", 2.4))
            for m in (1, 2, 3)]
     v = A.vizinhanca(pos)
-    assert v["A1"]["A2"] == 1 and v["A1"]["A3"] == 2
-    assert "B1" not in v["A1"]                       # costas com costas: outro corredor
-    assert v["B1"]["C1"] == 1 and v["B1"]["C2"] == 2  # em frente (mesma paragem) e o do lado dele
+    assert v["A1"] == {"A2": 1} and v["A2"] == {"A1": 1, "A3": 1}
+    assert "A3" not in v["A1"]                       # com um módulo pelo meio: não
+    assert "B1" not in v["A1"]                       # costas com costas: não
+    assert "C1" not in v["B1"]                       # em frente, do outro lado do corredor: não
 
 
 def test_unidade_seguinte_fica_no_modulo_ao_lado_e_nao_noutra_fila():
@@ -229,12 +233,17 @@ def test_o_bloco_dimensionado_leva_todo_o_stock(tmp_path):
     # sem estado: de raiz, e esta alocação passa a ser o estado (sem perguntar)
     assert res.estado["modo"] == "de raiz" and res.estado["guardado"] and not res.estado["pode_guardar"]
     assert (tmp_path / "estado.json").exists() and res.estado["calibracao"] == "refeita"
-    assert not res.nao_alocados
-    assert sum(c.n_unidades for c in res.colocacoes) == sum(a.num_unidades for a in asg)
+    # contiguidade obrigatória: o bloco dimensionado tem o espaço à justa (usa qualquer buraco), por
+    # isso alguns SKUs grandes podem não ter um bloco inteiro -- só por esse motivo, e as contas fecham
+    assert all("CONTÍGUO" in n.motivo for n in res.nao_alocados), {n.motivo for n in res.nao_alocados}
+    assert (sum(c.n_unidades for c in res.colocacoes) + sum(n.n_unidades for n in res.nao_alocados)
+            == sum(a.num_unidades for a in asg))
     # tempos: com os tempos do livro bate com a «7b Voltas», o «Bulk» e o «Gantt»
     falhas = [f"{v.nome}: {v.detalhe}" for v in res.tempos.validacao if not v.ok]
     assert not falhas, falhas
     assert (tmp_path / "calibracao.json").exists()
+    # layout fixo (2026-11-12): a calibração é contra o layout de referência, não contra o «Gerar racks»
+    assert "layout de refer" in (tmp_path / "calibracao.json").read_text(encoding="utf-8")
     # cronograma de um dia: armazém e comboio, com os picks das preparações
     from warehouse import tempos
     cr = tempos.cronograma(res.tempos, 2)
@@ -245,7 +254,8 @@ def test_o_bloco_dimensionado_leva_todo_o_stock(tmp_path):
     # a seguir, sem nada mudado: incremental sozinho, ninguém sai do sítio, nada para guardar,
     # calibração lida (não refeita)
     res2, _ = A.run(cfg, blocos, 4.6, out=tmp_path / "alocacao2.xlsx")
-    assert res2.estado["modo"] == "incremental" and res2.mudancas == [] and not res2.nao_alocados
+    assert res2.estado["modo"] == "incremental" and res2.mudancas == []
+    assert {n.sku for n in res2.nao_alocados} == {n.sku for n in res.nao_alocados}
     assert not res2.estado["pode_guardar"] and res2.estado["bom"]["n"] == 0 and res2.estado["calibracao"] == "lida"
     # a lógica mudou (outra tolerância de contiguidade): de raiz, e pode-se guardar
     cfg3 = dataclasses.replace(cfg, alocacao_tolerancia_contiguo_min=0.0)
@@ -327,3 +337,39 @@ def test_json_mostra_as_oversize_do_par_nos_dois_modulos_reais():
         assert n1["caixas"] == [] and [c["sku"] for c in n1["par"]["caixas"]] == ["OVER"]
         assert js[real]["visitas_dia"] == pytest.approx(js[extra[0].id]["visitas_dia"] / 2)
     assert js[extra[0].id]["par"] is True
+
+
+def test_profundidade_marca_caixas_tapadas_por_outro_sku():
+    cx = lambda sku, x, y, comp=0.15, larg=0.30, n=1: {"sku": sku, "x_m": x, "y_m": y, "comp_m": comp,
+                                                       "larg_m": larg, "n_unidades": n}
+    frente_a, tras_b, tras_a, solta = cx("A", 0.0, 0.0), cx("B", 0.0, 0.30, n=2), cx("A", 0.20, 0.30),         cx("C", 0.50, 0.30)
+    frente_a2 = cx("A", 0.18, 0.0)
+    n = A.marcar_profundidade([frente_a, tras_b, frente_a2, tras_a, solta])
+    assert tras_b["atras"] and tras_b["tapada_por"] == ["A"]        # atrás de outro SKU
+    assert tras_a["atras"] and tras_a["tapada_por"] == []           # atrás do próprio SKU: não conta
+    assert not solta["atras"] and not frente_a["atras"]             # nada à frente
+    assert n == 2                                                   # unidades (a pilha de 2 do B)
+
+
+def test_contiguidade_obrigatoria_o_sku_nunca_fica_partido():
+    # F1, F2, F3 seguidos; G1 noutra fila, sem ser vizinho de nenhum, mas mais perto do que F2.
+    # Y (muita saída) fica em F1; a 1.ª unidade de X caberia em G1, mas a 2.ª já não tinha vizinho
+    # livre -- antes ia para F2 (X partido entre G1 e F2). Agora o X recomeça e fica em F2 + F3.
+    pos = [_p("F1", "F", 1, 0.0, 0.0), _p("F2", "F", 2, 1.8, 0.0), _p("F3", "F", 3, 3.6, 0.0),
+           _p("G1", "G", 1, -3.0, 0.0)]
+    assert "G1" not in A.vizinhanca(pos).get("F1", {})
+    res = A.alocar(pos, [_item("Y"), _item("X"), _item("X")], {LoadType.XS: [PRAT1]},
+                   _taxas(Y=5, X=1), (0, 0), CFG)
+    sitio = {}
+    for c in res.colocacoes:
+        sitio.setdefault(c.sku, set()).add(c.posicao.id)
+    assert not res.nao_alocados
+    assert sitio["X"] == {"F2", "F3"} and A._n_blocos(sitio["X"], A.vizinhanca(pos)) == 1
+
+
+def test_contiguidade_obrigatoria_sem_bloco_fica_por_alocar_e_nao_partido():
+    # só há lugares soltos (sem vizinhos): o SKU de 2 unidades fica por alocar, nunca partido
+    pos = [_p("A1", "A", 1, 0.0, 0.0), _p("B1", "B", 1, 0.0, 20.0)]
+    res = A.alocar(pos, [_item("X"), _item("X")], {LoadType.XS: [PRAT1]}, _taxas(X=1), (0, 0), CFG)
+    assert not res.colocacoes and len(res.nao_alocados) == 2
+    assert "CONTÍGUO" in res.nao_alocados[0].motivo
