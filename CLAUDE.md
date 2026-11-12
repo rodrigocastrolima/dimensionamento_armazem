@@ -1623,6 +1623,17 @@ mostrava. Feito (só visualização, o algoritmo não mudou):
   até 4 filas de profundidade numa prateleira de 0,60 m (uma XS atrás de 3
   outros componentes).
 
+## Decisão fechada: OVERSIZE sem palete obrigatoriamente no par mais perto (2026-11-12)
+Utilizador: "as oversize que NÃO estão em palete (só o FLOOR PANEL)
+obrigatoriamente mais perto possível". Na 1.ª etapa os grupos de SKUs com
+unidades `LoadType.OVERSIZE` vão SEMPRE primeiro (à frente do bulk e de
+qualquer zona) -- ficam no par frente+trás livre mais perto. Antes iam na vez
+da zona deles (FLOOR PANEL = voltas) e o bulk já tinha ocupado os módulos dos
+pares perto: o FLOOR PANEL ficava em M04+M03 da fila 2 (16,7-19,5 m) com
+pares a 5,5 m. Agora M08+M07 da fila 2 (5,5 e 8,2 m); nada por alocar;
+51,9 -> 52,5 min/dia (o par tira 2 módulos perto ao bulk). Os pares já não
+entravam nas trocas (`pos_fixas`). `ALGORITMO_VERSAO = "2026-11-12.4"`.
+
 ## Decisão fechada: atrás de uma caixa só o MESMO SKU (2026-11-12)
 Utilizador: "adiciona a regra que só podes ter atrás o mesmo SKU". Na
 alocação, cada nível arruma-se em **faixas de profundidade**

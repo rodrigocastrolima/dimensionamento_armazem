@@ -321,6 +321,26 @@ def test_oversize_num_par_frente_tras_de_porta_paletes_com_dois_corredores():
     assert sem == []
 
 
+def test_oversize_primeiro_no_par_mais_perto_mesmo_a_frente_do_bulk():
+    # decisão do utilizador (2026-11-12): a OVERSIZE sem palete (FLOOR PANEL) fica OBRIGATORIAMENTE no
+    # par mais perto. Antes ia na vez da zona dela (voltas): a palete de bulk, arrumada primeiro, ocupava
+    # o módulo real perto, o par perto ficava reservado e a OVERSIZE ia para o par longe.
+    pp = RackType("Rack Porta-Paletes", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.61, niveis=1,
+                  aceita=[LoadType.PALLET])
+    pos = [A.PosicaoFisica(f"{l}{m}", f"Fila {lado}", m, pp, 1, x, y, 2.7, 1.2)
+           for m, x in ((1, 0.0), (5, 12.0)) for l, lado, y in (("F", "frente", 0.0), ("T", "trás", 1.2))]
+    cfg = dataclasses.replace(CFG, oversize_par_racks=("porta-paletes",))
+    extra, pares, racks = A.posicoes_em_par(pos, [], (1.35, -3.0), cfg)
+    perto = next(e for e in extra if pares[e.id] == ("F1", "T1"))
+    cand = {LoadType.PALLET: [pp], LoadType.OVERSIZE: list(racks.values())}
+    taxas = {"BULK": Taxa("BULK", 5, 5, ("Bulk",)), "OVER": Taxa("OVER", 0.1, 0.1, ("Caixas",))}
+    itens = [_item("BULK", LoadType.PALLET, 1.2, 0.8, 1.0), _item("OVER", LoadType.OVERSIZE, 1.4, 2.0, 1.4)]
+    res = A.alocar(pos + extra, itens, cand, taxas, (1.35, -3.0), cfg, pares=pares)
+    sitio = {c.sku: c.posicao.id for c in res.colocacoes}
+    assert not res.nao_alocados
+    assert sitio["OVER"] == perto.id and sitio["BULK"] in {"F5", "T5"}
+
+
 def test_json_mostra_as_oversize_do_par_nos_dois_modulos_reais():
     # a vista de frente e o mapa leem os níveis de cada módulo real: o nível ocupado pelo par tem de
     # aparecer lá (antes aparecia «vazio»), com metade das visitas do par em cada módulo

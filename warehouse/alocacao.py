@@ -26,7 +26,7 @@ from .racking import _Colocado, _commit_nivel, altura_nivel, cotas_fisicas_nivei
 
 # Versão das REGRAS de alocação: mudar quando a lógica muda (o modo incremental
 # deixa de valer -- alocação de raiz até se guardar um estado novo).
-ALGORITMO_VERSAO = "2026-11-12.3"
+ALGORITMO_VERSAO = "2026-11-12.4"
 CONTIGUIDADE_MODULOS = 1     # vizinho = só o módulo LADO A LADO na mesma fila (2026-11-12)
 
 REGRAS = (
@@ -1102,6 +1102,12 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         rank = {s: i for i, s in enumerate(ordem_grupos)}
         ordem_grupos.sort(key=lambda s: (zona_de(s) if zonas else 0, modulos_precisos(grupos_sku[s]) <= 1.0,
                                          rank[s]))
+    # OVERSIZE (peça sem palete nem caixa -- na SIA só o FLOOR PANEL) SEMPRE
+    # primeiro, à frente do bulk e de qualquer zona: fica no par frente+trás
+    # livre mais perto do destino (decisão do utilizador, 2026-11-12). Antes
+    # ia na vez da zona dele (voltas) e o bulk já tinha ocupado os módulos dos
+    # pares mais perto: ficava a 17-20 m com pares a 5,5 m.
+    ordem_grupos.sort(key=lambda s: grupos_sku[s][0].load_type != LoadType.OVERSIZE)
     nao = []
     for sku in ordem_grupos:
         unidades_sku = grupos_sku[sku]
