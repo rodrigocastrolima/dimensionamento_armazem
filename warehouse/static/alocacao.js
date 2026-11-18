@@ -274,6 +274,7 @@ function mostrarTooltip(ev, p) {
   const nPar = p.niveis.filter((n) => n.par).length;
   tt.innerHTML = `<b>${esc(p.endereco)}</b><br>${esc(p.rack_nome)}<br>
     Visitas: <b>${fmt(p.visitas_dia, 2)}</b>/dia · Picking: <b>${fmt(p.picking_min_dia)}</b> min/dia<br>
+    ${p.dist_m != null ? `Distância à Zona de Espera: <b>${fmt(p.dist_m, 1)}</b> m<br>` : ""}
     Ocupação: ${fmt(ocupacao(p) * 100, 0)} % · ${skus.size} SKU(s)`
     + (p.tapadas ? `<br><span style="color:#b91c1c">${p.tapadas} unidade(s) atrás de outro componente</span>` : "")
     + (nPar ? `<br>${nPar} nível(eis) com OVERSIZE do par frente+trás (inclui ${fmt(p.visitas_par_dia || 0, 2)} visitas/dia)` : "");
@@ -415,8 +416,9 @@ function desenharFrente() {
       r.addEventListener("click", () => escolherNivel(n.nivel));
       const tit = el("title", {}, r);
       tit.textContent = `${c.sku}\n${c.unidade} × ${c.n_unidades} · ${c.pecas} peças · classe ${c.classe}` +
-        (atras ? `\n(atrás, a ${fmt(c.y_m, 2)} m da frente)` : "");
-      const rot = atras ? "" : cabe(rotuloCurto(c.sku), c.comp_m * s - 3);
+        (atras ? `\n(atrás, a ${fmt(c.y_m, 2)} m da frente)` : "") +
+        (c.face ? "\n▶ face de picking: as peças tiram-se daqui (leva as visitas todas do SKU)" : "");
+      const rot = atras ? "" : cabe((c.face ? "▶" : "") + rotuloCurto(c.sku), c.comp_m * s - 3);
       if (rot && c.alt_m * s > 11) {
         const t = el("text", { x: x0 + (c.x_m + c.comp_m / 2) * s, y: yb - c.alt_m * s / 2 + 3, "font-size": 8,
                                "text-anchor": "middle", fill: "#111", "pointer-events": "none" }, svg);
@@ -437,13 +439,15 @@ function desenharFrente() {
     const por = {};
     for (const c of lista) {
       por[c.sku] = por[c.sku] || { sku: c.sku, desc: c.descricao, un: c.unidade, n: 0, pecas: 0, classe: c.classe,
-                                   frente: false, tras: false, tapa: new Set() };
+                                   frente: false, tras: false, tapa: new Set(), face: false };
       por[c.sku].n += c.n_unidades;
       por[c.sku].pecas += c.pecas;
       if (c.atras) por[c.sku].tras = true; else por[c.sku].frente = true;
+      if (c.face) por[c.sku].face = true;
       for (const t of c.tapada_por || []) por[c.sku].tapa.add(t);
     }
     const fila = (x) => (doPar ? "par" : x.frente && x.tras ? "frente e trás" : x.tras ? "trás" : "frente")
+      + (x.face ? ' · <b title="As peças tiram-se desta unidade: leva as visitas todas do SKU; as outras são reserva">▶ face</b>' : "")
       + (x.tapa.size ? ` <span class="aloc-tapada" title="Para a tirar é preciso mexer primeiro em: ${esc([...x.tapa].map(codigo).join(", "))}">⚠ atrás de ${esc([...x.tapa].map(rotuloCurto).join(", "))}</span>` : "");
     return Object.values(por).map((x) =>
       `<tr${doPar ? ' style="color:#7c3aed"' : ""}${alvoFrente.has(x.sku) ? ' class="aloc-sku-alvo"' : ""}><td title="${esc(x.desc)}">${doPar ? "↔ " : ""}${esc(codigo(x.sku))}</td>

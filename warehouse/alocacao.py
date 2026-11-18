@@ -26,7 +26,7 @@ from .racking import _Colocado, _commit_nivel, altura_nivel, cotas_fisicas_nivei
 
 # Versão das REGRAS de alocação: mudar quando a lógica muda (o modo incremental
 # deixa de valer -- alocação de raiz até se guardar um estado novo).
-ALGORITMO_VERSAO = "2026-11-18.1"   # geometria das racks mudou (alturas, pilares, fila dupla): alocar de raiz
+ALGORITMO_VERSAO = "2026-11-18.2"   # geometria das racks mudou (alturas, pilares, fila dupla): alocar de raiz
 CONTIGUIDADE_MODULOS = 1     # vizinho = só o módulo LADO A LADO na mesma fila (2026-11-12)
 
 REGRAS = (
@@ -130,6 +130,7 @@ class Colocacao:
     nivel_idx: int
     custo: float
     visitas_dia: float       # parte das visitas do SKU que cabe a este stack
+    face: bool = False       # face de picking de um SKU de peças (carrinho/kit): leva as visitas todas
 
     @property
     def endereco(self) -> str:
@@ -160,6 +161,7 @@ class ResultadoAlocacao:
     estado_ctx: dict = field(default_factory=dict)   # BOM e assinatura da lógica desta corrida (para guardar)
     planta: dict = field(default_factory=dict)   # zonas/obstáculos/Cubo do render (para a UI desenhar)
     pares: dict = field(default_factory=dict)    # pid «frente+trás» -> (pid frente, pid trás)
+    dist: dict = field(default_factory=dict)     # pid -> metros a pé até ao destino
 
     @property
     def custo_ponderado(self) -> float:
@@ -601,7 +603,7 @@ def _trocas_aos_pares(por_posicao: dict, parte, viz: dict, zona, bloqueada) -> i
                 sku_pos[cx.sku].add(pid)
 
     def vis(pid):
-        return [sum(parte(cx.sku, cx.num_boxes_in_stack) for cx in c.nivel.caixas) for c in niveis[pid]]
+        return [sum(parte(cx) for cx in c.nivel.caixas) for c in niveis[pid]]
 
     def skus(pid):
         return {cx.sku for c in niveis[pid] for cx in c.nivel.caixas}
@@ -743,7 +745,7 @@ def _trocar_posicoes(grupo: list, parte, distancia, por_posicao: dict, zona=None
         if not seguidos:
             fixos |= set(membros)
             continue
-        visitas = sum(parte(cx.sku, cx.num_boxes_in_stack) for p in pos for c in ids[p.id] for cx in c.nivel.caixas)
+        visitas = sum(parte(cx) for p in pos for c in ids[p.id] for cx in c.nivel.caixas)
         z = min((zona(cx.sku) for p in pos for c in ids[p.id] for cx in c.nivel.caixas),
                 default=ZONA_SEM_PICKING) if zona else 0
         blocos.append(([p.id for p in pos], visitas / len(pos), z))
@@ -797,18 +799,32 @@ def _trocar_posicoes(grupo: list, parte, distancia, por_posicao: dict, zona=None
             c.nivel.caixas, c.area_livre, c.falhas = cxs, livre, falhas
 
 
+def skus_de_pecas(p, mapa: dict | None = None) -> set:
+    """SKUs de onde se tiram PEÇAS de uma embalagem aberta (carrinhos e kits do
+    livro): têm uma face de picking. Nos outros (209 na SIA) sai a embalagem
+    inteira -- cada caixa/palete é visitada uma vez (FIFO) e as visitas
+    repartem-se por todas as unidades (2026-11-18)."""
+    from .procura import CARRINHO
+    mapa = mapa or {}
+    pecas, inteiras = set(), set()
+    for x in p.linhas:
+        ref = mapa.get(x.ref, x.ref)
+        (pecas if (x.kit or x.unidade == CARRINHO) else inteiras).add(ref)
+    return pecas - inteiras
+
+
 def alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dict, taxas: dict,
            ponto: tuple[float, float], cfg, fixacoes: dict | None = None,
            anterior: dict | None = None, otimizar: bool = True,
-           dist: dict | None = None, pares: dict | None = None) -> ResultadoAlocacao:
+           dist: dict | None = None, pares: dict | None = None, pecas: set | None = None) -> ResultadoAlocacao:
     """Alocação (ver ``_alocar``): 1.ª etapa por frequência; se deixar alguma
     unidade de fora, repete por área (FFD, como o dimensionamento) e fica a
     que deixa menos unidades de fora (2026-11-05: com a ordem por área uma
     posição mais longe ficava com mais visitas do que a de perto)."""
     args = (posicoes, itens, candidatos_por_tipo, taxas, ponto, cfg, fixacoes, anterior, otimizar, dist, pares)
-    r = _alocar(*args, por_frequencia=True)
+    r = _alocar(*args, por_frequencia=True, pecas=pecas)
     if r.nao_alocados:
-        r2 = _alocar(*args, por_frequencia=False)
+        r2 = _alocar(*args, por_frequencia=False, pecas=pecas)
         fora = lambda x: sum(n.n_unidades for n in x.nao_alocados)
         if fora(r2) < fora(r):
             r2.avisos.append(f"A arrumação por frequência deixava {fora(r)} unidade(s) de fora; usada a "
@@ -821,7 +837,8 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             ponto: tuple[float, float], cfg, fixacoes: dict | None = None,
             anterior: dict | None = None, otimizar: bool = True,
             dist: dict | None = None, pares: dict | None = None,
-            por_frequencia: bool = True, grandes_primeiro: bool = True) -> ResultadoAlocacao:
+            por_frequencia: bool = True, grandes_primeiro: bool = True,
+            pecas: set | None = None) -> ResultadoAlocacao:
     """`itens`: racking.preparar_itens (stacks). `taxas`: sku -> procura.Taxa.
     `fixacoes`: sku -> endereço/id (ver _resolver_fixacao). `anterior`: sku ->
     [(id da posição, nível)] da última alocação guardada (modo incremental).
@@ -885,6 +902,38 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
 
     def parte(sku: str, n: int) -> float:
         return vis.get(sku, 0.0) * n / unidades[sku] if unidades.get(sku) else 0.0
+
+    # FACE DE PICKING + RESERVA (decisão do utilizador, 2026-11-18), só nos SKUs de
+    # peças (carrinhos/kits): tira-se peça a peça de UMA embalagem aberta -- a face
+    # leva as visitas todas do SKU; as outras unidades são reserva e só contam as
+    # reposições (uma por embalagem gasta: Taxa.unidades_dia), repartidas por elas.
+    # A face é a unidade do SKU no sítio mais barato (contiguidade: a reserva fica
+    # no mesmo bloco). Nos SKUs de embalagem inteira fica ``parte`` (FIFO).
+    pecas = set(pecas or ()) & set(por_sku)
+    repos = {s: (taxas[s].unidades_dia if s in taxas else 0.0) for s in pecas}
+    face_de: dict = {}           # sku -> CaixaColocada da face
+
+    def designar_faces():
+        melhor = {}
+        for c in celulas:
+            for cx in c.nivel.caixas:
+                if cx.sku in pecas:
+                    k = (c.custo, c.pos.id, c.nivel.nivel_idx, cx.y_m, cx.x_m)
+                    if cx.sku not in melhor or k < melhor[cx.sku][0]:
+                        melhor[cx.sku] = (k, cx)
+        face_de.clear()
+        face_de.update({s: cx for s, (_, cx) in melhor.items()})
+
+    def valor(cx) -> float:
+        """Visitas/dia a este stack (o que as trocas e o custo ponderado usam)."""
+        s = cx.sku
+        if s not in pecas:
+            return parte(s, cx.num_boxes_in_stack)
+        f = face_de.get(s)
+        if f is cx:
+            return vis.get(s, 0.0)
+        reserva = unidades[s] - (f.num_boxes_in_stack if f is not None else 0)
+        return repos[s] * cx.num_boxes_in_stack / reserva if reserva > 0 else 0.0
 
     pref = {}
     for s, v in fixacoes.items():
@@ -1046,7 +1095,8 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         resto.sort(key=lambda it: zona_de(it.sku))       # estável: dentro da zona fica a ordem FFD
     if por_frequencia:   # dentro da zona: o mais frequente (por unidade guardada) primeiro, perto
         resto.sort(key=lambda it: (zona_de(it.sku) if zonas else 0,
-                                   -vis.get(it.sku, 0.0) / max(unidades.get(it.sku, 1), 1)))
+                                   -vis.get(it.sku, 0.0) / (1 if it.sku in pecas
+                                                            else max(unidades.get(it.sku, 1), 1))))
     if pares:            # as OVERSIZE primeiro: só cabem num par se os dois módulos ainda estiverem livres
         resto.sort(key=lambda it: it.load_type != LoadType.OVERSIZE)
     # CONTIGUIDADE OBRIGATÓRIA (decisão do utilizador, 2026-11-12: "não posso
@@ -1141,8 +1191,10 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
                 avisos.append(f"{sku}: não coube num só bloco de módulos vizinhos -- fica por alocar "
                               "(contiguidade obrigatória).")
 
+    designar_faces()
+
     def visitas_celula(c):
-        return sum(parte(cx.sku, cx.num_boxes_in_stack) for cx in c.nivel.caixas)
+        return sum(valor(cx) for cx in c.nivel.caixas)
 
     # posições que não entram nas trocas de posições/níveis: os pares e os
     # módulos com um nível reservado por um par (a reserva é física)
@@ -1163,7 +1215,7 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             p = cels[0].pos
             grupos[(p.rack.nome, p.n_niveis)].append(sorted(cels, key=lambda c: c.nivel.nivel_idx))
     for grupo in grupos.values():
-        _trocar_posicoes(grupo, parte, distancia, por_posicao, zona_de if zonas else None)
+        _trocar_posicoes(grupo, valor, distancia, por_posicao, zona_de if zonas else None)
 
     # 2.ª etapa (a2): dentro de cada posição, níveis com a mesma altura útil --
     # o de mais visitas no mais baixo (mais barato)
@@ -1189,7 +1241,8 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         for cx in c.nivel.caixas:
             # só troca de SKU uma caixa sozinha na sua faixa: numa faixa com várias
             # (todas do mesmo SKU) a troca punha outro componente à frente/atrás
-            if id(cx) not in bloqueadas and _sozinha_na_faixa(cx, c.nivel.caixas):
+            # (os SKUs de peças não entram: a face é a unidade mais barata do bloco deles)
+            if id(cx) not in bloqueadas and cx.sku not in pecas and _sozinha_na_faixa(cx, c.nivel.caixas):
                 pe = (round(cx.comp_m, 3), round(cx.larg_m, 3))
                 # orientação fixa (palete à mão): só troca com a mesma base E orientação
                 forma = (cx.load_type, pe if cx.orientacao_fixa else tuple(sorted(pe)),
@@ -1230,11 +1283,12 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
 
     # 2.ª etapa (c): posições inteiras duas a duas, depois de tudo o resto
     if otimizar:
-        _trocas_aos_pares(por_posicao, parte, viz, zona_de if zonas else None, bloqueada)
+        _trocas_aos_pares(por_posicao, valor, viz, zona_de if zonas else None, bloqueada)
 
+    designar_faces()             # as trocas mexeram nas posições: a face é a unidade mais barata
     colocacoes = [Colocacao(cx.sku, cx.descricao, cx.load_type.value, cx.num_boxes_in_stack,
-                            cx.pecas_nesta_caixa, c.pos, c.nivel.nivel_idx, c.custo,
-                            parte(cx.sku, cx.num_boxes_in_stack))
+                            cx.pecas_nesta_caixa, c.pos, c.nivel.nivel_idx, c.custo, valor(cx),
+                            face_de.get(cx.sku) is cx)
                   for c in celulas for cx in c.nivel.caixas]
     mudancas = []
     for s, regs in anterior.items():
@@ -1483,7 +1537,7 @@ def _folhas_tempos(wb, folha, rt) -> None:
 
 # ----------------------------------------------------------------- pipeline
 def calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, rack_types, candidatos, itens,
-                          taxas, res_proc, tl) -> tuple[dict, str]:
+                          taxas, res_proc, tl, pecas: set | None = None) -> tuple[dict, str]:
     """Calibração dos tempos contra o LAYOUT FIXO de referência
     (`Config.layout_referencia`, um arranjo guardado em .json): decisão do
     utilizador (2026-11-12) -- o layout do armazém está fixo, por isso o «Gerar
@@ -1518,7 +1572,7 @@ def calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, r
                                        cfg.picking_passagem_min_m / 2)
     posicoes, dist, candidatos, pares = com_pares(posicoes, dist, candidatos, render.get("obstaculos_layout", []),
                                                   ponto, cfg)
-    res_ref = alocar(posicoes, itens, candidatos, taxas, ponto, local, dist=dist, pares=pares)
+    res_ref = alocar(posicoes, itens, candidatos, taxas, ponto, local, dist=dist, pares=pares, pecas=pecas)
     cal, _ = tempos.calibrar(res_proc.picks, tempos.deslocacao_por_sku(res_ref, dist, local), tl)
     tempos.guardar_calibracao(cfg.tempos_calibracao, cal, {"referencia": fonte, "posicoes": len(posicoes)}, chave)
     return cal, "refeita"
@@ -1588,9 +1642,11 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
     anterior = guardado["skus"] if mesma_logica else {}
     posicoes, dist, candidatos, pares = com_pares(posicoes, dist, candidatos, render.get("obstaculos_layout", []),
                                                   ponto, cfg)
+    pecas = skus_de_pecas(p, mapa)
     res = alocar(posicoes, itens, candidatos, taxas, ponto, local,
-                 carregar_json(cfg.alocacao_fixacoes), anterior, dist=dist, pares=pares)
+                 carregar_json(cfg.alocacao_fixacoes), anterior, dist=dist, pares=pares, pecas=pecas)
     res.avisos[:0] = avisos + av_dist
+    res.dist = dist
     res.estado_ctx = {"bom": bom, "logica": logica}
     diff = comparar_bom(guardado.get("bom", {}), bom) if tem_estado else {"novos": [], "removidos": [],
                                                                           "alterados": [], "n": 0}
@@ -1622,7 +1678,7 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
     tl = tempos.carregar_tempos_livro(Path(cfg.pressupostos_picking))
     tl.voltas_horario = cfg.voltas_horario_do_livro   # bulk: hora mínima e ordem vêm do livro (C104, C106)
     cal, como = calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, rack_types,
-                                      candidatos, itens, taxas, res_proc, tl)
+                                      candidatos, itens, taxas, res_proc, tl, pecas)
     base = carros == int(p.carros_por_dia_base)
     # validação contra o livro: os 30 dias DELE, à parte do horizonte
     res_val = procura.simular(p, carros, p.dias_simulados, consumiveis, mapa, cfg.consumiveis_reposicao,
@@ -1679,6 +1735,15 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
     por nível, com x/y/cotas no referencial do nível)."""
     vis_pos = res.visitas_por_posicao()
     vis_nivel = defaultdict(float)
+    # caixas que são a face de picking (Colocacao.face): mesmo nível e posição, mesmo SKU, a 1.ª
+    faces_json = set()
+    face_cel = {(c.posicao.id, c.nivel_idx, c.sku) for c in res.colocacoes if c.face}
+    for cel in res.celulas:
+        for cx in cel.nivel.caixas:
+            k = (cel.pos.id, cel.nivel.nivel_idx, cx.sku)
+            if k in face_cel:
+                faces_json.add(id(cx))
+                face_cel.discard(k)
     for co in res.colocacoes:
         vis_nivel[(co.posicao.id, co.nivel_idx)] += co.visitas_dia
     por_pos = defaultdict(list)
@@ -1695,7 +1760,8 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
                 "caixas": [{"sku": cx.sku, "descricao": cx.descricao, "unidade": cx.load_type.value,
                             "x_m": cx.x_m, "y_m": cx.y_m, "comp_m": cx.comp_m, "larg_m": cx.larg_m,
                             "alt_m": cx.alt_m, "n_unidades": cx.num_boxes_in_stack,
-                            "pecas": cx.pecas_nesta_caixa, "classe": res.classes.get(cx.sku, "—")}
+                            "pecas": cx.pecas_nesta_caixa, "classe": res.classes.get(cx.sku, "—"),
+                            "face": id(cx) in faces_json}
                            for cx in c.nivel.caixas]})
             niveis[-1]["tapadas"] = marcar_profundidade(niveis[-1]["caixas"])
         posicoes.append({"id": p.id, "par": p.id in res.pares, "endereco": p.endereco(), "fila": p.fila,
@@ -1708,6 +1774,8 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
     min_pos = rt.tempo_por_posicao if rt else {}
     for p in posicoes:
         p["picking_min_dia"] = round(min_pos.get(p["id"], 0.0), 2)
+        # distância a pé pelo corredor até ao destino (Zona de Espera): o mapa «Proximidade» (2026-11-18)
+        p["dist_m"] = round(res.dist[p["id"]], 1) if p["id"] in res.dist else None
     # OVERSIZE num par frente+trás: os níveis que ocupam aparecem nos DOIS
     # módulos reais (sem isto a vista de frente e o mapa mostravam-nos vazios,
     # 2026-11-09); as visitas e o picking do par contam metade em cada um

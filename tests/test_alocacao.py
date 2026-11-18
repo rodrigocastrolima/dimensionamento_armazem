@@ -374,6 +374,20 @@ def test_profundidade_marca_caixas_tapadas_por_outro_sku():
     assert n == 2                                                   # unidades (a pilha de 2 do B)
 
 
+def test_face_de_picking_so_nos_skus_de_pecas():
+    # decisão do utilizador (2026-11-18): nos SKUs de peças (carrinho/kit) a embalagem aberta leva as visitas
+    # todas e as outras unidades só as reposições; nos de embalagem inteira as visitas repartem-se (FIFO)
+    pos = [_p(f"P{i}", "F", i + 1, 1.8 * i, 0.0) for i in range(4)]     # 4 módulos seguidos, 1 item cada
+    taxas = {"PEC": Taxa("PEC", 0.5, 2.0, ("Caixas",)), "INT": Taxa("INT", 2.0, 2.0, ("Caixas",))}
+    itens = [_item("PEC"), _item("PEC"), _item("INT"), _item("INT")]
+    res = A.alocar(pos, itens, {LoadType.XS: [PRAT1]}, taxas, (0, 0), CFG, pecas={"PEC"})
+    pec = sorted((c for c in res.colocacoes if c.sku == "PEC"), key=lambda c: c.custo)
+    assert [c.face for c in pec] == [True, False]
+    assert pec[0].visitas_dia == pytest.approx(2.0) and pec[1].visitas_dia == pytest.approx(0.5)
+    inte = [c for c in res.colocacoes if c.sku == "INT"]
+    assert not any(c.face for c in inte) and all(c.visitas_dia == pytest.approx(1.0) for c in inte)
+
+
 def test_so_o_mesmo_sku_atras_faixas_de_profundidade():
     # regra do utilizador (2026-11-12): atrás de uma caixa só o mesmo SKU. XS 0,30 x 0,15 numa
     # prateleira de 1,80 x 0,60: o mesmo SKU enche a faixa em profundidade (2 de 0,30 de fundo

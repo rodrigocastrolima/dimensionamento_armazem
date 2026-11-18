@@ -1632,6 +1632,34 @@ mostrava. Feito (só visualização, o algoritmo não mudou):
   até 4 filas de profundidade numa prateleira de 0,60 m (uma XS atrás de 3
   outros componentes).
 
+## Decisão fechada: face de picking só nos SKUs de peças (2026-11-18)
+Contexto: o utilizador estranhou módulos claros (poucas visitas) junto à Zona
+de Espera. Um mapa «Proximidade» foi feito e RETIRADO ("ideia de merda" -- é só
+a planta pintada). Análise: na SIA 209 SKUs saem por EMBALAGEM INTEIRA (a
+caixa/palete vai para a linha: `Taxa.unidades_dia` = embalagens/dia), 16 por
+peças de carrinho e 1 em kit. Na embalagem inteira cada unidade é visitada uma
+vez (FIFO) -- repartir as visitas por todas as unidades está CERTO (uma palete
+de um bulk com 10 dias de stock = 0,1 visitas/dia). O critério é visitas por
+lugar ocupado: bulk 0,10/unidade (mediana), só 3 de 166 SKUs das voltas têm
+mais; sem a regra «bulk primeiro» 43,6 vs 43,5 min/dia. Com stock em dias de
+autonomia todos os lugares têm cadência parecida -> o mapa de movimentações
+dos porta-paletes não faz gradiente forte (as prateleiras fazem).
+Feito: `skus_de_pecas(p, mapa)` (linhas de carrinho/kit, sem linhas de
+embalagem) -> `alocar(..., pecas=)`: nesses SKUs a FACE (a unidade no sítio
+mais barato do bloco, `designar_faces`) leva as visitas todas; as outras são
+reserva e só contam as reposições (`unidades_dia` repartidas). Ordem da 1.ª
+etapa: nesses SKUs conta a visita da face, não a média por unidade; ficam fora
+da troca de unidades (b); as trocas usam `valor(cx)` (box) em vez de
+`parte(sku, n)`. `Colocacao.face`; JSON `caixas[].face`; tempos: picks de peça
+/kit vão só à face (`deslocacao_por_sku`, minutos por posição,
+`posicoes_pick`); UI: «▶ face» na tabela e na vista de frente.
+`ALGORITMO_VERSAO = "2026-11-18.2"`. Layout de 18/11 (40 blocos), as duas
+alocações avaliadas com a conta face+reserva: 46,9 -> 47,0 min/dia (as faces
+já ficavam a 5-16 m); dias que não encaixam 11 = 11.
+Visto ao testar: depois do commit 4959eb8 (colegas) há 3 OVERSIZE (FLOOR PANEL,
+BUMPER FR, BUMPER RR), não só o FLOOR PANEL; e o teste do bloco dimensionado
+falha na validação do Gantt (sobra 74,3 vs 88,7) já sem estas alterações.
+
 ## Decisão fechada: OVERSIZE sem palete obrigatoriamente no par mais perto (2026-11-12)
 Utilizador: "as oversize que NÃO estão em palete (só o FLOOR PANEL)
 obrigatoriamente mais perto possível". Na 1.ª etapa os grupos de SKUs com

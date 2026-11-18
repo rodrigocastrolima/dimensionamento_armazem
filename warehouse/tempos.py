@@ -382,10 +382,14 @@ def deslocacao_por_sku(res_aloc, dist: dict, cfg) -> dict:
     pesado pelas unidades em cada posição (com posições fixas e FIFO cada
     unidade é tirada uma vez)."""
     acc = defaultdict(lambda: [0.0, 0])
+    faces = {c.sku: c for c in res_aloc.colocacoes if getattr(c, "face", False)}
     for c in res_aloc.colocacoes:
         d = dist.get(c.posicao.id, 0.0)
         for g in GRUPOS:
             equip = A_PE if g in (GRUPO_PECA, GRUPO_KIT) else None
+            # peças (carrinho/kit) de um SKU com face de picking: vai-se SÓ à face (2026-11-18)
+            if g in (GRUPO_PECA, GRUPO_KIT) and c.sku in faces and faces[c.sku] is not c:
+                continue
             a = acc[(c.sku, g)]
             a[0] += c.n_unidades * custo_visita_min(d, c.posicao.rack, c.nivel_idx, cfg, equip)
             a[1] += c.n_unidades
@@ -871,12 +875,15 @@ def avaliar(res_proc, res_aloc, dist: dict, tl: TemposLivro, cfg, calibracao: di
     por_sku = defaultdict(list)
     for c in res_aloc.colocacoes:
         por_sku[c.sku].append(c)
+    faces = {c.sku: c for c in res_aloc.colocacoes if getattr(c, "face", False)}
     tempo_pos = defaultdict(float)
     for k in res_proc.picks:
         cols = por_sku.get(k.sku)
         if not cols:
             continue
         g = grupo_do_pick(k)
+        if g in (GRUPO_PECA, GRUPO_KIT) and k.sku in faces:     # peças: só a face de picking
+            cols = [faces[k.sku]]
         tot = sum(c.n_unidades for c in cols)
         equip = A_PE if g in (GRUPO_PECA, GRUPO_KIT) else None
         for c in cols:
@@ -929,6 +936,9 @@ def avaliar(res_proc, res_aloc, dist: dict, tl: TemposLivro, cfg, calibracao: di
             if not lst:
                 continue
             n = max(int(k.unidades), 1)
+            if grupo_do_pick(k) in (GRUPO_PECA, GRUPO_KIT) and k.sku in faces:
+                rt.posicoes_pick[id(k)] = [faces[k.sku].posicao.id] * n     # peças: sempre a face
+                continue
             rt.posicoes_pick[id(k)] = [lst[(tiradas[k.sku] + u) % len(lst)] for u in range(n)]
             tiradas[k.sku] += n
     for c in res_aloc.colocacoes:
