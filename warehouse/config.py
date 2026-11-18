@@ -60,6 +60,7 @@ _CLIENT_FIELD_CONVERTERS = {
     "picking_manual_racks": tuple,
     "pilar_rack_m": dict,
     "folga_lateral_rack_m": dict,
+    "folga_costas_rack_m": dict,
     "pressupostos_picking": _caminho_do_repo,
     "output_procura": Path,
     "layout_referencia": Path,
@@ -316,6 +317,8 @@ class Config:
     # (passo = útil + folga + viga) e desenhar as vigas no 3D onde estão de
     # facto (racking.cotas_fisicas_niveis). Só se aplicam às tipologias com
     # Alturas_Niveis_m; nas uniformes (Prateleira Leve) Alt_nivel_m já é o passo.
+    # 2026-11-18: passo 1,747 m, úteis 1,557 / 1,557 / 1,006 (deck + carga). O
+    # último nível não tem viga por cima: 4,6 - 2 x 1,747 - 0,10 = 1,006.
     viga_m: float = 0.09
     folga_manuseio_m: float = 0.10
 
@@ -564,8 +567,9 @@ class Config:
     # casar ganha); valor = largura do pilar em metros. Aplicado em
     # data_access.load_rack_types (vale para Excel e Supabase). Vazio ou
     # tipologia não listada = sem pilar (comportamento anterior). Ex.: SIA usa
-    # {"porta-paletes": 0.09} (montante típico de 80-100 mm); a Prateleira
-    # Leve (1.80 m) não está lá porque se assume que a medida já é total.
+    # {"porta-paletes": 0.09, "prateleira": 0.05}: porta-paletes 9 cm; a
+    # Prateleira Leve é 1,825 m de vão + 5 cm de pilar (desde 2026-11-18; antes
+    # 1,80 m «total» sem pilar). O pilar entre módulos é partilhado.
     pilar_rack_m: dict = field(default_factory=dict)
 
     # Folga LATERAL (m) entre caixas lado a lado, por tipologia de rack (ver
@@ -575,6 +579,13 @@ class Config:
     # data_access.load_rack_types. Vazio = caixas coladas (comportamento
     # anterior). SIA: {"prateleira": 0.01} (1 cm, decisão do utilizador).
     folga_lateral_rack_m: dict = field(default_factory=dict)
+
+    # Folga (m) ENTRE COSTAS das filas duplas, por tipologia (ver
+    # RackType.folga_costas_m): a fila dupla de duas racks de `prof_m` ocupa
+    # `2 x prof_m + folga` de fundo. Chave = substring do nome (case-insensitive;
+    # a primeira que casar ganha). Vazio = costas coladas (comportamento
+    # anterior). SIA: 0,10 m -> porta-paletes 2 x 1,2 + 0,10 = 2,5 m.
+    folga_costas_rack_m: dict = field(default_factory=dict)
 
     # ------------------------------------------------------------ multi-cliente
     @classmethod

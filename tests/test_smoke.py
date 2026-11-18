@@ -87,7 +87,9 @@ def test_cotas_fisicas_niveis_voltam_ao_passo():
     """O 3D desenha as vigas no passo físico (útil + folga + viga), não na
     altura útil acumulada (que as punha a 1.61 / 3.22 m)."""
     from warehouse.config import Config
-    assert racking.cotas_fisicas_niveis(_pp_161(), 3, Config()) == ([0, 1.8, 3.6], 4.6)
+    # o ÚLTIMO nível não tem viga por cima (2026-11-18): passo = útil + folga = 0.81 + 0.10
+    bases, total = racking.cotas_fisicas_niveis(_pp_161(), 3, Config())
+    assert bases == [0, 1.8, 3.6] and abs(total - (3.6 + 0.91)) < 1e-9
     pl = RackType("Prateleira Leve", larg_m=1.8, prof_m=0.6, alt_nivel_m=0.7, niveis=6)
     assert racking.cotas_fisicas_niveis(pl, 6, Config()) == ([0, 0.7, 1.4, 2.1, 2.8, 3.5], 4.2)
 

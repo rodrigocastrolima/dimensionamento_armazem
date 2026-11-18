@@ -88,7 +88,8 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     # TÊM prof_m = profundidade do par -- não se emparelham de novo, senão a
     # profundidade dobrava outra vez. Cada posição ocupa uma fiada única.
     par_incluido = rack.profundidade_inclui_par
-    prof_dupla = prof if par_incluido else 2 * prof
+    prof_dupla = rack.prof_dupla_m      # 2 x prof + folga entre costas (ou o par já feito)
+    folga_costas = 0.0 if par_incluido else rack.folga_costas_m
 
     if k is None:
         k = _melhor_num_por_fiada(n, larg, prof_dupla, corredor, par_incluido=par_incluido,
@@ -102,7 +103,8 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     largura_max = 0.0
     while idx < n:
         cols_fila = min(k, n - idx)   # largura realmente usada nesta fila dupla
-        lados = (("unico", y_fila),) if par_incluido else (("frente", y_fila), ("tras", y_fila + prof))
+        lados = (("unico", y_fila),) if par_incluido else (
+            ("frente", y_fila), ("tras", y_fila + prof + folga_costas))
         lados_ocupados = 0
         for lado, y_lado in lados:
             ocupou = False
@@ -128,7 +130,8 @@ def _layout_tipologia(rack: RackType, posicoes: list[PosicaoChao],
         # inteira sem racks lá dentro -- nem ocupada nem marcada como espaço
         # livre (_espacos_livres_por_fiada só vê fila_idx/lado que TÊM posições
         # em `todas`), só chão perdido em branco atrás do bloco.
-        prof_fila = prof if par_incluido else prof * lados_ocupados
+        prof_fila = prof if par_incluido else prof * lados_ocupados + (
+            folga_costas if lados_ocupados == 2 else 0.0)
         # corredor de serviço logo a seguir a esta fila dupla (exceto o último,
         # removido abaixo). Cobre a largura realmente usada pela fila.
         corredores.append(Corredor(
@@ -280,7 +283,7 @@ def _fiadas_tipologia(rack: RackType, posicoes: list[PosicaoChao],
     larg, prof = rack.larg_total_m, rack.prof_m   # larg_total = vão + pilar
     corredor = _corredor_m(rack)
     par_incluido = rack.profundidade_inclui_par
-    prof_dupla = prof if par_incluido else 2 * prof
+    prof_dupla = rack.prof_dupla_m      # 2 x prof + folga entre costas (ou o par já feito)
 
     k_max = None
     if largura_max_m > 0 and larg > 0:
@@ -656,6 +659,20 @@ def _fechos_pilar_m2(posicoes: list[PosicaoLayout], rack_types: dict[str, RackTy
     return fechos
 
 
+def _folgas_costas_m2(posicoes: list[PosicaoLayout], rack_types: dict[str, RackType]) -> dict[str, float]:
+    """Área da folga entre costas das filas duplas (RackType.folga_costas_m x
+    largura de cada posição «trás»), por tipologia. É parte da fila dupla
+    (2,5 m de fundo no porta-paletes), não corredor: sem isto o envolvente
+    contava-a como corredor."""
+    folgas: dict[str, float] = {}
+    for p in posicoes:
+        rack = rack_types.get(p.posicao.rack_nome)
+        if rack is None or p.lado != "tras" or rack.profundidade_inclui_par or rack.folga_costas_m <= 0:
+            continue
+        folgas[rack.nome] = folgas.get(rack.nome, 0.0) + rack.folga_costas_m * p.largura_m
+    return folgas
+
+
 def gerar_racks_fantasma(espacos_livres: list[EspacoLivre],
                          rack_types: dict[str, RackType],
                          altura_armazem_m: float = 0.0,
@@ -731,7 +748,7 @@ def gerar_fila_manual(rack: RackType, n: int, dupla: bool,
     uma única fiada."""
     max_blocos = blocos_empilhados(rack, altura_armazem_m, max_modulos, empilhamento_por_nivel)
     niveis_ov = niveis_efetivos(rack, altura_armazem_m, empilhamento_por_nivel)
-    lados = (("frente", 0.0), ("tras", rack.prof_m)) if dupla else (("unico", 0.0),)
+    lados = (("frente", 0.0), ("tras", rack.prof_m + rack.folga_costas_m)) if dupla else (("unico", 0.0),)
     pool = pool_posicoes_reais if pool_posicoes_reais is not None else []
     resultado: list[PosicaoLayout] = []
     for lado, y_lado in lados:
@@ -840,6 +857,11 @@ def gerar_layout(posicoes: list[PosicaoChao],
                      for nome, lista in por_tipologia.items())
     # + o pilar de fecho de cada fila (fica no envolvente; sem isto contava como corredor)
     fechos_pilar = _fechos_pilar_m2(todas, rack_types)
+    # + a folga entre costas das filas duplas (também parte da fila, não corredor).
+    # Vai para o MESMO dicionário (WarehouseLayout.fechos_pilar_m2): é «área da
+    # estrutura da fila fora do módulo» e area.floor_area soma-o à tipologia.
+    for nome, m2 in _folgas_costas_m2(todas, rack_types).items():
+        fechos_pilar[nome] = fechos_pilar.get(nome, 0.0) + m2
     area_racks += sum(fechos_pilar.values())
     # corredor de transição para as pilhas ao chão (ver abaixo): o maior
     # corredor entre as tipologias que ficaram na ÚLTIMA prateleira do bloco.

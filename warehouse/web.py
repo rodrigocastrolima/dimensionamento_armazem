@@ -109,6 +109,8 @@ def get_racks():
             # largura de CHÃO de um módulo (vão + pilar): a sandbox desenha as
             # filas manuais com esta, não com larg_m (vão livre, p/ capacidade)
             "pilar_m": r.pilar_m, "larg_total_m": r.larg_total_m,
+            # fila dupla = 2 x prof + folga entre costas (porta-paletes: 2,5 m)
+            "folga_costas_m": r.folga_costas_m, "prof_dupla_m": r.prof_dupla_m,
         }
         for r in racks
     ]
@@ -824,13 +826,13 @@ def render_layout(body: ArrangeRequest):
                 for bloco in item["blocos"]:
                     for nivel in bloco["niveis"]:
                         # com alturas heterogéneas, cada nível leva caixas da
-                        # sua altura (o 3.º nível do porta-paletes só 0.81 m)
+                        # sua altura (o 3.º nível do porta-paletes é o mais baixo)
                         alt_max = max(racking.altura_nivel(rack, nivel["nivel_idx"]) - 0.05, 0.05)
                         nivel["caixas"] = [dict(c, alt_m=min(c["alt_m"], alt_max))
                                            for c in caixas_exemplo]
 
         cont_w = n * rack.larg_total_m + rack.pilar_m   # n módulos + pilar de fecho
-        cont_h = rack.prof_m * (2 if dupla else 1)
+        cont_h = rack.prof_dupla_m if dupla else rack.prof_m   # dupla: 2 x prof + folga entre costas
         _colocar_bloco_manual(itens_json, float(b.get("x", 0.0)), float(b.get("y", 0.0)),
                               b.get("rot", 0), cont_w, cont_h)
         racks_manuais_json.extend(itens_json)

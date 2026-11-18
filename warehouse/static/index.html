@@ -1333,6 +1333,13 @@ function criarCuboMarcador() {
   linha.name = "contorno";
   g.add(linha);
 
+  // limite das RACKS: a 10 cm da parede (FOLGA_PAREDE_RACK_M), mais fino e mais curto
+  const linhaFolga = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineDashedMaterial({ color: 0xc99a0e, dashSize: 0.15, gapSize: 0.15, transparent: true, opacity: 0.8 }));
+  linhaFolga.name = "folga_racks";
+  g.add(linhaFolga);
+
   scene.add(g);
   return g;
 }
@@ -1358,6 +1365,21 @@ function atualizarCuboMarcador(cubo) {
     new THREE.Vector3(x, 0.015, y),
   ]);
   linha.computeLineDistances();
+
+  const linhaFolga = cuboMarcador.getObjectByName("folga_racks");
+  const f = FOLGA_PAREDE_RACK_M;
+  linhaFolga.geometry.dispose();
+  if (w > 2 * f && h > 2 * f) {
+    linhaFolga.geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x + f, 0.016, y + f), new THREE.Vector3(x + w - f, 0.016, y + f),
+      new THREE.Vector3(x + w - f, 0.016, y + h - f), new THREE.Vector3(x + f, 0.016, y + h - f),
+      new THREE.Vector3(x + f, 0.016, y + f),
+    ]);
+    linhaFolga.computeLineDistances();
+    linhaFolga.visible = true;
+  } else {
+    linhaFolga.visible = false;
+  }
 
   cuboMarcador.visible = true;
 }
@@ -2762,10 +2784,56 @@ const GRID = 0.25; // snap da grelha (m)
 const snap = v => Math.round(v / GRID) * GRID;
 let canvasBlocks = [];
 
+// Folga entre uma RACK encostada à parede e essa parede. A parede é o tracejado
+// amarelo «Espaço» (Cubo: 0,0 -> hangar-comp × hangar-larg). Decisão do utilizador
+// (2026-11-18): só as racks (filas manuais e o bloco gerado) ficam a 10 cm; zonas
+// e obstáculos continuam a poder encostar. Só mexe nas que JÁ estão encostadas
+// (a menos de 10 cm, dentro do Espaço): as que estão longe, ou fora dele, ficam
+// onde estão. É uma constante e não um parâmetro do Config porque só o canvas
+// conhece a parede (o backend recebe as posições já afastadas).
+const FOLGA_PAREDE_RACK_M = 0.10;
+
+function _cantosRodadosBloco(b) {
+  const rot = (b.rot || 0) * Math.PI / 180;
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  return [[-b.w / 2, -b.h / 2], [b.w / 2, -b.h / 2], [b.w / 2, b.h / 2], [-b.w / 2, b.h / 2]]
+    .map(([dx, dy]) => [cx + dx * Math.cos(rot) - dy * Math.sin(rot),
+                        cy + dx * Math.sin(rot) + dy * Math.cos(rot)]);
+}
+
+// Desloca (em b.x/b.y) as racks encostadas à parede para ficarem a 10 cm dela.
+// Idempotente. Devolve true se mexeu em algum bloco.
+function afastarRacksDaParede(blocos) {
+  const comp = parseFloat(document.getElementById("hangar-comp")?.value) || 0;
+  const larg = parseFloat(document.getElementById("hangar-larg")?.value) || 0;
+  if (!(comp > 0 && larg > 0)) return false;
+  const F = FOLGA_PAREDE_RACK_M, EPS = 1e-6;
+  // por eixo: encostada à parede de menor coordenada (min em [0, F)) ou à de maior
+  // (max em (limite − F, limite]) -> empurra para dentro até F de folga.
+  const ajuste = (mn, mx, limite) => {
+    if (mn > -EPS && mn < F - EPS) return F - mn;
+    if (mx < limite + EPS && mx > limite - F + EPS) return (limite - F) - mx;
+    return 0;
+  };
+  let mexeu = false;
+  for (const b of blocos) {
+    if (b.type !== "rack_manual" && b.type !== "racking") continue;
+    const cs = _cantosRodadosBloco(b);
+    const xs = cs.map(c => c[0]), ys = cs.map(c => c[1]);
+    const dx = ajuste(Math.min(...xs), Math.max(...xs), comp);
+    const dy = ajuste(Math.min(...ys), Math.max(...ys), larg);
+    if (Math.abs(dx) > EPS) { b.x = Math.round((b.x + dx) * 1e4) / 1e4; mexeu = true; }
+    if (Math.abs(dy) > EPS) { b.y = Math.round((b.y + dy) * 1e4) / 1e4; mexeu = true; }
+  }
+  return mexeu;
+}
+window.afastarRacksDaParede = afastarRacksDaParede;
+
 // Pedido do «Renderizar 3D» (e do separador «Alocação & Picking», alocacao.js):
 // os blocos do canvas + o Cubo + os parâmetros da página de layout. Uma função
 // só, para o 3D e a alocação verem SEMPRE o mesmo arranjo.
 function pedidoArranjo() {
+  afastarRacksDaParede(canvasBlocks);   // o backend recebe as racks já a 10 cm da parede
   const cuboComp = parseFloat(document.getElementById("hangar-comp")?.value) || 0;
   const cuboLarg = parseFloat(document.getElementById("hangar-larg")?.value) || 0;
   const blocksComCubo = canvasBlocks.concat(
@@ -2829,8 +2897,22 @@ function inicializarCanvas() {
     return { w: maxX - minX, h: maxY - minY, area: (maxX - minX) * (maxY - minY) };
   }
 
+  // Tamanho da fila manual: vem SEMPRE da tipologia (n×(vão+pilar) + pilar de
+  // fecho de comprimento; fila dupla = 2×prof + folga entre costas de fundo).
+  // Um arranjo guardado antes (n×vão, 2×prof) traz tamanhos velhos e as células
+  // saíam por fora do retângulo.
+  function dimensionarFilaManual(b) {
+    const t = rackTypesCache.find(r => r.nome === b.rack_tipo);
+    if (!t) return;
+    b.w = b.n * (t.larg_total_m ?? t.larg_m) + (t.pilar_m ?? 0);
+    b.h = b.dupla ? (t.prof_dupla_m ?? t.prof_m * 2) : t.prof_m;
+  }
+
   function desenharBlocks() {
     const W = +svg.getAttribute("width"), H = +svg.getAttribute("height");
+    // dimensões atualizadas ANTES de afastar da parede (a aresta de baixo/direita depende delas)
+    canvasBlocks.forEach(b => { if (b.type === "rack_manual") dimensionarFilaManual(b); });
+    afastarRacksDaParede(canvasBlocks);
     let grid = "";
     for (let i = 0; i <= W; i += PXM) grid += `<line x1="${i}" y1="0" x2="${i}" y2="${H}" stroke="#eee"/>`;
     for (let i = 0; i <= H; i += PXM) grid += `<line x1="0" y1="${i}" x2="${W}" y2="${i}" stroke="#eee"/>`;
@@ -2847,21 +2929,20 @@ function inicializarCanvas() {
         `fill="#f5c51810" stroke="#c99a0e" stroke-width="2.5" stroke-dasharray="10,6"/>` +
         `<text x="6" y="18" font-size="13" font-weight="bold" fill="#c99a0e">` +
         `Espaço (${cuboComp.toFixed(1)}×${cuboLarg.toFixed(1)} m)</text>`;
+      // limite das RACKS: a 10 cm da parede (as racks encostadas ficam aqui)
+      const f = FOLGA_PAREDE_RACK_M;
+      if (cuboComp > 2 * f && cuboLarg > 2 * f) {
+        grid += `<rect x="${f * PXM}" y="${f * PXM}" width="${(cuboComp - 2 * f) * PXM}" ` +
+          `height="${(cuboLarg - 2 * f) * PXM}" fill="none" stroke="#c99a0e" stroke-width="1" ` +
+          `stroke-dasharray="2,3" opacity="0.85" pointer-events="none">` +
+          `<title>Limite das racks: ${Math.round(f * 100)} cm da parede</title></rect>`;
+      }
     }
 
     svg.innerHTML = grid;
 
     canvasBlocks.forEach(b => {
-      // Fila manual: o tamanho do bloco vem SEMPRE da tipologia (n×(vão+pilar) +
-      // pilar de fecho). Um arranjo guardado antes do pilar trazia n×vão, e as
-      // células (já com pilar) saíam por fora do retângulo.
-      if (b.type === "rack_manual") {
-        const t = rackTypesCache.find(r => r.nome === b.rack_tipo);
-        if (t) {
-          b.w = b.n * (t.larg_total_m ?? t.larg_m) + (t.pilar_m ?? 0);
-          b.h = t.prof_m * (b.dupla ? 2 : 1);
-        }
-      }
+      // (o tamanho das filas manuais já foi atualizado acima, em dimensionarFilaManual)
       const x = b.x * PXM, y = b.y * PXM, w = b.w * PXM, h = b.h * PXM;
       const cx = x + w / 2, cy = y + h / 2;
       const isSel = b.id === selBlockId;
@@ -2927,7 +3008,8 @@ function inicializarCanvas() {
         const larg = tipo ? (tipo.larg_total_m ?? tipo.larg_m) : (b.w / Math.max(b.n, 1));
         const prof = tipo ? tipo.prof_m : (b.dupla ? b.h / 2 : b.h);
         let num = 1;
-        const lados = b.dupla ? [0, prof] : [0];
+        // fila dupla: a «trás» começa depois da frente + a folga entre costas
+        const lados = b.dupla ? [0, prof + (tipo?.folga_costas_m ?? 0)] : [0];
         for (const ly of lados) {
           for (let i = 0; i < b.n; i++) {
             const cellX = x + i * larg * PXM, cellY = y + ly * PXM;
@@ -3357,7 +3439,7 @@ function inicializarCanvas() {
     const n = Math.max(parseInt(document.getElementById("rack-manual-n").value) || 1, 1);
     const dupla = document.getElementById("rack-manual-dupla").checked;
     const w = n * (tipo.larg_total_m ?? tipo.larg_m) + (tipo.pilar_m ?? 0);   // n×(vão+pilar) + pilar de fecho = comprimento real da fila
-    const h = tipo.prof_m * (dupla ? 2 : 1);
+    const h = dupla ? (tipo.prof_dupla_m ?? tipo.prof_m * 2) : tipo.prof_m;   // dupla: 2×prof + folga entre costas
     const id = `rack_manual_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const nome = `${tipo.nome} (fila ${_filaManualSeq})`;
     _filaManualSeq++;

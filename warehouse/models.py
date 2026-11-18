@@ -203,6 +203,24 @@ class RackType:
     # coladas (comportamento de sempre). Não vem da folha «Racks»: preenche-se
     # em data_access.load_rack_types a partir de Config.folga_lateral_rack_m.
     folga_lateral_m: float = 0.0
+    # Folga (m) ENTRE COSTAS de uma fila dupla (frente + trás): as duas filas
+    # não se encostam, ficam a `prof_m + folga_costas_m` uma da outra. Só conta
+    # no espaço de chão (layout, sandbox, área, 3D) -- a capacidade de cada
+    # rack continua a usar `prof_m`. SIA: porta-paletes 2 x 1,2 + 0,10 = 2,5 m
+    # de fundo por fila dupla (decisão do utilizador, 2026-11-18). 0 = costas
+    # coladas (comportamento de sempre). Não vem da folha «Racks»: preenche-se
+    # em data_access.load_rack_types a partir de Config.folga_costas_rack_m. As
+    # tipologias sintéticas emparelhadas (profundidade_inclui_par) já trazem a
+    # folga dentro de `prof_m` e ficam a 0.
+    folga_costas_m: float = 0.0
+
+    @property
+    def prof_dupla_m(self) -> float:
+        """Profundidade de chão de uma fila DUPLA (frente + trás, com a folga
+        entre costas). Nas sintéticas emparelhadas `prof_m` já é o par todo."""
+        if self.profundidade_inclui_par:
+            return self.prof_m
+        return 2 * self.prof_m + self.folga_costas_m
 
     @property
     def larg_total_m(self) -> float:
@@ -488,7 +506,9 @@ class WarehouseLayout:
     pilhas_chao: list[PilhaChao] = field(default_factory=list)
     # Área (m²) dos pilares de FECHO das filas, por tipologia (RackType.pilar_m x
     # profundidade, 1 por fila): cada módulo já leva o seu pilar, o do fim da fila
-    # é a mais. Entra na área de racks (area.floor_area) para o envolvente bater.
+    # é a mais -- MAIS a folga entre costas das filas duplas (RackType.folga_costas_m
+    # x largura da posição «trás»). Entra na área de racks (area.floor_area) para o
+    # envolvente bater; sem isto contava como corredor.
     fechos_pilar_m2: dict = field(default_factory=dict)
     # Avisos do envelope (Config.largura_max_m / profundidade_max_m): o layout
     # respeita a largura mas o stock manda no nº de racks, por isso a

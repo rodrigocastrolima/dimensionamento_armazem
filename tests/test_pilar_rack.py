@@ -58,10 +58,88 @@ def test_par_emparelhado_herda_o_pilar():
     assert sint.pilar_m == 0.09 and sint.profundidade_inclui_par
 
 
-def test_sia_json_define_pilar_do_porta_paletes():
+def test_sia_json_define_pilar_do_porta_paletes_e_da_prateleira():
     cfg = Config.for_client("sia")
-    assert cfg.pilar_rack_m.get("porta-paletes", 0) > 0
-    assert "prateleira" not in cfg.pilar_rack_m
+    assert cfg.pilar_rack_m.get("porta-paletes") == 0.09
+    # 2026-11-18: Prateleira Leve = vão 1,825 m + 5 cm de pilar (antes 1,80 m «total»)
+    assert cfg.pilar_rack_m.get("prateleira") == 0.05
+
+
+def _leve(**kw):
+    return RackType("Prateleira Leve", larg_m=1.825, prof_m=0.6, alt_nivel_m=0.7, niveis=6, **kw)
+
+
+def test_prateleira_leve_1825_mais_5cm_de_pilar_partilhado():
+    """Vão 1,825 m + 5 cm: cada módulo mede 1,875 m e a fila k x 1,875 + 0,05 --
+    o pilar entre módulos que se tocam é UM só (não 2)."""
+    r = _leve(pilar_m=0.05)
+    assert abs(r.larg_total_m - 1.875) < 1e-9
+    assert abs(r.area_chao_m2 - 1.875 * 0.6) < 1e-9
+    fila = layout_mod.gerar_fila_manual(r, 4, False)
+    assert [round(p.x_m, 4) for p in fila] == [0.0, 1.875, 3.75, 5.625]
+    wl = layout_mod.gerar_layout(_posicoes(r, 4), {r.nome: r}, largura_max_m=100)
+    colunas = len({round(p.x_m, 4) for p in wl.posicoes})
+    # k módulos: k x vão + (k+1) x pilar (nunca 2k pilares)
+    assert abs(wl.largura_total_m - (colunas * 1.825 + (colunas + 1) * 0.05)) < 1e-3
+    # a capacidade continua a usar o vão livre
+    assert r.larg_m == 1.825
+
+
+# ----------------------------------------------------------------- fila dupla
+def test_aplicar_folga_costas_por_substring():
+    cfg = Config(folga_costas_rack_m={"PORTA-paletes": 0.10})
+    pp, pl = data_access.aplicar_folgas_costas([_pp(), _leve()], cfg)
+    assert pp.folga_costas_m == 0.10 and pl.folga_costas_m == 0.0
+    assert data_access.aplicar_folgas_costas([_pp()], Config())[0].folga_costas_m == 0.0
+
+
+def test_fila_dupla_do_porta_paletes_tem_2_5_m_de_fundo():
+    r = _pp(folga_costas_m=0.10)
+    assert abs(r.prof_dupla_m - 2.5) < 1e-9
+    fila = layout_mod.gerar_fila_manual(r, 2, True)
+    frente = [p for p in fila if p.lado == "frente"]
+    tras = [p for p in fila if p.lado == "tras"]
+    assert all(p.y_m == 0.0 for p in frente)
+    assert all(abs(p.y_m - 1.3) < 1e-9 for p in tras)          # 1,2 de frente + 0,10 entre costas
+    assert max(p.y_m + p.profundidade_m for p in fila) == 2.5   # a rack continua com 1,2 m
+    assert all(p.profundidade_m == 1.2 for p in fila)
+
+    pos = _posicoes(r, 2)                                         # 1 coluna x 2 lados
+    wl = layout_mod.gerar_layout(pos, {r.nome: r}, largura_max_m=100)
+    assert abs(wl.profundidade_total_m - 2.5) < 1e-3
+    sem = layout_mod.gerar_layout(_posicoes(_pp(), 2), {r.nome: _pp()}, largura_max_m=100)
+    assert abs(sem.profundidade_total_m - 2.4) < 1e-3
+
+
+def test_fila_simples_nao_leva_folga_entre_costas():
+    r = _pp(folga_costas_m=0.10)
+    assert [p.y_m for p in layout_mod.gerar_fila_manual(r, 3, False)] == [0.0] * 3
+    wl = layout_mod.gerar_layout(_posicoes(r, 1), {r.nome: r}, largura_max_m=100)
+    assert abs(wl.profundidade_total_m - 1.2) < 1e-3             # só frente: sem folga
+
+
+def test_folga_entre_costas_e_area_da_fila_nao_corredor():
+    """A folga conta como área de rack (fila dupla de 2,5 m), não como corredor."""
+    r = _pp(pilar_m=0.09, folga_costas_m=0.10)
+    pos = _posicoes(r, 8)
+    wl = layout_mod.gerar_layout(pos, {r.nome: r})
+    assert wl.fechos_pilar_m2[r.nome] > 0.09 * 1.2                # fechos + folgas
+    dim = area.floor_area(pos, {r.nome: r}, wl.pilhas_chao, wl.fechos_pilar_m2)
+    assert abs(dim.area_racks_m2 + wl.area_corredores_m2 - wl.area_total_m2) < 5e-3
+
+
+def test_emparelhada_herda_a_folga_entre_costas_na_profundidade():
+    cfg = Config(oversize_par_racks=("porta-paletes",))
+    sint = racking.com_par_oversize([_pp(folga_costas_m=0.10)], cfg)[-1]
+    assert sint.profundidade_inclui_par and abs(sint.prof_m - 2.5) < 1e-9
+    assert sint.folga_costas_m == 0.0 and abs(sint.prof_dupla_m - 2.5) < 1e-9   # não dobra outra vez
+    assert abs(layout_mod._layout_tipologia(sint, _posicoes(sint, 1), 0.0)[2] - 2.5) < 1e-9
+
+
+def test_sia_json_define_a_folga_entre_costas():
+    cfg = Config.for_client("sia")
+    assert cfg.folga_costas_rack_m.get("porta-paletes") == 0.10
+    assert abs(2 * 1.2 + cfg.folga_costas_rack_m["porta-paletes"] - 2.5) < 1e-9
 
 
 def _posicoes(r, n):

@@ -259,7 +259,10 @@ pilar ao vão inflacionava paletes/caixas.
   CONSECUTIVAS da mesma tipologia na mesma prateleira do shelf packing encostam-se
   e a junção tem 1 pilar só — o de 9 cm sozinho existe apenas no lado SOLTO da
   fila. Tipologias diferentes não partilham. (Antes contava-se 1 fecho por fiada.)
-- A Prateleira Leve (1.80 m) está **fora**: assume-se que a medida já é total.
+- ~~A Prateleira Leve (1.80 m) está fora: assume-se que a medida já é total.~~
+  **Supersedido em 2026-11-18**: a Prateleira Leve passou a vão de 1,825 m + 5 cm
+  de pilar (`pilar_rack_m["prateleira"] = 0.05`), com o pilar partilhado entre
+  módulos que se tocam (k × 1,825 + (k+1) × 0,05). Ver "medidas de 2026-11-18".
 - Fica por modelar o espaço entre costas das filas duplas (hoje `2 × prof`).
 
 ## Decisão fechada: máximo de módulos empilhados
@@ -630,6 +633,12 @@ Mexe também em `operador.js` (`RACKS_A_PE`) e em `tests/test_folga_lateral.py`.
 
 ## Decisão fechada: níveis de 1,8 m com pé-direito útil de 4,6 m (SIA, 2026-10-27)
 Substitui a versão do mesmo dia com `1.8,1.8,1.0` e caixas no porta-paletes.
+
+> **Atualizado em 2026-11-18** (ver "medidas de 2026-11-18" mais abaixo): o passo
+> do porta-paletes passou a **1,747 m** (alturas úteis **1,557 / 1,557 / 1,006**,
+> palete e meia com `Ext_Alt` 1,557) e a Prateleira Leve a **1,825 m + pilar de
+> 5 cm**. Os números 1,8 / 1,61 / 0,81 / 1,466 / 1,80 desta secção são os de
+> 2026-10-27, ficam como histórico.
 
 **Parâmetros**: pé-direito útil 4,6 m (já sem a folga dos sprinklers, não se
 desconta mais nada). Porta-paletes com passo de 1,8 m e 3 níveis (vigas a
@@ -1666,6 +1675,87 @@ por alocar, 50,2 min/dia (antes 50,3). `ALGORITMO_VERSAO = "2026-11-12.2"`.
 A proposta do utilizador ("alocar 1 a 1 como num armazém físico a começar do
 0") é o que a 1.ª etapa já faz (SKU a SKU, inteiro, por zona e frequência, o
 mais perto primeiro); o que partia os SKUs era a definição de vizinho.
+
+## Decisão fechada: medidas de 2026-11-18 -- níveis de 1,747 m, prateleira 1,825 m + pilar, fila dupla 2,5 m, 10 cm à parede (SIA)
+Pedido do utilizador. Supersede as medidas de 2026-10-27/28 (1,8 m / 1,61 / 0,81 /
+1,466 / Prateleira 1,80 m sem pilar).
+
+**Porta-paletes: passo 1,747 m em cada nível** (decisão do utilizador, versão
+definitiva). Alturas ÚTEIS (deck da palete + carga, já com os 10 cm de manuseamento):
+- níveis 1 e 2: 1,747 − viga 0,09 − folga 0,10 = **1,557 m**;
+- nível 3: 4,6 − 2 × 1,747 − folga 0,10 = **1,006 m** (sem viga a descontar no topo).
+`Alturas_Niveis_m` = `1.557,1.557,1.006`, `Alt_nivel_m` 1.557 (máximo, referência).
+Todos os valores são deck + carga: a carga máxima sobre o deck da palete (0,144) é
+1,413 m nos de baixo e **0,862 m no topo** (antes 1,61 / 1,466 e 0,81 / 0,666).
+Folha «Caixas»: PALLET e MEIA `Ext_Alt_m` 1.557, `Int_Alt_m` 1.413, `Volume` refeito
+(palete cheia mais baixa -> menos peças por palete e algumas peças já não cabem em
+meia). Vigas a 0 / 1,747 / 3,494 m; `racking.cotas_fisicas_niveis` deixou o ÚLTIMO
+nível sem viga por cima (passo = útil + folga = 1,106), por isso o prumo fecha nos
+4,6 m. `Config.folga_manuseio_m` = 0,10 (como estava).
+Histórico desta mesma data (mantido para não repetir): 1.ª versão = 1,557 / 1,557 /
+0,916; 2.ª = 1,61 / 1,61 / 0,916 com `folga_manuseio_m` 0,047 -- ambas descartadas.
+Backups: `dados/master_data_classificado_v3.xlsx.pre-niveis-1-747-prateleira-1-825.bak`
+(antes de tudo), `...pre-niveis-1-61-topo-0-916.bak` e `...pre-niveis-1-557-topo-1-006.bak`
+(editado por XML, como as anteriores). Teste: `tests/test_niveis_1747.py`.
+
+**Prateleira Leve: vão 1,825 m + pilar de 5 cm** (`pilar_rack_m["prateleira"] = 0.05`,
+`Larg_m` = 1.825, `Footprint_m2` em cache 1.095). Usa o mecanismo do pilar do
+porta-paletes (ver "pilar do porta-paletes"): módulo = 1,875 m, fila de k módulos
+= k × 1,825 + (k+1) × 0,05, pilar partilhado entre módulos que se tocam. A
+capacidade continua a usar o vão (1,825).
+
+**Fila dupla = 2,5 m de fundo** (porta-paletes 2 × 1,2 + 0,10 entre costas):
+`Config.folga_costas_rack_m` (`sia.json`: `{"porta-paletes": 0.10, "prateleira": 0.10}`)
+(prateleira: **12,5 cm** por decisão do utilizador, 2026-11-18 -> fila dupla de
+prateleiras 2 × 0,6 + 0,125 = 1,325 m; o `{"prateleira": 0.10}` inicial foi uma
+assunção minha)
+-> `RackType.folga_costas_m` / `prof_dupla_m` (`data_access.aplicar_folgas_costas`).
+Só no CHÃO: a «trás» começa em `prof + folga` (`layout._layout_tipologia`,
+`gerar_fila_manual`, `_fiadas_tipologia`, `web.py` `cont_h`, sandbox em index.html);
+cada rack continua com 1,2 m e a capacidade não muda. A folga conta como área de
+rack (vai para `fechos_pilar_m2`, `layout._folgas_costas_m2`) e não como corredor.
+A fila simples não leva folga. As emparelhadas (`profundidade_inclui_par`) e os
+pares «frente+trás» da alocação têm `prof_m` = 2,5 e `folga_costas_m` = 0 (não
+dobra). `alocacao.posicoes_em_par` aceita agora costas a `folga_costas_m` (5 cm
+de tolerância); sem isto deixava de detetar os pares e as OVERSIZE ficavam por
+alocar.
+
+**10 cm à parede, só nas racks encostadas** (`FOLGA_PAREDE_RACK_M` em index.html,
+`afastarRacksDaParede`, corre em cada `desenharBlocks` e em `pedidoArranjo`):
+parede = o tracejado amarelo «Espaço» (Cubo, 0,0 -> hangar-comp × hangar-larg).
+Uma fila manual ou o bloco gerado a menos de 10 cm da parede (dentro do Espaço)
+é empurrado para 10 cm; as que estão longe, ou fora do Espaço, ficam. Zonas e
+obstáculos continuam a encostar (pedido). É no canvas e não no backend porque só
+o canvas conhece a parede (constante do JS, não do `Config`: não há
+parâmetro que pareça configurável e não o seja). Desenha-se uma linha fina
+tracejada a 10 cm no 2D e no 3D. O CLI `python -m warehouse.alocacao` não aplica
+a regra (não há Cubo no ficheiro do arranjo): `layout_referencia.json` tem as
+filas 1 e 7 de porta-paletes a y = 0 e só ficam a 10 cm depois de abertas na UI e
+guardadas. Teste: `tests/test_parede_rack_js.py` (corre a função real em Node).
+
+`ALGORITMO_VERSAO` = `2026-11-18.1` (alocar de raiz: a geometria mudou) e a
+`assinatura_logica` inclui `pilar_rack_m` e `folga_costas_rack_m`.
+
+**Efeitos medidos** (SIA, 4,6 m, 10 carros, layout de referência para a alocação;
+antes -> depois):
+- **Passo 1**: o `Ext_Alt` 1,61 -> 1,557 tira 5,3 cm à palete/meia. **BUMPER FR e BUMPER RR**
+  (1,4586 m de pé + deck 0,144 = 1,603 m) deixam de caber em meia e passam a
+  **OVERSIZE** (2 peças/meia, 5 meias -> 1 peça/unidade, 10 un. cada); BRAKE LINE ASSY
+  22 -> 21 e SEAT FRAME 9 -> 8 peças/palete (nº de paletes igual).
+- Dimensionamento (área bruta): 436,1 -> **443,9 m²** (+1,8 %); módulos Prateleira
+  Leve 19 -> 18, porta-paletes 19 -> 18, emparelhadas 2 -> 3 (os BUMPER). Isolado: a
+  geometria (pilar + costas) sozinha dá +10,8 m²; as alturas sozinhas −0,3 m².
+- 3.º nível do porta-paletes: 0,81 -> 1,006 m úteis. **FRONT END (0,84), REAR END (0,87)
+  e FIREWALL passam a caber lá** (4 / 6 / 5 un. alocadas), mais os bancos com
+  apoio de cabeça (DRIVER 2 / PASSENGER 6 un.). 3.º nível no dimensionamento: 72 un.
+  / 13 SKUs -> 75 un. / 17 SKUs.
+- Alocação no layout de referência: 1118 -> 1128 un. (as 20 peças de BUMPER, menos
+  10 meias), 0 por alocar; os 2 pares frente+trás levam 30 un. (eram 10);
+  deslocação ponderada 52,5 -> 43,5 min/dia; dias que não encaixam 12 -> 11; MAS a
+  sobra do Gantt do modelo na pior volta passa de −43,5 para −68,2 min. Isolado:
+  a geometria dá −44,9, as alturas −68,1; e com os BUMPER ainda em meia (versão
+  intermédia com 1,61 nos níveis de baixo) ficava em −43,3 -- o agravamento vem dos
+  BUMPER passarem a OVERSIZE (não foi isolado porquê: continuam a 1 visita/dia).
 
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.

@@ -26,7 +26,7 @@ from .racking import _Colocado, _commit_nivel, altura_nivel, cotas_fisicas_nivei
 
 # Versão das REGRAS de alocação: mudar quando a lógica muda (o modo incremental
 # deixa de valer -- alocação de raiz até se guardar um estado novo).
-ALGORITMO_VERSAO = "2026-11-12.4"
+ALGORITMO_VERSAO = "2026-11-18.1"   # geometria das racks mudou (alturas, pilares, fila dupla): alocar de raiz
 CONTIGUIDADE_MODULOS = 1     # vizinho = só o módulo LADO A LADO na mesma fila (2026-11-12)
 
 REGRAS = (
@@ -386,7 +386,9 @@ def posicoes_em_par(posicoes: list, obstaculos: list, ponto: tuple, cfg) -> tupl
             sobre = min(a.y_m + a.prof_m, b.y_m + b.prof_m) - max(a.y_m, b.y_m)
             folga = max(b.x_m - (a.x_m + a.larg_m), a.x_m - (b.x_m + b.larg_m))
             comp = min(a.prof_m, b.prof_m)
-        return sobre >= 0.9 * comp and abs(folga) <= 0.05
+        # a folga entre costas é a da tipologia (RackType.folga_costas_m, 10 cm no
+        # porta-paletes da SIA), com 5 cm de tolerância
+        return sobre >= 0.9 * comp and abs(folga - a.rack.folga_costas_m) <= 0.05
 
     racks, out, pares, usadas = {}, [], {}, set()
     for f in sorted(frentes, key=lambda p: (p.fila, p.modulo)):
@@ -398,8 +400,9 @@ def posicoes_em_par(posicoes: list, obstaculos: list, ponto: tuple, cfg) -> tupl
         rp = racks.get(f.rack.nome)
         if rp is None:
             rp = racks[f.rack.nome] = dataclasses.replace(
-                f.rack, nome=f"{f.rack.nome} (par frente+trás)", prof_m=f.rack.prof_m * 2,
-                aceita=[LoadType.OVERSIZE], footprint_m2=0.0, profundidade_inclui_par=True)
+                f.rack, nome=f"{f.rack.nome} (par frente+trás)", prof_m=f.rack.prof_dupla_m,
+                aceita=[LoadType.OVERSIZE], footprint_m2=0.0, profundidade_inclui_par=True,
+                folga_costas_m=0.0)
         x0, y0 = min(f.x_m, t.x_m), min(f.y_m, t.y_m)
         x1, y1 = max(f.x_m + f.larg_m, t.x_m + t.larg_m), max(f.y_m + f.prof_m, t.y_m + t.prof_m)
         pid = f"par|{f.id}|{t.id}"
@@ -1261,7 +1264,9 @@ def assinatura_logica(cfg) -> str:
              "zona_bulk": getattr(cfg, "alocacao_zona_bulk", False),
              "oversize_pares": getattr(cfg, "alocacao_oversize_em_pares", False),
              "cons": [cfg.consumiveis_reposicao, cfg.consumiveis_periodo_dias],
-             "folga_lateral": sorted(getattr(cfg, "folga_lateral_rack_m", {}).items())}
+             "folga_lateral": sorted(getattr(cfg, "folga_lateral_rack_m", {}).items()),
+             "pilar": sorted(getattr(cfg, "pilar_rack_m", {}).items()),
+             "folga_costas": sorted(getattr(cfg, "folga_costas_rack_m", {}).items())}
     return hashlib.sha1(json.dumps(chave, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 

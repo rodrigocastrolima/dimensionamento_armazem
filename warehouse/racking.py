@@ -48,10 +48,14 @@ def cotas_fisicas_niveis(rack: RackType, n_niveis: int, cfg: Config) -> tuple[li
     """(cota da base de cada um dos `n_niveis` níveis, altura do módulo) FÍSICAS,
     só para desenhar (3D). Com `alturas_niveis_m` (alturas úteis) o passo de
     cada nível é útil + folga de manuseio + viga (Config.folga_manuseio_m /
-    viga_m): 1.61 + 0.10 + 0.09 = 1.80 -> vigas a 0 / 1.8 / 3.6 m. Sem elas
-    (uniforme), o passo é `alt_nivel_m`, como sempre."""
+    viga_m): SIA (desde 2026-11-18) 1.557 + 0.10 + 0.09 = 1.747 -> vigas a 0 /
+    1.747 / 3.494 m (antes passo 1.8 -> 1.8 / 3.6 m). O ÚLTIMO nível do módulo
+    não tem viga por cima: passo = útil + folga (1.006 + 0.10 = 1.106 -> módulo de
+    4.6 m, o pé-direito útil). Sem `alturas_niveis_m` (uniforme), o passo é
+    `alt_nivel_m`, como sempre."""
     if rack.alturas_niveis_m:
-        passos = [altura_nivel(rack, n) + cfg.folga_manuseio_m + cfg.viga_m for n in range(n_niveis)]
+        passos = [altura_nivel(rack, n) + cfg.folga_manuseio_m
+                  + (0.0 if n == rack.niveis - 1 else cfg.viga_m) for n in range(n_niveis)]
     else:
         passos = [rack.alt_nivel_m] * n_niveis
     bases = [round(sum(passos[:n]), 4) for n in range(n_niveis)]
@@ -128,7 +132,8 @@ def _oversize_plano_altura(rack: RackType, art: Article,
         # empilhamento em altura, dentro do nível. Com alturas_niveis_m a
         # altura do nível já é ÚTIL (folga de manuseio descontada na folha
         # «Racks»), por isso não se desconta a folga OVERSIZE uma 2.ª vez --
-        # senão o SIDE BODY (1.582 m de pé) não cabia nos 1.61 m.
+        # senão o SIDE BODY (1.582 m de pé) não cabia nos níveis úteis (1.61 m
+        # até 2026-11-18; 1.557 m desde então, já só em palete).
         folga = 0.0 if rack.alturas_niveis_m else folga_altura_m
         util = max(rack.alt_nivel_m - folga, 0.0)
         if vertical > util:
@@ -231,7 +236,7 @@ def com_par_oversize(rack_types: list[RackType], cfg: Config) -> list[RackType]:
     base = min(cands, key=_rack_footprint_m2)
     sintetico = RackType(
         nome=f"{base.nome} (emparelhada)",
-        larg_m=base.larg_m, prof_m=base.prof_m * 2,
+        larg_m=base.larg_m, prof_m=base.prof_dupla_m,   # 2 x prof + folga entre costas
         alt_nivel_m=base.alt_nivel_m, niveis=base.niveis,
         aceita=[*base.aceita, LoadType.OVERSIZE], corredor_m=cfg.oversize_par_corredor_m,
         profundidade_inclui_par=True,
@@ -317,6 +322,7 @@ _CAMPOS_SUBSTRING_RACK = {
     "picking_manual_racks": lambda cfg: cfg.picking_manual_racks,
     "pilar_rack_m": lambda cfg: tuple(cfg.pilar_rack_m),
     "folga_lateral_rack_m": lambda cfg: tuple(cfg.folga_lateral_rack_m),
+    "folga_costas_rack_m": lambda cfg: tuple(cfg.folga_costas_rack_m),
 }
 
 
