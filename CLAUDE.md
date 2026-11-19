@@ -1860,6 +1860,16 @@ espera do lote seguinte? separar prateleiras por tipo de caixa custa?
   diferente e mais barata: custo ponderado 44,2 vs 46,3 -- é a heurística, não a
   separação em si); nos dinâmicos ±0,2 (nada). O arranjo tem folga -- 93 posições
   nunca usadas no fixo -- por isso a separação não aperta.
+- ESPAÇO (2026-11-19, dúvida do utilizador): «ocupação» = metros de faixa ocupados.
+  Sem limite, B ocupa menos metros mas espalha-se por ~2× os módulos de A (41 vs 22
+  prateleiras, 46 vs 27 paletes no arranjo de 19/11): o +30 s acima de 1,6 m faz
+  preferir os níveis baixos de muitos módulos. Comparação justa: `Sim(zona=...)` =
+  as posições que A usa (sítios novos abrem-se lá primeiro; fora conta
+  «fora_zona»; fronteiras das classes e posições de picking repartem a zona). No
+  espaço de A (48 posições): A 102, B 88, C 137, D 93 min/dia. B não cabe em muito
+  menos (com 85 % das posições já saem centenas de unidades por ano da zona).
+- `Pressupostos.prioridade_chegadas` (omissão True): lotes do mesmo dia arrumados
+  por ordem de saída (fronteira mais perto primeiro) -- B ganha ~1,3 min/dia.
 - Determinística: aleatória com sementes fixas (1000, 1001, ...) -- a mesma
   semente dá o mesmo resultado. Entre 10 sementes o total varia < 0,5 min/dia
   (desvio-padrão) em todos os cenários.

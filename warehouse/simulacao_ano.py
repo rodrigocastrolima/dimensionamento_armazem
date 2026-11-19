@@ -79,6 +79,9 @@ class Pressupostos:
     manuseio_min: dict = field(default_factory=lambda: {"PALLET": 1.0, "MEIA": 1.0, "L": 0.2, "M": 0.2,
                                                         "S": 0.15, "XS": 0.15})
     folga_classe: float = 0.05         # dinâmico: tolerância da fronteira da classe
+    # lotes que chegam no mesmo dia: arruma primeiro quem mais sai (fronteira mais
+    # perto); False = pela ordem das encomendas (pedido do utilizador, 2026-11-19)
+    prioridade_chegadas: bool = True
 
 
 # ------------------------------------------------------------------ modelo físico
@@ -269,8 +272,11 @@ class Distancias:
 # ------------------------------------------------------------------ simulação
 class Sim:
     def __init__(self, m: Modelo, modo: str, separado: bool, fixas: dict, pr: Pressupostos, seed: int,
-                 dist: Distancias):
+                 dist: Distancias, zona: set | None = None):
+        """`zona`: posições (pid) da zona dinâmica -- os sítios novos abrem-se primeiro
+        lá; fora dela só se não houver lugar (conta em «fora_zona»). None = todas."""
         self.m, self.modo, self.sep, self.pr, self.dist = m, modo, separado, pr, dist
+        self.zona = zona
         self.rng = random.Random(seed)
         self.cels = {c.key: dataclasses.replace(c, lanes=[], usado=0.0, tipo=None, tipo_fixo=False) for c in m.cels}
         self.skus = {s: x for s, x in m.skus.items() if s not in m.excluidos}
@@ -379,7 +385,7 @@ class Sim:
     # --- políticas
     def _politica(self):
         m = self.m
-        por_custo = sorted(self.cels.values(), key=lambda c: (c.custo, c.pid, c.idx))
+        por_custo = self._na_zona(sorted(self.cels.values(), key=lambda c: (c.custo, c.pid, c.idx)))
         self.ordem_perto = por_custo
         if self.modo == "fixo":
             for s, lst in self.fixas.items():
@@ -411,6 +417,20 @@ class Sim:
                     ln = self.nova_lane(x, c, fixa=True, face=True, cap=min(gw[1], x.s_max))
                     if ln:
                         break
+        if self.modo in ("dinamico", "hibrido") and self.zona:
+            # percentil de custo DENTRO da zona (as fronteiras das classes repartem a zona)
+            por_fam_z = defaultdict(list)
+            for c in self.cels.values():
+                if c.pid in self.zona:
+                    por_fam_z[c.familia].append(c)
+                else:
+                    c.q = 1.0 + c.q
+            for lst in por_fam_z.values():
+                lst.sort(key=lambda c: (c.custo, c.pid, c.idx))
+                tot, acc = sum(c.L for c in lst) or 1.0, 0.0
+                for c in lst:
+                    c.q = acc / tot
+                    acc += c.L
         if self.modo in ("dinamico", "hibrido"):
             # classe: fronteira = posição do SKU na ordem visitas por metro de faixa ocupada (média)
             self.alvo = {}
@@ -425,7 +445,8 @@ class Sim:
                 por_fam[c0.familia].append((x.v / esp if esp else 0.0, x.sku, esp))
             cap_fam = defaultdict(float)
             for c in self.cels.values():
-                cap_fam[c.familia] += c.L
+                if not self.zona or c.pid in self.zona:      # com zona, as classes repartem a zona
+                    cap_fam[c.familia] += c.L
             for fam, lst in por_fam.items():
                 lst.sort(key=lambda t: (-t[0], t[1]))
                 tot = sum(e for _, _, e in lst)
@@ -438,12 +459,17 @@ class Sim:
 
     def ordem_para(self, x: Sku):
         if self.modo not in ("dinamico", "hibrido"):
-            return self.ordem_perto
+            return self._na_zona(self.ordem_perto)
         if x.sku not in self.ordem_classe:
             alvo = self.alvo.get(x.sku, 0.0) - self.pr.folga_classe
-            self.ordem_classe[x.sku] = sorted(
-                self.cels.values(), key=lambda c: (0, c.custo) if c.q >= alvo else (1, -c.q))
+            self.ordem_classe[x.sku] = self._na_zona(sorted(
+                self.cels.values(), key=lambda c: (0, c.custo) if c.q >= alvo else (1, -c.q)))
         return self.ordem_classe[x.sku]
+
+    def _na_zona(self, ordem):
+        if not self.zona:
+            return ordem
+        return [c for c in ordem if c.pid in self.zona] + [c for c in ordem if c.pid not in self.zona]
 
     def colocar(self, x: Sku, dia: int):
         """Uma unidade que chega -> a faixa onde fica."""
@@ -465,6 +491,8 @@ class Sim:
                         break
                 if ln is not None and self.modo == "fixo":
                     self.conta("sem_lugar_fixo", 1)
+                if ln is not None and self.zona and ln.cel.pid not in self.zona:
+                    self.conta("fora_zona", 1)
         if ln is None:
             self.conta("sem_lugar", 1)
             return None
@@ -526,7 +554,10 @@ class Sim:
     def dia(self, d: int):
         pr = self.pr
         # 1) chegadas -> arrumação
-        for s, q in self.encomendas.pop(d, []):
+        chegadas = self.encomendas.pop(d, [])
+        if pr.prioridade_chegadas and getattr(self, "alvo", None):
+            chegadas.sort(key=lambda t: self.alvo.get(t[0], 1.0))      # quem mais sai primeiro
+        for s, q in chegadas:
             x = self.skus[s]
             por_cel = defaultdict(int)
             for _ in range(q):
@@ -599,6 +630,10 @@ class Sim:
                 self.met[f"esp_{fam}_soma"] += u
                 self.met[f"esp_{fam}_max"] = max(self.met[f"esp_{fam}_max"], u)
             pos = {c.pid for c in self.cels.values() if c.lanes}
+            for fam in ("prateleira", "palete"):
+                n = len({c.pid for c in self.cels.values() if c.lanes and c.familia == fam})
+                self.met[f"pos_{fam}_soma"] += n
+                self.met[f"pos_{fam}_max"] = max(self.met[f"pos_{fam}_max"], n)
             self.met["pos_soma"] += len(pos)
             self.met["pos_max"] = max(self.met["pos_max"], len(pos))
             self.pos_usadas |= pos
@@ -637,6 +672,7 @@ class Sim:
             "ruturas_ano": met["ruturas"],
             "sem_lugar_fixo_ano": met["sem_lugar_fixo"],
             "sem_lugar_ano": met["sem_lugar"],
+            "fora_zona_ano": met["fora_zona"],
             "pos_media": met["pos_soma"] / nd,
             "pos_max": met["pos_max"],
             "pos_nunca_usadas": len({c.pid for c in self.cels.values()} - self.pos_usadas),
@@ -645,6 +681,9 @@ class Sim:
         for fam in ("prateleira", "palete"):
             out[f"ocup_{fam}_media_pct"] = 100 * met[f"esp_{fam}_soma"] / nd / cap[fam] if cap[fam] else 0.0
             out[f"ocup_{fam}_pico_pct"] = 100 * met[f"esp_{fam}_max"] / cap[fam] if cap[fam] else 0.0
+        for fam in ("prateleira", "palete"):
+            out[f"pos_{fam}_media"] = met[f"pos_{fam}_soma"] / nd
+            out[f"pos_{fam}_max"] = met[f"pos_{fam}_max"]
         out["logistica_min_dia"] = out["arrumacao_min_dia"] + out["realocacao_min_dia"]
         out["total_min_dia"] = out["picking_min_dia"] + out["logistica_min_dia"]
         return out
