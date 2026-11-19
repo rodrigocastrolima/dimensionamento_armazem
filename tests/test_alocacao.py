@@ -388,6 +388,20 @@ def test_face_de_picking_so_nos_skus_de_pecas():
     assert not any(c.face for c in inte) and all(c.visitas_dia == pytest.approx(1.0) for c in inte)
 
 
+def test_reposicoes_das_pecas_em_embalagens_por_dia_nao_carrinhos():
+    # 2026-11-19: nos carrinhos/kits a Taxa.unidades_dia conta carrinhos por dia (1/dia), não embalagens
+    # gastas. 5 peças por carro, 50 por embalagem, 1 carro/dia -> 0,1 embalagens/dia de reposição
+    from types import SimpleNamespace
+    itens = [dataclasses.replace(_item("PEC"), pecas_nesta_caixa=50) for _ in range(2)]
+    emb = A.embalagens_dia_pecas({"PEC"}, itens, [SimpleNamespace(sku="PEC", pecas_por_carro=5)], 1)
+    assert emb == {"PEC": pytest.approx(0.1)}
+    pos = [_p(f"P{i}", "F", i + 1, 1.8 * i, 0.0) for i in range(2)]
+    taxas = {"PEC": Taxa("PEC", 1.0, 1.0, ("Caixas",))}
+    res = A.alocar(pos, itens, {LoadType.XS: [PRAT1]}, taxas, (0, 0), CFG, pecas=emb)
+    reserva = [c for c in res.colocacoes if not c.face]
+    assert len(reserva) == 1 and reserva[0].visitas_dia == pytest.approx(0.1)     # era 1,0 (a Taxa)
+
+
 def test_so_o_mesmo_sku_atras_faixas_de_profundidade():
     # regra do utilizador (2026-11-12): atrás de uma caixa só o mesmo SKU. XS 0,30 x 0,15 numa
     # prateleira de 1,80 x 0,60: o mesmo SKU enche a faixa em profundidade (2 de 0,30 de fundo

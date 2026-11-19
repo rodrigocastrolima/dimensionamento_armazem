@@ -1656,6 +1656,14 @@ da troca de unidades (b); as trocas usam `valor(cx)` (box) em vez de
 `ALGORITMO_VERSAO = "2026-11-18.2"`. Layout de 18/11 (40 blocos), as duas
 alocações avaliadas com a conta face+reserva: 46,9 -> 47,0 min/dia (as faces
 já ficavam a 5-16 m); dias que não encaixam 11 = 11.
+**Tooltip com a composição do módulo** (pedido do utilizador, depois de casos
+«o módulo mais perto tem menos visitas»: fila 1 trás M08/M07, fila 7 M05/M06):
+`para_json` dá `caixas[].visitas_dia` (a da Colocacao de cada stack, ligada
+pela ordem em que `_alocar` as cria); o tooltip lista por SKU a zona, quantas
+unidades lá estão / total, o nível, as visitas/dia que dá ao módulo e porquê
+(«palete aberta: vai-se sempre a ela» / «10 paletes no total, cada uma tirada
+1 vez»). Nesses casos trocar os módulos ganhava 3-8 s/dia e partia um SKU
+(contiguidade); o utilizador decidiu não forçar a ordem por módulo.
 Visto ao testar: depois do commit 4959eb8 (colegas) há 3 OVERSIZE (FLOOR PANEL,
 BUMPER FR, BUMPER RR), não só o FLOOR PANEL; e o teste do bloco dimensionado
 falha na validação do Gantt (sobra 74,3 vs 88,7) já sem estas alterações.
@@ -1784,6 +1792,37 @@ antes -> depois):
   a geometria dá −44,9, as alturas −68,1; e com os BUMPER ainda em meia (versão
   intermédia com 1,61 nos níveis de baixo) ficava em −43,3 -- o agravamento vem dos
   BUMPER passarem a OVERSIZE (não foi isolado porquê: continuam a 1 visita/dia).
+
+## Análise (não é decisão): simulação de 1 ano -- fixo / dinâmico / picking + reserva (2026-11-19)
+`python -m warehouse.simulacao_ano --arranjo <arranjo.json>` (`warehouse/simulacao_ano.py`).
+Pergunta da reunião de 2026-11-18: posições fixas deixam posições boas vazias à
+espera do lote seguinte? separar prateleiras por tipo de caixa custa?
+- 4 modos × {misto, separado por nível} no MESMO arranjo: `fixo` (a alocação da
+  app; o separado corre a alocação com um packer «um tipo de caixa por nível»),
+  `dinamico` (cada unidade que chega vai para o sítio livre da sua classe de
+  rotação), `picking` (uma faixa fixa por SKU nos melhores sítios + reserva
+  dinâmica + realocações pelo operador de logística), `hibrido` (faixa fixa só
+  nos SKUs de peças).
+- Mede só o que depende do sítio (`custo_visita_min`): picking para a linha,
+  arrumação dos lotes, realocações (cais -> reserva -> face -> cais pela grelha +
+  manuseio). Excluídas as 3 OVERSIZE e as posições em par.
+- PRESSUPOSTOS (o cliente não tem lotes): (R, Q) diário, prazo 5 dias úteis com
+  atrasos −1/0/+1/+2 (5/75/12/8 %), SS 2 dias, lote que enche o stock dimensionado
+  (`--cobertura-lote 5` = semanal), 250 dias + 40 de aquecimento, 3 sementes.
+- Nos SKUs de peças a `Taxa.unidades_dia` conta carrinhos/kits por dia, não
+  embalagens gastas. A simulação e, desde `ALGORITMO_VERSAO` 2026-11-19.1, a
+  alocação (`embalagens_dia_pecas`: peças por carro × carros/dia / peças por
+  embalagem -> `repos` em `_alocar`) usam as embalagens. Efeito no arranjo de
+  2026-11-18: nenhum SKU mudou de sítio; deslocação ponderada 47,0 -> 45,5 min/dia
+  (só a conta das reservas: FCE101 1 -> 0,2 reposições/dia; o FLOOR PANEL sobe
+  porque gasta 2 peças por carro).
+- Resultado no arranjo de 2026-11-18 (misto, min/dia picking / arrumação /
+  realocação = total): fixo 41,4 / 56,3 / 4,0 = 101,7; dinâmico 29,6 / 53,5 / 0 =
+  83,1; picking+reserva 19,3 / 57,7 / 49,9 = 126,8 (41 realocações/dia: nas
+  embalagens inteiras cada unidade passa a ser mexida duas vezes); híbrido 87,2.
+  Espaço médio ocupado: fixo 29 % prateleira / 26 % palete (reservado), dinâmico
+  21 % / 15 %. Separar por nível: diferença dentro do ruído (o arranjo tem folga --
+  93 posições nunca usadas no fixo).
 
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.

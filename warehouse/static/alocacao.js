@@ -268,6 +268,49 @@ function desenharPlanta() {
   }
 }
 
+// unidades de cada SKU em todo o arranjo (para «3 de 10 paletes»)
+let totUnidades = null;
+function unidadesTotais(sku) {
+  if (!totUnidades) {
+    totUnidades = {};
+    for (const q of dados.posicoes) for (const n of q.niveis) for (const c of n.caixas)
+      totUnidades[c.sku] = (totUnidades[c.sku] || 0) + c.n_unidades;
+  }
+  return totUnidades[sku] || 0;
+}
+const NOME_UNID = { PALLET: ["palete", "paletes"], MEIA: ["meia-palete", "meias-paletes"],
+                    OVERSIZE: ["peça", "peças"] };
+const nomeUnid = (u, n) => (NOME_UNID[u] || ["caixa", "caixas"])[n === 1 ? 0 : 1];
+const ZONA_CURTA = { 0: "bulk", 1: "voltas", 2: "consumíveis", 3: "sem picking" };
+
+// o que está no módulo e quanto cada componente lhe dá de visitas (2026-11-18): para se ver porque
+// um módulo perto pode ter menos visitas do que um mais longe
+function composicao(p) {
+  const por = {};
+  for (const n of p.niveis) for (const c of n.caixas) {
+    const x = por[c.sku] = por[c.sku] || { sku: c.sku, un: c.unidade, n: 0, vis: 0, face: false, niveis: new Set() };
+    x.n += c.n_unidades;
+    x.vis += c.visitas_dia || 0;
+    x.face = x.face || !!c.face;
+    x.niveis.add(n.nivel);
+  }
+  const linhas = Object.values(por).sort((a, b) => b.vis - a.vis).map((x) => {
+    const info = (dados.skus || {})[x.sku] || {};
+    const tot = unidadesTotais(x.sku);
+    const porque = x.face ? `${nomeUnid(x.un, 1)} aberta: vai-se sempre a ela${x.n > 1 ? " (+ reposições da reserva)" : ""}`
+      : tot > 1 ? `${tot} ${nomeUnid(x.un, tot)} no total, cada uma tirada 1 vez`
+      : "";
+    return `<tr><td>${esc(rotuloCurto(x.sku))}</td><td>${esc(ZONA_CURTA[info.zona] || "")}</td>
+      <td class="num">${x.n}${tot > x.n ? `/${tot}` : ""} ${esc(nomeUnid(x.un, x.n))}</td>
+      <td class="num">N${[...x.niveis].sort().join(",")}</td><td class="num"><b>${fmt(x.vis, 2)}</b></td>
+      <td class="dica" style="margin:0">${esc(porque)}</td></tr>`;
+  });
+  if (!linhas.length) return "";
+  return `<table class="aloc-tt-comp"><tr><th>SKU</th><th>zona</th><th class="num">aqui</th><th class="num">nível</th>
+    <th class="num">vis/dia</th><th></th></tr>${linhas.slice(0, 8).join("")}</table>`
+    + (linhas.length > 8 ? `<span class="dica" style="margin:0">… e mais ${linhas.length - 8}</span>` : "");
+}
+
 function mostrarTooltip(ev, p) {
   const tt = $("aloc-tooltip");
   const skus = new Set(p.niveis.flatMap((n) => caixasDoNivel(n).map((c) => codigo(c.sku))));
@@ -277,10 +320,12 @@ function mostrarTooltip(ev, p) {
     ${p.dist_m != null ? `Distância à Zona de Espera: <b>${fmt(p.dist_m, 1)}</b> m<br>` : ""}
     Ocupação: ${fmt(ocupacao(p) * 100, 0)} % · ${skus.size} SKU(s)`
     + (p.tapadas ? `<br><span style="color:#b91c1c">${p.tapadas} unidade(s) atrás de outro componente</span>` : "")
-    + (nPar ? `<br>${nPar} nível(eis) com OVERSIZE do par frente+trás (inclui ${fmt(p.visitas_par_dia || 0, 2)} visitas/dia)` : "");
+    + (nPar ? `<br>${nPar} nível(eis) com OVERSIZE do par frente+trás (inclui ${fmt(p.visitas_par_dia || 0, 2)} visitas/dia)` : "")
+    + composicao(p);
   tt.style.display = "block";
-  tt.style.left = `${ev.clientX + 14}px`;
-  tt.style.top = `${ev.clientY + 14}px`;
+  // não sai do ecrã (com a composição do módulo o tooltip ficou maior)
+  tt.style.left = `${Math.max(4, Math.min(ev.clientX + 14, innerWidth - tt.offsetWidth - 8))}px`;
+  tt.style.top = `${Math.max(4, Math.min(ev.clientY + 14, innerHeight - tt.offsetHeight - 8))}px`;
 }
 
 // ----------------------------------------------------------------- vista de frente
@@ -665,6 +710,7 @@ async function alocar() {
     const d = await resp.json();
     if (!resp.ok) throw new Error(d.detail || resp.statusText);
     dados = d;
+    totUnidades = null;
     if (selecionada && !dados.posicoes.some((p) => p.id === selecionada)) selecionada = null;
     if (!selecionada && dados.posicoes.length)   // abre logo a posição com mais movimentações
       selecionada = dados.posicoes.reduce((a, b) => (b.visitas_dia > a.visitas_dia ? b : a)).id;

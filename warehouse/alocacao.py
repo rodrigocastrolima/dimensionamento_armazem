@@ -26,7 +26,7 @@ from .racking import _Colocado, _commit_nivel, altura_nivel, cotas_fisicas_nivei
 
 # Versão das REGRAS de alocação: mudar quando a lógica muda (o modo incremental
 # deixa de valer -- alocação de raiz até se guardar um estado novo).
-ALGORITMO_VERSAO = "2026-11-18.2"   # geometria das racks mudou (alturas, pilares, fila dupla): alocar de raiz
+ALGORITMO_VERSAO = "2026-11-19.1"   # reposições das reservas dos SKUs de peças em embalagens/dia (era carrinhos/dia)
 CONTIGUIDADE_MODULOS = 1     # vizinho = só o módulo LADO A LADO na mesma fila (2026-11-12)
 
 REGRAS = (
@@ -813,10 +813,26 @@ def skus_de_pecas(p, mapa: dict | None = None) -> set:
     return pecas - inteiras
 
 
+def embalagens_dia_pecas(pecas: set, itens: list, artigos: list, carros_por_dia: float) -> dict:
+    """SKU de peças -> embalagens gastas por dia = peças por carro × carros/dia /
+    peças por embalagem (master data). São as reposições da face a partir da
+    reserva. Não se usa a ``Taxa.unidades_dia``: nos carrinhos e kits ela conta
+    carrinhos/kits por dia (as visitas), não embalagens -- a FID103 dava 1
+    reposição/dia em vez de 0,1 (corrigido 2026-11-19, visto na simulação de 1
+    ano). Sem dados no master data o SKU fica de fora (``_alocar`` usa a Taxa)."""
+    pc, n = defaultdict(float), defaultdict(int)
+    for it in itens:
+        if it.sku in pecas:
+            pc[it.sku] += it.pecas_nesta_caixa or 0
+            n[it.sku] += max(1, it.num_boxes_in_stack)
+    ppc = {a.sku: a.pecas_por_carro for a in artigos}
+    return {s: ppc[s] * carros_por_dia / (pc[s] / n[s]) for s in pecas if pc.get(s) and ppc.get(s)}
+
+
 def alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dict, taxas: dict,
            ponto: tuple[float, float], cfg, fixacoes: dict | None = None,
            anterior: dict | None = None, otimizar: bool = True,
-           dist: dict | None = None, pares: dict | None = None, pecas: set | None = None) -> ResultadoAlocacao:
+           dist: dict | None = None, pares: dict | None = None, pecas: set | dict | None = None) -> ResultadoAlocacao:
     """Alocação (ver ``_alocar``): 1.ª etapa por frequência; se deixar alguma
     unidade de fora, repete por área (FFD, como o dimensionamento) e fica a
     que deixa menos unidades de fora (2026-11-05: com a ordem por área uma
@@ -838,7 +854,7 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             anterior: dict | None = None, otimizar: bool = True,
             dist: dict | None = None, pares: dict | None = None,
             por_frequencia: bool = True, grandes_primeiro: bool = True,
-            pecas: set | None = None) -> ResultadoAlocacao:
+            pecas: set | dict | None = None) -> ResultadoAlocacao:
     """`itens`: racking.preparar_itens (stacks). `taxas`: sku -> procura.Taxa.
     `fixacoes`: sku -> endereço/id (ver _resolver_fixacao). `anterior`: sku ->
     [(id da posição, nível)] da última alocação guardada (modo incremental).
@@ -846,7 +862,9 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
     trocas que só melhoram a frequência e nunca tiram nada do arranjo
     (`otimizar=False` salta a 2.ª etapa -- só para medir o que ela ganha).
     `dist`: posição -> metros do ponto de carga pelo chão (tempos.distancias_acesso);
-    sem ele, a distância em planta |dx| + |dy| (só para testes)."""
+    sem ele, a distância em planta |dx| + |dy| (só para testes).
+    `pecas`: SKUs de peças (face de picking); um dict dá também as embalagens
+    gastas por dia de cada um (``embalagens_dia_pecas``)."""
     from .tempos import custo_visita_min
     fixacoes, anterior = fixacoes or {}, anterior or {}
     avisos = []
@@ -906,11 +924,13 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
     # FACE DE PICKING + RESERVA (decisão do utilizador, 2026-11-18), só nos SKUs de
     # peças (carrinhos/kits): tira-se peça a peça de UMA embalagem aberta -- a face
     # leva as visitas todas do SKU; as outras unidades são reserva e só contam as
-    # reposições (uma por embalagem gasta: Taxa.unidades_dia), repartidas por elas.
+    # reposições (uma por embalagem gasta: ``embalagens_dia_pecas``), repartidas por elas.
     # A face é a unidade do SKU no sítio mais barato (contiguidade: a reserva fica
     # no mesmo bloco). Nos SKUs de embalagem inteira fica ``parte`` (FIFO).
+    emb_dia = pecas if isinstance(pecas, dict) else {}
     pecas = set(pecas or ()) & set(por_sku)
-    repos = {s: (taxas[s].unidades_dia if s in taxas else 0.0) for s in pecas}
+    repos = {s: emb_dia[s] if emb_dia.get(s) is not None else (taxas[s].unidades_dia if s in taxas else 0.0)
+             for s in pecas}
     face_de: dict = {}           # sku -> CaixaColocada da face
 
     def designar_faces():
@@ -1642,7 +1662,9 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
     anterior = guardado["skus"] if mesma_logica else {}
     posicoes, dist, candidatos, pares = com_pares(posicoes, dist, candidatos, render.get("obstaculos_layout", []),
                                                   ponto, cfg)
-    pecas = skus_de_pecas(p, mapa)
+    so_pecas = skus_de_pecas(p, mapa)
+    emb = embalagens_dia_pecas(so_pecas, itens, artigos, carros)
+    pecas = {s: emb.get(s) for s in so_pecas}       # None = sem master data: a Taxa
     res = alocar(posicoes, itens, candidatos, taxas, ponto, local,
                  carregar_json(cfg.alocacao_fixacoes), anterior, dist=dist, pares=pares, pecas=pecas)
     res.avisos[:0] = avisos + av_dist
@@ -1735,15 +1757,19 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
     por nível, com x/y/cotas no referencial do nível)."""
     vis_pos = res.visitas_por_posicao()
     vis_nivel = defaultdict(float)
-    # caixas que são a face de picking (Colocacao.face): mesmo nível e posição, mesmo SKU, a 1.ª
-    faces_json = set()
-    face_cel = {(c.posicao.id, c.nivel_idx, c.sku) for c in res.colocacoes if c.face}
+    # cada caixa -> a sua Colocacao (visitas/dia desse stack, face de picking): ``_alocar`` cria as
+    # colocações pela mesma ordem (células, caixas de cada nível); se não bater, fica sem
+    col_de, it = {}, iter(res.colocacoes)
     for cel in res.celulas:
         for cx in cel.nivel.caixas:
-            k = (cel.pos.id, cel.nivel.nivel_idx, cx.sku)
-            if k in face_cel:
-                faces_json.add(id(cx))
-                face_cel.discard(k)
+            co = next(it, None)
+            if co is None or co.sku != cx.sku or co.posicao.id != cel.pos.id:
+                col_de = {}
+                break
+            col_de[id(cx)] = co
+        else:
+            continue
+        break
     for co in res.colocacoes:
         vis_nivel[(co.posicao.id, co.nivel_idx)] += co.visitas_dia
     por_pos = defaultdict(list)
@@ -1761,7 +1787,8 @@ def para_json(res: ResultadoAlocacao, taxas: dict) -> dict:
                             "x_m": cx.x_m, "y_m": cx.y_m, "comp_m": cx.comp_m, "larg_m": cx.larg_m,
                             "alt_m": cx.alt_m, "n_unidades": cx.num_boxes_in_stack,
                             "pecas": cx.pecas_nesta_caixa, "classe": res.classes.get(cx.sku, "—"),
-                            "face": id(cx) in faces_json}
+                            "face": bool(col_de[id(cx)].face) if id(cx) in col_de else False,
+                            "visitas_dia": round(col_de[id(cx)].visitas_dia, 4) if id(cx) in col_de else None}
                            for cx in c.nivel.caixas]})
             niveis[-1]["tapadas"] = marcar_profundidade(niveis[-1]["caixas"])
         posicoes.append({"id": p.id, "par": p.id in res.pares, "endereco": p.endereco(), "fila": p.fila,
