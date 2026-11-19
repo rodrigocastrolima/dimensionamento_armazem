@@ -400,6 +400,12 @@
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2v3h-3"/></svg>Rodar</button>
       <button class="btn-ghost" id="btn-remover-bloco" title="Remove o bloco selecionado do arranjo">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8"/></svg>Remover</button>
+      <span class="sep"></span>
+      <button class="btn-ghost" id="btn-regua" title="Régua (R): passa o rato -- em chão livre mostra a distância entre os dois elementos mais perto na horizontal e na vertical; em cima de um elemento, a distância de cada lado dele ao vizinho. Esc sai.">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 10.5l9-9 4 4-9 9z"/><path d="M4.5 7.5l1.5 1.5M6.5 5.5l1 1M8.5 3.5l1.5 1.5"/></svg>Régua</button>
+      <button class="btn-ghost" id="btn-medir" title="Medir (M): clica em dois elementos -- menor distância entre eles (perpendicular às faces quando estão frente a frente). Esc sai.">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8h12M2 5.5v5M14 5.5v5"/></svg>Medir</button>
+      <span class="sep"></span>
       <button class="btn-ghost" id="btn-reset-canvas" title="Repõe o arranjo tal como foi gerado">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9"/><path d="M2.5 2v3h3"/></svg>Repor</button>
       <span class="grow"></span>
@@ -2860,6 +2866,9 @@ function pedidoArranjo() {
   };
 }
 window.pedidoArranjo = pedidoArranjo;
+// régua (regua.js): lê os blocos e a escala do canvas, sem os mexer
+window.blocosDoCanvas = () => canvasBlocks;
+window.PXM_CANVAS = PXM;
 window.temArranjo = () => canvasBlocks.some(b => b.type === "racking" || b.type === "rack_manual");
 let _semBlocoRacks = false;   // Carregar de um arranjo sem bloco de racks: «Gerar racks» não o repõe
 let selBlockId = null;
@@ -3702,5 +3711,6 @@ initViewer();
 inicializarCanvas();
 </script>
 <script type="module" src="./alocacao.js?v=2026-11-18g"></script>
+<script type="module" src="./regua.js?v=2026-11-19a"></script>
 </body>
 </html>

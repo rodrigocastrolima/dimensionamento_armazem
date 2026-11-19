@@ -1828,6 +1828,19 @@ incluídas) e de racks próprias com as medidas do porta-paletes.
   packs; sobram 4 cm no vão (a app encosta as paletes ao prumo da esquerda; na
   prática ~2 cm de cada lado).
 
+## Decisão fechada: régua no «Arranjar Layout» (2026-11-19)
+`warehouse/static/regua.js` (módulo à parte; o index.html só tem os botões «Régua» e
+«Medir», `window.blocosDoCanvas` / `window.PXM_CANVAS` e o `<script>`). Só mede, nunca
+mexe no arranjo. Camada SVG própria por cima do `#canvas` (o canvas é redesenhado
+de raiz em `desenharBlocks`); nos modos de medida o mousedown é apanhado em captura
+para não arrastar blocos.
+- Régua (R): cruz no rato; em chão livre, distância entre os dois elementos mais
+  perto na horizontal e na vertical (raios até à 1.ª aresta -- funciona com zonas
+  rodadas); em cima de um elemento, de cada lado dele ao vizinho. As paredes do
+  «Espaço» (Cubo) contam como elementos.
+- Medir (M): 2 cliques -> menor distância entre os dois polígonos (perpendicular às
+  faces quando estão frente a frente; na diagonal mostra dx e dy). Esc sai.
+
 ## Análise (não é decisão): simulação de 1 ano -- fixo / dinâmico / picking + reserva (2026-11-19)
 `python -m warehouse.simulacao_ano --arranjo <arranjo.json>` (`warehouse/simulacao_ano.py`).
 Pergunta da reunião de 2026-11-18: posições fixas deixam posições boas vazias à
