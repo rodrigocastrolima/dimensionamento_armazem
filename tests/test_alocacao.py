@@ -454,3 +454,80 @@ def test_contiguidade_obrigatoria_sem_bloco_fica_por_alocar_e_nao_partido():
     res = A.alocar(pos, [_item("X"), _item("X")], {LoadType.XS: [PRAT1]}, _taxas(X=1), (0, 0), CFG)
     assert not res.colocacoes and len(res.nao_alocados) == 2
     assert "CONTÍGUO" in res.nao_alocados[0].motivo
+
+
+# ---------------------------------------------------------------- battery pack (2026-11-19)
+PP27 = RackType("Rack PP", larg_m=2.7, prof_m=1.2, alt_nivel_m=1.5, niveis=1, aceita=[LoadType.PALLET])
+BAT = A.RegraEspaco(horizontal_m=0.5, vertical_m=1.0, sobra_curta=0.029, sobra_longa=0.115, deck_m=0.144)
+
+
+def _palete(sku):
+    return _item(sku, LoadType.PALLET, 0.8, 1.2, 0.303)
+
+
+def test_espaco_horizontal_entre_packs_so_cabem_2_por_nivel():
+    # regra do utilizador: 0,5 m entre packs (fim de um, início do outro). O pack sai 1,45 cm de cada
+    # lado da palete de 0,8 -> faixas de 0,8 + 0,529: 2 num vão de 2,7 (sem a regra cabiam 3)
+    pos = [_p("P1", "F", 1, 0.0, 0.0, PP27), _p("P2", "F", 2, 2.79, 0.0, PP27)]     # módulos seguidos
+    sem = A.alocar(pos[:1], [_palete("B") for _ in range(3)], {LoadType.PALLET: [PP27]}, _taxas(B=1), (0, 0), CFG)
+    assert not sem.nao_alocados
+    com = A.alocar(pos, [_palete("B") for _ in range(3)], {LoadType.PALLET: [PP27]}, _taxas(B=1), (0, 0), CFG,
+                   espacamento={"B": BAT})
+    assert not com.nao_alocados
+    por_pos = {}
+    for c in com.celulas:
+        por_pos[c.pos.id] = sorted(cx.x_m for cx in c.nivel.caixas)
+    assert sorted(len(v) for v in por_pos.values()) == [1, 2]
+    xs = next(v for v in por_pos.values() if len(v) == 2)
+    assert xs[1] - xs[0] - 0.8 - 0.029 >= 0.5 - 1e-6          # espaço livre entre as PEÇAS
+
+
+def test_espaco_vertical_entre_packs_salta_niveis_proximos():
+    # níveis de 0,5 m úteis: entre a peça de baixo e a de cima ficam ~0,53 m < 1 m -> a 2.ª vai para N3
+    baixa = RackType("Rack PP", larg_m=0.85, prof_m=1.2, alt_nivel_m=0.5, niveis=3, aceita=[LoadType.PALLET],
+                     alturas_niveis_m=(0.5, 0.5, 0.5))
+    so_v = dataclasses.replace(BAT, horizontal_m=0.0)
+    res = A.alocar([_pos("P", baixa, 0.0)], [_palete("B") for _ in range(2)], {LoadType.PALLET: [baixa]},
+                   _taxas(B=1), (0, 0), CFG, espacamento={"B": so_v})
+    assert sorted(c.nivel_idx for c in res.colocacoes) == [0, 2]
+    sem = A.alocar([_pos("P", baixa, 0.0)], [_palete("B") for _ in range(2)], {LoadType.PALLET: [baixa]},
+                   _taxas(B=1), (0, 0), CFG)
+    assert sorted(c.nivel_idx for c in sem.colocacoes) == [0, 1]
+
+
+def test_rack_dedicada_so_para_o_seu_sku_e_o_sku_so_nela():
+    from warehouse import data_access
+    cfg = dataclasses.replace(CFG, racks_dedicadas={"Rack Bat": {"base": "Rack PP", "skus": ["BAT"]}})
+    racks = data_access.com_racks_dedicadas([PP27], cfg)
+    bat_rack = next(r for r in racks if r.nome == "Rack Bat")
+    assert (bat_rack.larg_m, bat_rack.prof_m, bat_rack.niveis, bat_rack.aceita) == (2.7, 1.2, 1, [LoadType.PALLET])
+    pos = [_pos("NORMAL", PP27, 0.0), _pos("BATERIAS", bat_rack, 30.0)]
+    itens = [_palete("BAT1"), _palete("OUTRA"), _palete("OUTRA"), _palete("OUTRA"), _palete("OUTRA")]
+    res = A.alocar(pos, itens, {LoadType.PALLET: [PP27, bat_rack]}, _taxas(BAT1=9, OUTRA=0.1), (0, 0), cfg)
+    onde = {(c.sku, c.posicao.id) for c in res.colocacoes}
+    assert ("BAT1", "BATERIAS") in onde and ("BAT1", "NORMAL") not in onde     # mais perto, mas não pode
+    # 4 OUTRA não cabem juntas na normal (3 por nível) e não podem usar a Rack Bat: ficam por alocar
+    assert ("OUTRA", "BATERIAS") not in onde
+    assert sum(n.n_unidades for n in res.nao_alocados if n.sku == "OUTRA") == 4
+    # sem nenhuma Rack Bat no arranjo: volta às normais, com aviso
+    res2 = A.alocar(pos[:1], [_palete("BAT1")], {LoadType.PALLET: [PP27, bat_rack]}, _taxas(BAT1=9), (0, 0), cfg)
+    assert [c.posicao.id for c in res2.colocacoes] == ["NORMAL"]
+    assert any("Rack Bat" in a for a in res2.avisos)
+
+
+def test_rack_baterias_do_desenho_2_por_nivel_e_duas_racks_separadas():
+    # desenho do utilizador (2026-11-19): 2,10 m úteis = 80 + 50 + 80, 4 níveis de passo 1,20 m.
+    # Com o pack da largura da palete cabem 2 por nível; A e B são racks soltas (não vizinhas) e
+    # o SKU usa as duas (rack dedicada: sem contiguidade). Com o pack de 82,9 cm só 1 por nível.
+    rb = RackType("Rack Bat", larg_m=2.10, prof_m=1.2, alt_nivel_m=1.01, niveis=4, aceita=[LoadType.PALLET],
+                  alturas_niveis_m=(1.01, 1.01, 1.01, 0.70))
+    cfg = dataclasses.replace(CFG, racks_dedicadas={"Rack Bat": {"base": "x", "skus": ["BAT"]}})
+    pos = [_p("A", "FA", 1, 0.0, 0.0, rb), _p("B", "FB", 1, 4.0, 0.0, rb)]
+    itens = [_palete("BAT1") for _ in range(10)]
+    justo = dataclasses.replace(BAT, sobra_curta=0.0, sobra_longa=0.0)
+    res = A.alocar(pos, itens, {LoadType.PALLET: [rb]}, _taxas(BAT1=1), (0, 0), cfg, espacamento={"BAT1": justo})
+    assert not res.nao_alocados and {c.posicao.id for c in res.colocacoes} == {"A", "B"}
+    assert max(len(c.nivel.caixas) for c in res.celulas) == 2
+    res2 = A.alocar(pos, itens, {LoadType.PALLET: [rb]}, _taxas(BAT1=1), (0, 0), cfg, espacamento={"BAT1": BAT})
+    assert max(len(c.nivel.caixas) for c in res2.celulas) == 1
+    assert sum(c.n_unidades for c in res2.colocacoes) == 8 and len(res2.nao_alocados) == 2

@@ -80,7 +80,32 @@ def load_rack_types(cfg: Config) -> list[RackType]:
         racks = db_supabase.load_rack_types(cfg.client_name)
     else:
         racks = io_excel.load_rack_types(cfg.master_data)
+    racks = com_racks_dedicadas(racks, cfg)
     return aplicar_folgas_costas(aplicar_folgas_laterais(aplicar_pilares(racks, cfg), cfg), cfg)
+
+
+def com_racks_dedicadas(racks: list[RackType], cfg: Config) -> list[RackType]:
+    """Acrescenta as tipologias de `Config.racks_dedicadas`: cópia da base (cargas
+    aceites, profundidade, corredor) com o nome novo; `larg_m`, `niveis` e
+    `alturas_niveis_m`, se vierem, substituem os da base. Antes das
+    folgas/pilares, que vão pelo nome. Base inexistente ou nome já na folha:
+    ignorada."""
+    nomes = {r.nome for r in racks}
+    novas = []
+    for nome, d in (getattr(cfg, "racks_dedicadas", None) or {}).items():
+        base = next((r for r in racks if r.nome == d.get("base")), None)
+        if base is None or nome in nomes:
+            continue
+        r = replace(base, nome=nome)
+        if "larg_m" in d:
+            r = replace(r, larg_m=float(d["larg_m"]))
+        if "alturas_niveis_m" in d:
+            alt = tuple(float(a) for a in d["alturas_niveis_m"])
+            r = replace(r, alturas_niveis_m=alt, niveis=len(alt), alt_nivel_m=max(alt))
+        elif "niveis" in d:
+            r = replace(r, niveis=int(d["niveis"]))
+        novas.append(replace(r, footprint_m2=round(r.larg_m * r.prof_m, 4)))
+    return racks + novas
 
 
 def load_zones(cfg: Config) -> list[Zona]:

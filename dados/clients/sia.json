@@ -57,15 +57,22 @@
   "oversize_racks": [],
   "oversize_par_racks": ["porta-paletes"],
   "max_modulos_por_tipologia": {},
-  "empilhamento_por_nivel": ["porta-paletes"],
+  "empilhamento_por_nivel": ["porta-paletes", "baterias"],
   "picking_manual_racks": ["prateleira"],
 
   "_comment_pilar_rack_m": "Largura (m) de 1 pilar por tipologia (substring do nome). Larg_m da folha Racks e o vao LIVRE; o pilar soma-se so no espaco de chao (layout, sandbox, area). Porta-paletes 9 cm. Prateleira Leve: vao de 1,825 m + 5 cm de pilar (decisao do utilizador, 2026-11-18; antes 1,80 m ja 'total', sem pilar). O pilar entre modulos encostados e partilhado: uma fila de k modulos mede k x vao + (k+1) x pilar.",
-  "pilar_rack_m": {"porta-paletes": 0.09, "prateleira": 0.05},
+  "pilar_rack_m": {"porta-paletes": 0.09, "baterias": 0.09, "prateleira": 0.05},
 
   "_comment_folga_costas_rack_m": "Folga (m) entre as costas das duas racks de uma fila dupla: a fila dupla ocupa 2 x prof + folga de fundo (decisao do utilizador, 2026-11-18). Porta-paletes: 2 x 1,2 + 0,10 = 2,5 m. Prateleira: 12,5 cm (decisao do utilizador, 2026-11-18): 2 x 0,6 + 0,125 = 1,325 m.",
-  "folga_costas_rack_m": {"porta-paletes": 0.10, "prateleira": 0.125},
+  "folga_costas_rack_m": {"porta-paletes": 0.10, "baterias": 0.10, "prateleira": 0.125},
 
   "_comment_folga_lateral_rack_m": "Folga (m) entre caixas lado a lado, so no vao (nunca na profundidade), por tipologia (substring do nome). SIA: 3 cm nas prateleiras (decisao do utilizador, 2026-11-12: com 1 cm uma XS entrava a justa no canto ao lado de 4 M, 1 cm de cada lado; antes 1 cm). Com folga em y, 2 S/XS de 0,30 m ja nao cabem em 0,60 m de fundo: a folga so existe ao longo do vao.",
-  "folga_lateral_rack_m": {"prateleira": 0.03}
+  "folga_lateral_rack_m": {"prateleira": 0.03},
+
+  "_comment_racks_dedicadas": "Tipologias derivadas de outra (pilar, folgas e cargas aceites da base; nome proprio; larg_m/niveis/alturas_niveis_m substituem os da base se vierem) e EXCLUSIVAS dos SKUs listados (prefixo do SKU): esses SKUs so vao para elas e nada mais la entra. Se o arranjo nao tiver nenhuma, os SKUs voltam as racks normais com aviso. Rack Baterias (desenho do utilizador, 2026-11-19, 'Rack Paletes 1200x800'): 1 vao de 2,20 m util x 1,20 m -- o desenho tinha 2,10 (80 + 50 + 80 cm), mas o pack do master data tem 82,9 cm e com 0,5 m entre packs precisa de 0,829 + 0,5 + 0,829 = 2,158 m; alargado para 2,20 (2 cm de folga de cada lado ao prumo, pedido do utilizador), 4 niveis com vigas de 1,20 m em 1,20 m (+0,20/1,40/2,60/3,80 no desenho; o motor poe o 1.o nivel no chao: mesmo passo, 20 cm mais abaixo) e altura util ate 4,60 m: uteis 1,20 - 0,10 folga - 0,09 viga = 1,01 e, no ultimo, 4,60 - 3,80 - 0,10 = 0,70.",
+  "racks_dedicadas": {"Rack Baterias": {"base": "Rack Porta-Paletes", "skus": ["SKT10.DCA003"], "larg_m": 2.20,
+                                        "niveis": 4, "alturas_niveis_m": [1.01, 1.01, 1.01, 0.70]}},
+
+  "_comment_regras_espacamento_sku": "Espaco livre minimo entre unidades do SKU (prefixo), medido entre as PECAS (o que sai da palete conta): horizontal = ao longo do vao, entre a peca e a vizinha (inclui o vao seguinte); vertical = do topo da peca de baixo ao inicio da peca de cima, com a palete e a viga incluidas. Battery pack: 0,5 m e 1 m (regra do utilizador, 2026-11-19).",
+  "regras_espacamento_sku": {"SKT10.DCA003": {"horizontal_m": 0.5, "vertical_m": 1.0}}
 }

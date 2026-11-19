@@ -26,7 +26,7 @@ from .racking import _Colocado, _commit_nivel, altura_nivel, cotas_fisicas_nivei
 
 # Versão das REGRAS de alocação: mudar quando a lógica muda (o modo incremental
 # deixa de valer -- alocação de raiz até se guardar um estado novo).
-ALGORITMO_VERSAO = "2026-11-19.1"   # reposições das reservas dos SKUs de peças em embalagens/dia (era carrinhos/dia)
+ALGORITMO_VERSAO = "2026-11-19.2"   # racks dedicadas (Rack Baterias) e espaçamento por SKU (battery pack)
 CONTIGUIDADE_MODULOS = 1     # vizinho = só o módulo LADO A LADO na mesma fila (2026-11-12)
 
 REGRAS = (
@@ -510,6 +510,63 @@ def _ligado(ps: set, viz: dict) -> bool:
     return vist == ps
 
 
+@dataclass(frozen=True)
+class RegraEspaco:
+    """Espaço livre mínimo entre unidades de um SKU (Config.regras_espacamento_sku),
+    medido entre as PEÇAS: `sobra_curta/longa` = quanto a peça sai da palete ao
+    longo do lado curto/comprido da base (soma-se ao espaço horizontal da faixa);
+    `deck_m` = altura da palete por baixo da peça (conta no espaço vertical)."""
+    horizontal_m: float = 0.0
+    vertical_m: float = 0.0
+    sobra_curta: float = 0.0
+    sobra_longa: float = 0.0
+    deck_m: float = 0.0
+
+
+# sku -> RegraEspaco, durante uma chamada a _alocar (o packer é uma função pura
+# chamada em muitos sítios; as regras vêm de lá e são repostas no fim)
+_REGRAS_SKU: dict = {}
+
+
+def regras_espacamento(cfg, itens: list, artigos: list) -> dict:
+    """sku -> RegraEspaco dos SKUs com Config.regras_espacamento_sku (chave =
+    prefixo). A peça vem do master data (cota vertical = ALTURA_OVERRIDE, por
+    omissão a altura), a base da unidade dos itens."""
+    regras = getattr(cfg, "regras_espacamento_sku", None) or {}
+    if not regras:
+        return {}
+    art = {a.sku: a for a in artigos}
+    out = {}
+    for it in itens:
+        chave = next((k for k in regras if it.sku.startswith(k)), None)
+        if chave is None or it.sku in out:
+            continue
+        r, a = regras[chave], art.get(it.sku)
+        base = sorted((it.comp_m, it.larg_m))
+        if a is not None:
+            cotas = {"x": a.comp_m, "y": a.larg_m, "z": a.alt_m}
+            v = (a.altura_override or "z").strip().lower()
+            v = v if v in cotas else "z"
+            plano = sorted(c for k, c in cotas.items() if k != v)
+            alt_peca = cotas[v]
+        else:
+            plano, alt_peca = base, it.alt_m
+        out[it.sku] = RegraEspaco(float(r.get("horizontal_m", 0.0)), float(r.get("vertical_m", 0.0)),
+                                  max(0.0, plano[0] - base[0]), max(0.0, plano[1] - base[1]),
+                                  max(0.0, it.alt_m - alt_peca))
+    return out
+
+
+def _folga_faixa(sku: str, cw: float, w: float, h: float, g: float) -> float:
+    """Folga lateral de uma faixa: a da tipologia ou, num SKU com RegraEspaco, o
+    espaço horizontal + o que a peça sai da palete ao longo do vão."""
+    r = _REGRAS_SKU.get(sku)
+    if r is None or r.horizontal_m <= 0:
+        return g
+    sobra = r.sobra_curta if cw <= min(w, h) + 1e-9 else r.sobra_longa
+    return max(g, r.horizontal_m + sobra)
+
+
 def _empacotar_faixas(nivel: NivelRack, rack: RackType, item) -> dict | None:
     """Arruma o nível em FAIXAS DE PROFUNDIDADE: cada faixa é uma coluna ao
     longo do vão com caixas de UM SÓ SKU, uma atrás da outra a partir da
@@ -532,7 +589,7 @@ def _empacotar_faixas(nivel: NivelRack, rack: RackType, item) -> dict | None:
     grupos: dict = {}
     for rid, sku, w, h, fixa in caixas:
         chave = (sku, (round(w, 4), round(h, 4)) if fixa else tuple(sorted((round(w, 4), round(h, 4)))), fixa)
-        grupos.setdefault(chave, {"dims": (w, h), "fixa": fixa, "rids": []})["rids"].append(rid)
+        grupos.setdefault(chave, {"dims": (w, h), "fixa": fixa, "rids": [], "sku": sku})["rids"].append(rid)
     g, L, P = rack.folga_lateral_m, rack.larg_m, rack.prof_m
     plano, total = [], 0.0
     for gr in grupos.values():
@@ -545,21 +602,26 @@ def _empacotar_faixas(nivel: NivelRack, rack: RackType, item) -> dict | None:
                 continue
             k = max(1, int((P + 1e-9) // ch))
             faixas = math.ceil(len(gr["rids"]) / k)
-            larg = faixas * (cw + g)
+            fg = _folga_faixa(gr["sku"], cw, w, h, g)
+            larg = faixas * (cw + fg)
             if melhor is None or larg < melhor[0] - 1e-9:
-                melhor = (larg, cw, ch, k)
+                melhor = (larg, cw, ch, k, fg)
         if melhor is None:
             return None
         plano.append((gr["rids"], *melhor[1:]))
         total += melhor[0]
-    if total > L + g + 1e-6:
+    # a folga a seguir à ÚLTIMA faixa pode cair fora do vão (com a folga da
+    # tipologia era o «L + g» de sempre); com folgas por SKU (RegraEspaco) a
+    # maior fica no fim. Ordem estável: sem regras, igual a antes.
+    plano.sort(key=lambda t: t[-1])
+    if total - plano[-1][-1] > L + 1e-6:
         return None
     out, x = {}, 0.0
-    for rids, cw, ch, k in plano:
+    for rids, cw, ch, k, fg in plano:
         for f in range(0, len(rids), k):
             for j, rid in enumerate(rids[f:f + k]):
                 out[rid] = _Colocado(round(x, 4), round(j * ch, 4), cw, ch, rid)
-            x += cw + g
+            x += cw + fg
     return out
 
 
@@ -832,15 +894,16 @@ def embalagens_dia_pecas(pecas: set, itens: list, artigos: list, carros_por_dia:
 def alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dict, taxas: dict,
            ponto: tuple[float, float], cfg, fixacoes: dict | None = None,
            anterior: dict | None = None, otimizar: bool = True,
-           dist: dict | None = None, pares: dict | None = None, pecas: set | dict | None = None) -> ResultadoAlocacao:
+           dist: dict | None = None, pares: dict | None = None, pecas: set | dict | None = None,
+           espacamento: dict | None = None) -> ResultadoAlocacao:
     """Alocação (ver ``_alocar``): 1.ª etapa por frequência; se deixar alguma
     unidade de fora, repete por área (FFD, como o dimensionamento) e fica a
     que deixa menos unidades de fora (2026-11-05: com a ordem por área uma
     posição mais longe ficava com mais visitas do que a de perto)."""
     args = (posicoes, itens, candidatos_por_tipo, taxas, ponto, cfg, fixacoes, anterior, otimizar, dist, pares)
-    r = _alocar(*args, por_frequencia=True, pecas=pecas)
+    r = _alocar(*args, por_frequencia=True, pecas=pecas, espacamento=espacamento)
     if r.nao_alocados:
-        r2 = _alocar(*args, por_frequencia=False, pecas=pecas)
+        r2 = _alocar(*args, por_frequencia=False, pecas=pecas, espacamento=espacamento)
         fora = lambda x: sum(n.n_unidades for n in x.nao_alocados)
         if fora(r2) < fora(r):
             r2.avisos.append(f"A arrumação por frequência deixava {fora(r)} unidade(s) de fora; usada a "
@@ -854,7 +917,18 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             anterior: dict | None = None, otimizar: bool = True,
             dist: dict | None = None, pares: dict | None = None,
             por_frequencia: bool = True, grandes_primeiro: bool = True,
-            pecas: set | dict | None = None) -> ResultadoAlocacao:
+            pecas: set | dict | None = None, espacamento: dict | None = None) -> ResultadoAlocacao:
+    _REGRAS_SKU.clear()
+    _REGRAS_SKU.update(espacamento or {})
+    try:
+        return _alocar_corpo(posicoes, itens, candidatos_por_tipo, taxas, ponto, cfg, fixacoes, anterior, otimizar,
+                             dist, pares, por_frequencia, grandes_primeiro, pecas)
+    finally:
+        _REGRAS_SKU.clear()
+
+
+def _alocar_corpo(posicoes, itens, candidatos_por_tipo, taxas, ponto, cfg, fixacoes, anterior, otimizar, dist,
+                  pares, por_frequencia, grandes_primeiro, pecas) -> ResultadoAlocacao:
     """`itens`: racking.preparar_itens (stacks). `taxas`: sku -> procura.Taxa.
     `fixacoes`: sku -> endereço/id (ver _resolver_fixacao). `anterior`: sku ->
     [(id da posição, nível)] da última alocação guardada (modo incremental).
@@ -864,12 +938,27 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
     `dist`: posição -> metros do ponto de carga pelo chão (tempos.distancias_acesso);
     sem ele, a distância em planta |dx| + |dy| (só para testes).
     `pecas`: SKUs de peças (face de picking); um dict dá também as embalagens
-    gastas por dia de cada um (``embalagens_dia_pecas``)."""
+    gastas por dia de cada um (``embalagens_dia_pecas``). Regras de espaçamento
+    por SKU: ``_REGRAS_SKU`` (posto por ``_alocar``)."""
     from .tempos import custo_visita_min
     fixacoes, anterior = fixacoes or {}, anterior or {}
     avisos = []
     compat = {lt: {r.nome for r in rs} for lt, rs in candidatos_por_tipo.items()}
     nomes_no_arranjo = {p.rack.nome for p in posicoes}
+    # racks DEDICADAS (Config.racks_dedicadas, 2026-11-19): exclusivas dos SKUs
+    # listados, e esses SKUs só lá -- se o arranjo tiver alguma
+    dedicadas = {nome: tuple(d.get("skus", ())) for nome, d in
+                 (getattr(cfg, "racks_dedicadas", None) or {}).items()}
+    sem_dedicada = set()
+
+    def nomes_para(it) -> set:
+        base = compat.get(it.load_type, set())
+        minhas = {r for r, pref_ in dedicadas.items() if any(it.sku.startswith(p) for p in pref_)}
+        if minhas & nomes_no_arranjo:
+            return base & minhas
+        if minhas:
+            sem_dedicada.add((it.sku, tuple(sorted(minhas))))
+        return base - set(dedicadas)
 
     def distancia(pos) -> float:
         if dist is not None and pos.id in dist:
@@ -1005,16 +1094,40 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             out += idx.get(pid, [])
         return out
 
+    def vertical_ok(c, it) -> bool:
+        """Espaço vertical das RegraEspaco: do topo da peça de baixo ao início da
+        peça de cima (palete e viga incluídas), nos níveis vizinhos da posição."""
+        r_it = _REGRAS_SKU.get(it.sku)
+        n = c.nivel.nivel_idx
+        for nb, por_baixo in ((n - 1, True), (n + 1, False)):
+            o = por_chave.get((c.pos.id, nb))
+            if o is None:
+                continue
+            for cx in o.nivel.caixas:
+                r_cx = _REGRAS_SKU.get(cx.sku)
+                minimo = max(r_it.vertical_m if r_it else 0.0, r_cx.vertical_m if r_cx else 0.0)
+                if minimo <= 0 or (r_it is None or r_cx is None):
+                    continue
+                if por_baixo:
+                    folga_v = (c.base_m + r_it.deck_m) - (o.base_m + cx.alt_m)
+                else:
+                    folga_v = (o.base_m + r_cx.deck_m) - (c.base_m + it.alt_m)
+                if folga_v < minimo - 1e-6:
+                    return False
+        return True
+
     def colocar(it, tentar=None):
         if tentar is None:
             tentar = junto(it) + ordem_celulas.get(it.load_type, [])
-        nomes = compat.get(it.load_type, set())
+        nomes = nomes_para(it)
         # o que falhou num nível depende da forma E do SKU (com faixas, um SKU que
         # já lá tem uma faixa a meio ainda cabe onde um SKU novo já não cabe)
         forma = (round(it.comp_m, 3), round(it.larg_m, 3), round(it.alt_m, 3), it.sku)
         a_it = it.comp_m * it.larg_m
         for c in tentar:
             if c.pos.rack.nome not in nomes or forma in c.falhas or c.area_livre < a_it - 1e-9:
+                continue
+            if it.sku in _REGRAS_SKU and not vertical_ok(c, it):
                 continue
             sol = _empacotar_faixas(c.nivel, c.pos.rack, it)
             if sol is None:
@@ -1028,7 +1141,7 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         return None
 
     def motivo(it) -> str:
-        nomes = compat.get(it.load_type, set())
+        nomes = nomes_para(it)
         if not nomes:
             return "nenhuma tipologia aceita esta unidade"
         if not nomes & nomes_no_arranjo:
@@ -1044,7 +1157,9 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
         sobrepor o que já lá está."""
         pid, n, x, y, comp, larg = reg[:6]
         c = por_chave.get((pid, int(n)))
-        if c is None or c.pos.rack.nome not in compat.get(it.load_type, set()):
+        if c is None or c.pos.rack.nome not in nomes_para(it):
+            return False
+        if it.sku in _REGRAS_SKU:      # espaçamento: a geometria guardada pode ser de antes da regra
             return False
         if it.alt_m > altura_nivel(c.pos.rack, c.nivel.nivel_idx) + 1e-9:
             return False
@@ -1142,6 +1257,15 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
 
     def colocar_bloco(sku, unidades_sku, ancora=None) -> bool:
         colocados, onde_antes = [], set(onde.get(sku, set()))
+        # SKU com rack DEDICADA no arranjo: a contiguidade não se aplica -- as
+        # racks dele já são o sítio dele (ex.: Rack Baterias A e B, separadas).
+        # Cada unidade no sítio livre mais perto dessas racks; o que não couber
+        # fica por alocar com o motivo (não se perde o resto do SKU)
+        if unidades_sku and nomes_para(unidades_sku[0]) & set(dedicadas):
+            for u in unidades_sku:
+                if colocar(u) is None:
+                    nao.append(NaoAlocado(u.sku, u.descricao, u.load_type.value, u.num_boxes_in_stack, motivo(u)))
+            return True
         for u in unidades_sku:
             if onde.get(sku):
                 tentar = junto(u)                   # só o bloco e os vizinhos
@@ -1210,6 +1334,14 @@ def _alocar(posicoes: list[PosicaoFisica], itens: list, candidatos_por_tipo: dic
             if contiguo:    # só quando a causa é mesmo o espaço contíguo (não "sem rack que a aceite")
                 avisos.append(f"{sku}: não coube num só bloco de módulos vizinhos -- fica por alocar "
                               "(contiguidade obrigatória).")
+
+    # SKUs com espaçamento: a 2.ª etapa não os mexe (as trocas não sabem do espaço)
+    for c in celulas:
+        for cx in c.nivel.caixas:
+            if cx.sku in _REGRAS_SKU:
+                bloqueadas.add(id(cx))
+    for sku, nomes_d in sorted(sem_dedicada):
+        avisos.append(f"{sku}: o arranjo não tem {', '.join(nomes_d)} -- ficou nas racks normais.")
 
     designar_faces()
 
@@ -1340,7 +1472,9 @@ def assinatura_logica(cfg) -> str:
              "cons": [cfg.consumiveis_reposicao, cfg.consumiveis_periodo_dias],
              "folga_lateral": sorted(getattr(cfg, "folga_lateral_rack_m", {}).items()),
              "pilar": sorted(getattr(cfg, "pilar_rack_m", {}).items()),
-             "folga_costas": sorted(getattr(cfg, "folga_costas_rack_m", {}).items())}
+             "folga_costas": sorted(getattr(cfg, "folga_costas_rack_m", {}).items()),
+             "dedicadas": getattr(cfg, "racks_dedicadas", {}),
+             "espacamento": getattr(cfg, "regras_espacamento_sku", {})}
     return hashlib.sha1(json.dumps(chave, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
@@ -1557,7 +1691,8 @@ def _folhas_tempos(wb, folha, rt) -> None:
 
 # ----------------------------------------------------------------- pipeline
 def calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, rack_types, candidatos, itens,
-                          taxas, res_proc, tl, pecas: set | None = None) -> tuple[dict, str]:
+                          taxas, res_proc, tl, pecas: set | None = None,
+                          espacamento: dict | None = None) -> tuple[dict, str]:
     """Calibração dos tempos contra o LAYOUT FIXO de referência
     (`Config.layout_referencia`, um arranjo guardado em .json): decisão do
     utilizador (2026-11-12) -- o layout do armazém está fixo, por isso o «Gerar
@@ -1592,7 +1727,8 @@ def calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, r
                                        cfg.picking_passagem_min_m / 2)
     posicoes, dist, candidatos, pares = com_pares(posicoes, dist, candidatos, render.get("obstaculos_layout", []),
                                                   ponto, cfg)
-    res_ref = alocar(posicoes, itens, candidatos, taxas, ponto, local, dist=dist, pares=pares, pecas=pecas)
+    res_ref = alocar(posicoes, itens, candidatos, taxas, ponto, local, dist=dist, pares=pares, pecas=pecas,
+                     espacamento=espacamento)
     cal, _ = tempos.calibrar(res_proc.picks, tempos.deslocacao_por_sku(res_ref, dist, local), tl)
     tempos.guardar_calibracao(cfg.tempos_calibracao, cal, {"referencia": fonte, "posicoes": len(posicoes)}, chave)
     return cal, "refeita"
@@ -1640,6 +1776,14 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
     rack_types = racking.com_par_oversize(data_access.load_rack_types(local), local)
     candidatos, itens = racking.preparar_itens(assignments, rack_types, {b.nome: b for b in catalogo},
                                                artigos, 0.0, local)
+    # racks dedicadas: entram nas cargas que aceitam mesmo com níveis mais baixos do
+    # que a unidade NOMINAL do catálogo (palete cheia) -- a Rack Baterias tem níveis
+    # de 1,01 m para packs de 0,30 m; a altura real é vista nível a nível no packer
+    for r in rack_types:
+        if r.nome in (getattr(local, "racks_dedicadas", None) or {}):
+            for lt in r.aceita:
+                if r not in candidatos.setdefault(lt, []):
+                    candidatos[lt].append(r)
 
     render = render_layout(arranjo)
     posicoes = posicoes_do_render(render["layout"] + render["racks_manuais"], {r.nome: r for r in rack_types})
@@ -1665,8 +1809,10 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
     so_pecas = skus_de_pecas(p, mapa)
     emb = embalagens_dia_pecas(so_pecas, itens, artigos, carros)
     pecas = {s: emb.get(s) for s in so_pecas}       # None = sem master data: a Taxa
+    espac = regras_espacamento(local, itens, artigos)
     res = alocar(posicoes, itens, candidatos, taxas, ponto, local,
-                 carregar_json(cfg.alocacao_fixacoes), anterior, dist=dist, pares=pares, pecas=pecas)
+                 carregar_json(cfg.alocacao_fixacoes), anterior, dist=dist, pares=pares, pecas=pecas,
+                 espacamento=espac)
     res.avisos[:0] = avisos + av_dist
     res.dist = dist
     res.estado_ctx = {"bom": bom, "logica": logica}
@@ -1700,7 +1846,7 @@ def run(cfg, arranjo, altura_armazem_m: float | None = None, carros_por_dia: int
     tl = tempos.carregar_tempos_livro(Path(cfg.pressupostos_picking))
     tl.voltas_horario = cfg.voltas_horario_do_livro   # bulk: hora mínima e ordem vêm do livro (C104, C106)
     cal, como = calibracao_automatica(cfg, local, arranjo, assignments, artigos, catalogo, rack_types,
-                                      candidatos, itens, taxas, res_proc, tl, pecas)
+                                      candidatos, itens, taxas, res_proc, tl, pecas, espac)
     base = carros == int(p.carros_por_dia_base)
     # validação contra o livro: os 30 dias DELE, à parte do horizonte
     res_val = procura.simular(p, carros, p.dias_simulados, consumiveis, mapa, cfg.consumiveis_reposicao,

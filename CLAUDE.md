@@ -1793,6 +1793,41 @@ antes -> depois):
   intermédia com 1,61 nos níveis de baixo) ficava em −43,3 -- o agravamento vem dos
   BUMPER passarem a OVERSIZE (não foi isolado porquê: continuam a 1 visita/dia).
 
+## Decisão fechada: Rack Baterias e espaçamento do battery pack (`ALGORITMO_VERSAO` 2026-11-19.2)
+Pedido do utilizador: o battery pack (SKT10.DCA003) precisa de 0,5 m entre packs na
+horizontal e 1 m na vertical (do fim de um ao início do outro, palete e viga
+incluídas) e de racks próprias com as medidas do porta-paletes.
+- `Config.racks_dedicadas` (sia.json): «Rack Baterias» = cópia da «Rack Porta-Paletes»
+  (`data_access.com_racks_dedicadas`, antes das folgas/pilares, que vão pelo nome --
+  sia.json e `picking_equipamento` têm a chave "baterias"). Na alocação
+  (`nomes_para` em `_alocar_corpo`) é EXCLUSIVA: o pack só lá vai e nada mais lá
+  entra; sem nenhuma no arranjo o pack volta às racks normais, com aviso.
+- `Config.regras_espacamento_sku` -> `regras_espacamento` -> `RegraEspaco` por SKU
+  (posto em `_REGRAS_SKU` durante `_alocar`): no packer a faixa leva
+  `max(folga, 0,5 + o que a peça sai da palete)` (0,829 vs 0,8 -> 0,529); a vertical
+  é verificada nos níveis vizinhos da mesma posição (`vertical_ok`). Os packs ficam
+  fora da 2.ª etapa (bloqueados) e o modo incremental não repõe geometria deles.
+- Rack Baterias = desenho do utilizador («Rack Paletes 1200×800»): 1 vão de 2,10 m
+  útil (80 + 50 + 80) × 1,20 m, 4 níveis de passo 1,20 m (úteis 1,01 / 1,01 / 1,01 /
+  0,70 até 4,60 m). O desenho tem o 1.º nível a +0,20 m; o motor não tem cota de
+  arranque e põe-no no chão (mesmo passo, tudo 20 cm abaixo; o +30 s de altura dá o
+  mesmo por nível). `racks_dedicadas` aceita `larg_m`/`niveis`/`alturas_niveis_m`.
+- Racks dedicadas entram sempre nos candidatos das cargas que aceitam (níveis de
+  1,01 m < palete cheia nominal; a altura real vê-se no packer) e o SKU delas NÃO
+  tem contiguidade (A e B são racks soltas): cada unidade no sítio livre mais perto
+  delas, o que não couber fica por alocar com o motivo.
+- Packer: a folga a seguir à ÚLTIMA faixa pode ficar fora do vão (a maior vai para o
+  fim) -- com a folga da tipologia é o «L + g» de sempre. Em filas de vários vãos
+  encostados de Rack Baterias, os packs das pontas de vãos vizinhos ficariam só com
+  o prumo entre eles: usar racks de 1 vão, como no desenho.
+- Resultado (arranjo de 18/11 com «Rack especial A/B» -> Rack Baterias A/B,
+  `dados/arranjo_baterias_2026-11-19.json`): com o pack do master data (0,829 m de
+  largo, sai 1,45 cm de cada lado da palete) 0,5 m entre PEÇAS não deixava 2 por nível
+  no vão de 2,10 (0,829 + 0,5 + 0,829 = 2,158) -> o utilizador mandou alargar: vão de
+  2,20 m (2,38 com prumos). Cabem os 10: B cheia (2 × 4 níveis) + A N1, 0,50 m entre
+  packs; sobram 4 cm no vão (a app encosta as paletes ao prumo da esquerda; na
+  prática ~2 cm de cada lado).
+
 ## Análise (não é decisão): simulação de 1 ano -- fixo / dinâmico / picking + reserva (2026-11-19)
 `python -m warehouse.simulacao_ano --arranjo <arranjo.json>` (`warehouse/simulacao_ano.py`).
 Pergunta da reunião de 2026-11-18: posições fixas deixam posições boas vazias à
@@ -1821,8 +1856,13 @@ espera do lote seguinte? separar prateleiras por tipo de caixa custa?
   83,1; picking+reserva 19,3 / 57,7 / 49,9 = 126,8 (41 realocações/dia: nas
   embalagens inteiras cada unidade passa a ser mexida duas vezes); híbrido 87,2.
   Espaço médio ocupado: fixo 29 % prateleira / 26 % palete (reservado), dinâmico
-  21 % / 15 %. Separar por nível: diferença dentro do ruído (o arranjo tem folga --
-  93 posições nunca usadas no fixo).
+  21 % / 15 %. Separar por nível: no fixo −2,7 min/dia (a alocação separada saiu
+  diferente e mais barata: custo ponderado 44,2 vs 46,3 -- é a heurística, não a
+  separação em si); nos dinâmicos ±0,2 (nada). O arranjo tem folga -- 93 posições
+  nunca usadas no fixo -- por isso a separação não aperta.
+- Determinística: aleatória com sementes fixas (1000, 1001, ...) -- a mesma
+  semente dá o mesmo resultado. Entre 10 sementes o total varia < 0,5 min/dia
+  (desvio-padrão) em todos os cenários.
 
 ## Convenções
 - Python 3.11+, dataclasses, type hints, deps em `requirements.txt`.

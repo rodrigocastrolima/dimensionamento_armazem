@@ -61,6 +61,8 @@ _CLIENT_FIELD_CONVERTERS = {
     "pilar_rack_m": dict,
     "folga_lateral_rack_m": dict,
     "folga_costas_rack_m": dict,
+    "racks_dedicadas": dict,
+    "regras_espacamento_sku": dict,
     "pressupostos_picking": _caminho_do_repo,
     "output_procura": Path,
     "layout_referencia": Path,
@@ -122,7 +124,7 @@ class Config:
     # equipamento por tipologia (substring do nome); o resto vai a pé. As peças
     # de carrinho e de kit vão sempre a pé.
     picking_equipamento: dict = field(default_factory=lambda: {
-        "prateleira": "order-picker", "porta-paletes": "empilhador"})
+        "prateleira": "order-picker", "porta-paletes": "empilhador", "baterias": "empilhador"})
     # +30 s se o topo do nível passar de 1,6 m (zona de alcance): os 30 s são os
     # do livro («Arm Picking + Preparação», linha 56).
     picking_altura_limite_m: float = 1.6
@@ -271,6 +273,17 @@ class Config:
     # (max(palete, peça)); o que sai para a frente/trás não ocupa rack (só se
     # reporta). Ver boxing.palete_por_sku / base_palete_por_sku.
     palete_por_sku: dict = field(default_factory=dict)
+
+    # Tipologias DEDICADAS (2026-11-19, battery pack): {nome: {"base": tipologia
+    # da folha «Racks», "skus": [prefixos]}}. data_access.load_rack_types cria
+    # uma cópia da base com este nome (mesmas medidas e níveis); na alocação
+    # esses SKUs só vão para ela e nada mais lá entra (sem nenhuma no arranjo,
+    # voltam às racks normais com aviso). As regras por nome (pilar, folgas,
+    # equipamento, empilhamento) precisam da chave do nome novo.
+    racks_dedicadas: dict = field(default_factory=dict)
+    # Espaço livre mínimo entre unidades de um SKU (prefixo): {"horizontal_m",
+    # "vertical_m"}, medido entre as PEÇAS (alocacao.regras_espacamento).
+    regras_espacamento_sku: dict = field(default_factory=dict)
 
     # --- Passo 0 — stock por autonomia mínima (boxing.stock_para_autonomia) ---
     # Substitui o antigo "Stock_máx_10un_a_utilizar" da master data v2, que era

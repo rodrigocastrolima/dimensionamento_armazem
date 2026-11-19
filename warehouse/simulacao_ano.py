@@ -278,6 +278,7 @@ class Sim:
         self.face = {}                       # sku -> Lane
         self.geo_cache = {}
         self.met = defaultdict(float)
+        self.vis_pos = defaultdict(float)     # pid -> visitas de picking no ano medido (mapa de calor)
         self.medir = False
         self._ordens(fixas)
         self._politica()
@@ -550,6 +551,8 @@ class Sim:
                 else:
                     self.conta("picking_min", x.v * ln.cel.custo)
                     self.conta("visitas", x.v)
+                    if self.medir:
+                        self.vis_pos[ln.cel.pid] += x.v
                     self.conta("faltas_face", x.v if falta else 0)
                 for _ in range(n):
                     ln, _ = self.de_onde(s)
@@ -569,6 +572,8 @@ class Sim:
                         break
                     self.conta("picking_min", fv * ln.cel.custo)
                     self.conta("visitas", fv)
+                    if self.medir:
+                        self.vis_pos[ln.cel.pid] += fv
                     self.conta("faltas_face", fv if falta else 0)
                     self.tirar(ln)
         # 3) fim do dia: repor posições de picking (operador de logística) e encomendar
